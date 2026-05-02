@@ -1,0 +1,72 @@
+services:
+  # --- API CORE (PHP) ---
+  api_core:
+    build:
+      context: ./api-core
+      dockerfile: Dockerfile
+    container_name: melzone_api
+    restart: always
+    volumes:
+      - ./api-core:/var/www
+    networks:
+      - melzone_network
+
+  # --- WEBSERVER (NGINX) ---
+  webserver:
+    image: nginx:alpine
+    container_name: melzone_nginx
+    restart: always
+    ports:
+      - "9000:80"
+    volumes:
+      - ./api-core:/var/www
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
+    networks:
+      - melzone_network
+
+  # --- DATABASE (PostgreSQL) ---
+  database:
+    image: postgres:15-alpine
+    container_name: melzone_db
+    restart: always
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: my_admin_pass
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      # Carpeta para persistencia de datos reales
+      - E:/proyects/melZone/database/data:/var/lib/postgresql/data
+      # Script de inicialización de bases de datos
+      - E:/proyects/melZone/database/init-db-postgres.sql:/docker-entrypoint-initdb.d/init-db-postgres.sql
+    networks:
+      - melzone_network
+
+    # --- BROKER DE MENSAJES ---
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: melzone_mq
+    restart: always
+    ports:
+      - "5672:5672" # Puerto de comunicación de datos
+      - "15672:15672" # Puerto de la interfaz web (Dashboard)
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin_pass
+    networks:
+      - melzone_network
+
+  # --- CACHÉ Y LOCKS ---
+  redis:
+    image: redis:7-alpine
+    container_name: melzone_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    networks:
+      - melzone_network
+
+networks:
+  melzone_network:
+    driver: bridge
