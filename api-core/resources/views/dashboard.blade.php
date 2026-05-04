@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ $title ?? 'Dashboard - MelZone' }}</title>
+    <title>Dashboard - MelZone Flow Tutorial</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -27,6 +27,10 @@
         h1 {
             color: #333;
             margin: 0 0 10px 0;
+        }
+        h2 {
+            color: #666;
+            margin-top: 0;
         }
         .subtitle {
             color: #666;
@@ -150,10 +154,10 @@
 </head>
 <body>
     <div class="container">
-        <div class="header">
-            <h1>Dashboard - MelZone</h1>
-            <p class="subtitle">Demostración interactiva del flujo RabbitMQ + Redis</p>
-        </div>
+    <div class="header">
+        <h1>Dashboard - MelZone Flow Tutorial</h1>
+        <h2>Interactive tutorial: HTTP → Event → Queue → Listener → Cache</h2>
+    </div>
 
         <div class="trigger-section">
             <h2>Enviar Notificación</h2>

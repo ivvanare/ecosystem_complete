@@ -9,13 +9,22 @@ use Illuminate\Support\Facades\Cache;
 class OperationController extends Controller
 {
     /**
-     * Dispatch OperationPerformed event via POST request
+     * Dispatch OperationPerformed event
+     * GET: Backward compatible (returns text, fixed values)
+     * POST: Returns JSON with event details
      *
      * @param Request $request
-     * @return \Illuminate\Http\JsonResponse
+     * @return \Illuminate\Http\Response|\Illuminate\Http\JsonResponse
      */
     public function dispatchEvent(Request $request)
     {
+        // Backward compatibility: GET returns text response
+        if ($request->isMethod('get')) {
+            event(new OperationPerformed(1500.5, "Tienda Central"));
+            return response("✅ Evento disparado a RabbitMQ. El listener procesará y guardará en Redis.");
+        }
+
+        // POST: Return JSON with event details
         $amount = $request->input('amount', rand(100, 9999));
         $storeName = $request->input('store', $this->getRandomStore());
 
