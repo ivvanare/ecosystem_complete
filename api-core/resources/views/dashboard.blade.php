@@ -203,10 +203,10 @@
                 <h3>Paso 2: Event Dispatch</h3>
                 <p>El controlador crea y dispara el evento OperationPerformed con los datos del request.</p>
                 <div class="tech-details">
-                    <strong>Evento:</strong> OperationPerformed<br>
-                    <strong>Propiedades:</strong> amount, storeName, dispatchedAt<br>
-                    <strong>Broadcast:</strong> broadcastOn() → canal dashboard-stats<br>
-                    <strong>Queue:</strong> operacion.realizada
+                    <strong>cache key:</strong> last_operation:{storeName}<br>
+                    <strong>TTL:</strong> 1 hora (3600 segundos)<br>
+                    <strong>Estructura:</strong> amount, store, processed_at<br>
+                    <strong>Driver:</strong> Redis (phpredis)
                 </div>
             </div>
 
@@ -223,12 +223,12 @@
 
             <div class="stage">
                 <h3>Paso 4: Listener Processing</h3>
-                <p>El listener SendNotification escucha la cola y procesa el evento de forma asíncrona.</p>
+                <p>El listener SendNotification escucha la cola y Maneja el evento de forma asíncrona.</p>
                 <div class="tech-details">
-                    <strong>Listener:</strong> SendNotification<br>
-                    <strong>Método:</strong> handle(OperationPerformed $event)<br>
-                    <strong>Acción:</strong> Maneja el evento, loggea en Laravel log<br>
-                    <strong>Queue:</strong> Procesa desde operacion.realizada
+                    <strong>Evento:</strong> OperationPerformed<br>
+                    <strong>Propiedades:</strong> amount, storeName, dispatchedAt<br>
+                    <strong>broadcastOn:</strong> canal dashboard-stats<br>
+                    <strong>Queue:</strong> operacion.realizada
                 </div>
             </div>
 
@@ -236,10 +236,9 @@
                 <h3>Paso 5: Redis Cache</h3>
                 <p>Una vez procesado el evento, los datos se guardan en Redis para acceso rápido.</p>
                 <div class="tech-details">
-                    <strong>Cache Key:</strong> last_operation:{storeName}<br>
-                    <strong>TTL:</strong> 1 hora (3600 segundos)<br>
-                    <strong>Estructura:</strong> amount, store, processed_at<br>
-                    <strong>Driver:</strong> Redis (phpredis)
+                    <strong>exchange:</strong> amq.direct<br>
+                    <strong>Routing Key:</strong> operacion.realizada<br>
+                    <strong>Payload:</strong> JSON con amount, store, dispatched_at, timestamp
                 </div>
             </div>
         </div>
@@ -249,7 +248,7 @@
             @if(isset($lastOperations) && count($lastOperations) > 0)
                 @foreach($lastOperations as $operation)
                     <div class="operation-item">
-                        <strong>Tienda:</strong> {{ $operation['store'] ?? 'N/A' }}<br>
+                        <strong>Tienda Central:</strong> {{ $operation['store'] ?? 'N/A' }}<br>
                         <strong>Monto:</strong> ${{ number_format($operation['amount'] ?? 0, 2) }}<br>
                         <strong>Procesado:</strong> {{ $operation['processed_at'] ?? 'N/A' }}
                     </div>

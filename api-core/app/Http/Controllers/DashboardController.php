@@ -20,7 +20,7 @@ class DashboardController extends Controller
 
         return view('dashboard', [
             'title' => 'Dashboard - MelZone',
-            'rabbitmqStatus' => $rabbitmqStatus,
+            'rabbitmqStatus' => $rabbitmqStatus ?? 'offline',
             'lastOperations' => $lastOperations,
             'tutorialStages' => $tutorialStages,
         ]);
