@@ -7,7 +7,8 @@ services:
     container_name: melzone_api
     restart: always
     volumes:
-      - ./api-core:/var/www
+      - ./api-core:/var/www:Z
+    working_dir: /var/www
     networks:
       - melzone_network
 
@@ -19,8 +20,8 @@ services:
     ports:
       - "9000:80"
     volumes:
-      - ./api-core:/var/www
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
+      - ./api-core:/var/www:Z
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:Z
     networks:
       - melzone_network
 
@@ -37,12 +38,11 @@ services:
       - "5432:5432"
     volumes:
       # Carpeta para persistencia de datos reales
-      - E:/proyects/melZone/database/data:/var/lib/postgresql/data
+      - ./database/data:/var/lib/postgresql/data
       # Script de inicialización de bases de datos
-      - E:/proyects/melZone/database/init-db-postgres.sql:/docker-entrypoint-initdb.d/init-db-postgres.sql
+      - ./database/init-db-postgres.sql:/docker-entrypoint-initdb.d/init-db-postgres.sql
     networks:
       - melzone_network
-
     # --- BROKER DE MENSAJES ---
   rabbitmq:
     image: rabbitmq:3-management-alpine
@@ -64,6 +64,18 @@ services:
     restart: always
     ports:
       - "6379:6379"
+    networks:
+      - melzone_network
+  soketi:
+    image: 'quay.io/soketi/soketi:latest-16-alpine'
+    container_name: melzone_soketi
+    restart: always
+    environment:
+      SOKETI_DEBUG: '1'
+      SOKETI_METRICS_ENABLED: '1'
+    ports:
+      - '6001:6001'
+      - '9601:9601' # Puerto para métricas
     networks:
       - melzone_network
 

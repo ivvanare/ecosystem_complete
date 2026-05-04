@@ -17,3 +17,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Agent skill registry (auto-generated)
+.atl/
