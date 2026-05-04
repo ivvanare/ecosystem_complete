@@ -8,6 +8,8 @@ database/postgres/
 # OS files
 .DS_Store
 Thumbs.db
+*.heapsnapshot
+gentleman.dots
 
 # IDE
 .idea/
