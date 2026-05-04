@@ -2,7 +2,9 @@
 
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Cache;
-use App\Events\OperacionRealizada;
+use App\Events\OperationPerformed;
+use App\Http\Controllers\OperationController;
+use App\Http\Controllers\DashboardController;
 
 /*
 |--------------------------------------------------------------------------
@@ -19,15 +21,13 @@ Route::get("/", function () {
     return view("welcome");
 });
 
-// Dispatch event to RabbitMQ queue
-// The EnviarNotificacion listener will process it and store data in Redis
-Route::get("/test-operacion", function () {
-    // Disparamos evento que será procesado por RabbitMQ
-    // El listener guardará los datos en Redis Cache
-    event(new OperacionRealizada(1500.5, "Tienda Central"));
-    
-    return "✅ Evento disparado a RabbitMQ. El listener procesará y guardará en Redis.";
-});
+// Dispatch event to RabbitMQ queue - POST (new) and GET (backward compatibility)
+Route::match(['get', 'post'], "/test-operacion", [OperationController::class, 'dispatchEvent'])
+    ->name('operation.dispatch');
+
+// Dashboard route (Phase 2 - base structure)
+Route::get("/dashboard", [DashboardController::class, 'index'])
+    ->name('dashboard.index');
 
 // Check cached data in Redis
 // Usage: /check-cache/Tienda Central
