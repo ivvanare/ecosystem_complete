@@ -4,13 +4,15 @@ namespace App\Http\Controllers;
 
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Illuminate\View\View;
+use PhpAmqpLib\Connection\AMQPStreamConnection;
 
 class DashboardController extends Controller
 {
     /**
      * Display the dashboard.
      *
-     * @return \Illuminate\View\View
+     * @return View
      */
     public function index()
     {
@@ -34,12 +36,13 @@ class DashboardController extends Controller
     private function checkRabbitMqStatus(): string
     {
         try {
-            if (!class_exists(\PhpAmqpLib\Connection\AMQPStreamConnection::class)) {
+            if (! class_exists(AMQPStreamConnection::class)) {
                 Log::warning('PhpAmqpLib not available for RabbitMQ status check');
+
                 return 'offline';
             }
 
-            $connection = new \PhpAmqpLib\Connection\AMQPStreamConnection(
+            $connection = new AMQPStreamConnection(
                 config('queue.connections.rabbitmq.host', 'localhost'),
                 config('queue.connections.rabbitmq.port', 5672),
                 config('queue.connections.rabbitmq.user', 'guest'),
@@ -48,18 +51,17 @@ class DashboardController extends Controller
             );
 
             $connection->close();
+
             return 'online';
         } catch (\Exception $e) {
-            Log::warning('RabbitMQ status check failed: ' . $e->getMessage());
+            Log::warning('RabbitMQ status check failed: '.$e->getMessage());
+
             return 'offline';
         }
     }
 
     /**
      * Get the last N operations from Redis cache.
-     *
-     * @param int $limit
-     * @return array
      */
     private function getLastOperations(int $limit): array
     {
@@ -78,20 +80,20 @@ class DashboardController extends Controller
             usort($operations, function ($a, $b) {
                 $timeA = strtotime($a['processed_at'] ?? '1970-01-01');
                 $timeB = strtotime($b['processed_at'] ?? '1970-01-01');
+
                 return $timeB - $timeA;
             });
 
             return array_slice($operations, 0, $limit);
         } catch (\Exception $e) {
-            Log::warning('Failed to retrieve operations from cache: ' . $e->getMessage());
+            Log::warning('Failed to retrieve operations from cache: '.$e->getMessage());
+
             return [];
         }
     }
 
     /**
      * Get tutorial stages for the dashboard.
-     *
-     * @return array
      */
     private function getTutorialStages(): array
     {
@@ -114,7 +116,7 @@ class DashboardController extends Controller
                 'tech_details' => [
                     'event' => 'OperationPerformed',
                     'properties' => 'amount, storeName, dispatchedAt',
-                    'broadcast' => "broadcastOn() → canal dashboard-stats",
+                    'broadcast' => 'broadcastOn() → canal dashboard-stats',
                     'queue' => 'operacion.realizada',
                 ],
             ],

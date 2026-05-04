@@ -4,6 +4,7 @@ namespace Tests\Unit;
 
 use App\Events\OperationPerformed;
 use Illuminate\Broadcasting\Channel;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Tests\TestCase;
 
 class OperationPerformedTest extends TestCase
@@ -49,6 +50,6 @@ class OperationPerformedTest extends TestCase
     public function event_implements_should_broadcast(): void
     {
         $event = new OperationPerformed(100, 'Store');
-        $this->assertInstanceOf(\Illuminate\Contracts\Broadcasting\ShouldBroadcast::class, $event);
+        $this->assertInstanceOf(ShouldBroadcast::class, $event);
     }
 }

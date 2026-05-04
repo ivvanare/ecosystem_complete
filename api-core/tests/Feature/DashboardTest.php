@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use Illuminate\Support\Facades\Cache;
 use Tests\TestCase;
 
 class DashboardTest extends TestCase
@@ -127,7 +128,7 @@ class DashboardTest extends TestCase
     public function dashboard_displays_operations_from_cache(): void
     {
         // Fake cache data
-        \Illuminate\Support\Facades\Cache::shouldReceive('get')
+        Cache::shouldReceive('get')
             ->with('last_operation:Tienda Central')
             ->andReturn([
                 'amount' => 1500.50,
@@ -135,7 +136,7 @@ class DashboardTest extends TestCase
                 'processed_at' => '2026-05-04 15:30:00',
             ]);
 
-        \Illuminate\Support\Facades\Cache::shouldReceive('get')
+        Cache::shouldReceive('get')
             ->with('last_operation:Sucursal Norte')
             ->andReturn(null);
 
@@ -150,7 +151,7 @@ class DashboardTest extends TestCase
     public function dashboard_shows_fallback_when_cache_unavailable(): void
     {
         $response = $this->get('/dashboard');
-        
+
         // The view should render (either with data or fallback message)
         $response->assertStatus(200);
         $response->assertSee('Cache:');
@@ -169,7 +170,7 @@ class DashboardTest extends TestCase
     public function dashboard_displays_online_status_when_rabbitmq_available(): void
     {
         $response = $this->get('/dashboard');
-        
+
         // Should show either Online or Offline (graceful handling)
         $response->assertSee('Estado del Sistema');
         $response->assertSee('operacion.realizada');

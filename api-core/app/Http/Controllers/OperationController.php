@@ -3,8 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Events\OperationPerformed;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Cache;
+use Illuminate\Http\Response;
 
 class OperationController extends Controller
 {
@@ -13,15 +14,15 @@ class OperationController extends Controller
      * GET: Backward compatible (returns text, fixed values)
      * POST: Returns JSON with event details
      *
-     * @param Request $request
-     * @return \Illuminate\Http\Response|\Illuminate\Http\JsonResponse
+     * @return Response|JsonResponse
      */
     public function dispatchEvent(Request $request)
     {
         // Backward compatibility: GET returns text response
         if ($request->isMethod('get')) {
-            event(new OperationPerformed(1500.5, "Tienda Central"));
-            return response("✅ Evento disparado a RabbitMQ. El listener procesará y guardará en Redis.");
+            event(new OperationPerformed(1500.5, 'Tienda Central'));
+
+            return response('✅ Evento disparado a RabbitMQ. El listener procesará y guardará en Redis.');
         }
 
         // POST: Return JSON with event details
@@ -46,12 +47,11 @@ class OperationController extends Controller
 
     /**
      * Get a random store name
-     *
-     * @return string
      */
     private function getRandomStore(): string
     {
         $stores = ['Tienda Central', 'Sucursal Norte', 'Sucursal Sur'];
+
         return $stores[array_rand($stores)];
     }
 }

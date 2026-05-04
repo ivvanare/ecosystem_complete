@@ -16,6 +16,7 @@ class OperationControllerTest extends TestCase
         $response->assertStatus(200);
         $response->assertSee('Dashboard');
     }
+
     /** @test */
     public function post_test_operacion_returns_json_with_event_details(): void
     {

@@ -10,11 +10,11 @@ use Illuminate\Queue\SerializesModels;
 
 /**
  * OperationPerformed - Event for Queue (RabbitMQ) communication
- * 
+ *
  * This event is dispatched when an operation is performed.
  * It is processed asynchronously via RabbitMQ queue by the SendNotification listener.
  * The listener then stores the operation data in Redis cache.
- * 
+ *
  * Flow: HTTP Request → Event Dispatch → RabbitMQ Queue → Listener → Redis Cache
  */
 class OperationPerformed implements ShouldBroadcast
@@ -45,8 +45,8 @@ class OperationPerformed implements ShouldBroadcast
     /**
      * Create a new event instance.
      *
-     * @param float $amount
-     * @param string $storeName
+     * @param  float  $amount
+     * @param  string  $storeName
      */
     public function __construct($amount, $storeName)
     {
