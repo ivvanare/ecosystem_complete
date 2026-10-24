@@ -5,7 +5,7 @@ Compact guidance for OpenCode agents working in this repository.
 ## Stack
 
 - **Runtime**: PHP 8.2 (FPM Alpine) with Laravel 12
-- **Database**: PostgreSQL 15 (two databases: `coreapp`, `apiseg`)
+- **Database**: PostgreSQL 15 (one database `melzone`, schemas `seg` + `core` — spec: `database/diagram_base.txt`)
 - **Message Broker**: RabbitMQ 3 with management plugin
 - **Cache**: Redis 7
 - **Web Server**: Nginx Alpine (proxies to FPM on port 9000)
@@ -68,7 +68,7 @@ RabbitMQ management UI: http://localhost:15672 (admin/admin_pass)
 
 - Queue driver: RabbitMQ via `vladimir-yuldashev/laravel-queue-rabbitmq`
 - Redis client: `phpredis` extension (installed via PECL in Dockerfile), NOT Predis
-- PostgreSQL init creates two databases: `coreapp` (main) and `apiseg` (security/auth)
+- PostgreSQL init (`database/init/`) creates one database `melzone` with schemas `seg` (identity/permissions) and `core` (domain) — replaces the former two-database topology (`coreapp` + `apiseg`); init runs only on an empty data volume
 - Event example in `routes/web.php`: `OperacionRealizada` dispatches to RabbitMQ
 - **Queue + Cache Example**: See `api-core/README.md` for complete documentation
   - Flow: HTTP Request → Event → RabbitMQ Queue → Listener → Redis Cache

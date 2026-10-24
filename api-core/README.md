@@ -7,7 +7,7 @@ Laravel 12 application demonstrating Queue (RabbitMQ) + Cache (Redis) communicat
 ### Stack
 - **Runtime**: PHP 8.2 (FPM Alpine)
 - **Framework**: Laravel 12
-- **Database**: PostgreSQL 15 (two databases: `coreapp`, `apiseg`)
+- **Database**: PostgreSQL 15 (one database `melzone`, schemas `seg` + `core`)
 - **Message Broker**: RabbitMQ 3 with management plugin
 - **Cache**: Redis 7
 - **Web Server**: Nginx Alpine (proxies to FPM on port 9000)
@@ -19,7 +19,7 @@ Laravel 12 application demonstrating Queue (RabbitMQ) + Cache (Redis) communicat
 |---------|-----------|------|-------------|
 | API | melzone_api | internal:9000 | Laravel application (PHP-FPM) |
 | Nginx | melzone_nginx | 9000 → 80 | Reverse proxy to FPM |
-| PostgreSQL | melzone_db | 5432 | Database server (coreapp + apiseg) |
+| PostgreSQL | melzone_db | 5432 | Database server (`melzone`: seg + core schemas) |
 | RabbitMQ | melzone_mq | 5672, 15672 | Message queue with management UI |
 | Redis | melzone_redis | 6379 | Cache server |
 
@@ -41,8 +41,9 @@ melZone/
 ```
 
 ### Database Configuration
-- **coreapp**: Main application database
-- **apiseg**: Security/auth database
+- **melzone**: Single database with schemas `seg` (identity/permissions) and `core` (domain)
+- Canonical model spec: `database/diagram_base.txt`; init scripts: `database/init/`
+- (Replaces the former two-database topology: `coreapp` + `apiseg`)
 
 ### Key Architecture Notes
 - Queue driver: RabbitMQ via `vladimir-yuldashev/laravel-queue-rabbitmq`

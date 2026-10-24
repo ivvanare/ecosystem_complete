@@ -8,7 +8,7 @@ Infrastructure-first Laravel 12 application with Docker-based multi-service arch
 |-----------|-------------|
 | Runtime | PHP 8.2 (FPM Alpine) |
 | Framework | Laravel 12 |
-| Database | PostgreSQL 15 (two databases: `coreapp`, `apiseg`) |
+| Database | PostgreSQL 15 (one database `melzone`, schemas `seg` + `core`) |
 | Message Broker | RabbitMQ 3 with management plugin |
 | Cache | Redis 7 |
 | Web Server | Nginx Alpine |
@@ -151,7 +151,7 @@ Use this to monitor queue health, message rates, and failed jobs.
 
 - **Queue driver**: RabbitMQ via `vladimir-yuldashev/laravel-queue-rabbitmq`
 - **Redis client**: `phpredis` extension (installed via PECL in Dockerfile), NOT Predis
-- **Two PostgreSQL databases**: `coreapp` (main), `apiseg` (security/auth)
+- **One PostgreSQL database**: `melzone` with schemas `seg` (identity/permissions) and `core` (domain) — canonical spec: `database/diagram_base.txt`
 - **Sessions**: Stored in database (not Redis directly)
 - **Testing**: Isolated from production services (SQLite, array cache, sync queue)
 
