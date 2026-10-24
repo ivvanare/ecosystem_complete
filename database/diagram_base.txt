@@ -1,0 +1,576 @@
+// ==============================================================================
+// MODELO BASE — melZone · App de rutas y lugares
+// Destino: dbdiagram.io (DBML) · database_type: PostgreSQL
+// ==============================================================================
+//
+// TOPOLOGÍA: UNA BASE DE DATOS, DOS ESQUEMAS
+//   - seg    → identidad y permisos: usuarios, refresh tokens, roles, permisos.
+//   - core   → dominio: lugares, horarios, menús, reseñas y rutas.
+//   - public → solo los Enum compartidos, porque son los únicos objetos que usan
+//     ambos esquemas (en PostgreSQL un tipo vive en un esquema y `public` está en
+//     el search_path por defecto, así que se usan sin calificar).
+//
+//   Este modelo REEMPLAZA la topología anterior de dos bases (apiseg + coreapp).
+//   Motivo: con un único servicio dueño de todo, dos bases costaban FK y JOIN entre
+//   seguridad y dominio sin comprar aislamiento real. Los esquemas dan la misma
+//   separación lógica, permiten GRANT por esquema, y las FK y los JOIN entre esquemas
+//   funcionan de verdad. Extraer a futuro sigue siendo un `pg_dump -n seg`.
+//
+// REGLAS DEL MODELO
+//
+//   1. PK: UUID en todas las tablas de negocio. Prefijos de columna:
+//      co_ (código/identificador), tx_ (texto), nu_ (numérico), dt_ (fecha/hora),
+//      js_ (json), co_X_user (referencias a usuario).
+//
+//   2. LAS FK SON REALES, INCLUIDAS LAS QUE CRUZAN ESQUEMAS.
+//      A diferencia de la versión anterior de este diagrama, ninguna relación es
+//      "lógica": PostgreSQL sí admite foreign keys entre esquemas de una misma base.
+//      Toda columna co_* tiene su Ref, y toda FK tiene índice porque PostgreSQL no
+//      indexa las FK automáticamente.
+//
+//   3. CICLO DE VIDA — tres cubos, según la naturaleza de la tabla:
+//      - Entidades de negocio y catálogos de seguridad: auditoría completa
+//        (dt_created_at + dt_updated_at + dt_deleted_at, soft delete).
+//      - Puentes y configuración por fila: dt_created_at + dt_updated_at, borrado
+//        físico. Motivo: con soft delete y clave compuesta, una fila "borrada"
+//        bloquea para siempre volver a insertar el mismo par.
+//      - Estado operativo (tb_refresh_token, tb_user_token, tb_signup_request): sin
+//        soft delete, el estado se expresa con columnas propias (dt_expires_at,
+//        dt_revoked_at, dt_used_at). Un token revocado o ya usado no está "borrado",
+//        y hay que conservarlo para poder detectar el reuso.
+//      - Bitácora inmutable (tb_security_event): solo dt_created_at. Nunca se actualiza
+//        ni se borra una fila individual; la retención se aplica por partición o lote.
+//
+//   4. UNIQUE + SOFT DELETE = TRAMPA.
+//      Un unique plano sobre una tabla con dt_deleted_at impide reutilizar el valor
+//      para siempre. Todos los uniques de tablas con soft delete son PARCIALES
+//      (WHERE dt_deleted_at IS NULL) y están marcados [PARTIAL UNIQUE].
+//
+//   5. Los CHECK se expresan en el propio DBML con la sintaxis `check:` de columna,
+//      así que no quedan como comentario: rating 1..5, rango de latitud y longitud,
+//      y precio >= 0.
+//
+//   6. IDENTIDAD VS CAPACIDAD (RBAC).
+//      tb_user es LA tabla base de usuarios: los de la app y los del backoffice son la
+//      misma entidad. No hay tb_admin_user ni columna tx_type. Las capacidades no se
+//      guardan en el usuario: se derivan del RBAC (usuario → rol → permiso). Un usuario
+//      entra al módulo administrativo porque tiene un rol activo que otorga el permiso
+//      admin.access, no porque su registro sea "de tipo admin".
+//
+//   7. TOKENS.
+//      Access token corto y SIN ESTADO: no se guarda en ninguna tabla.
+//      Refresh token largo y CON ESTADO: se guarda su hash (nunca el token crudo) y
+//      rota en cada uso. Reusar un refresh ya rotado invalida la familia completa.
+//      Al cambiar la contraseña se revocan TODAS las familias de refresh del usuario.
+//
+//   8. IDENTIDAD FEDERADA (Google / Apple).
+//      El proveedor devuelve un ID token con un claim `sub`. La identidad se resuelve
+//      SIEMPRE por (provider, sub) en tb_user_identity, NUNCA por email: el email
+//      cambia, Apple inventa direcciones de relé y no lo envía en todas las
+//      autorizaciones. El token del proveedor NUNCA es la credencial de la API: el
+//      backend lo valida contra el JWKS del proveedor y emite su propio JWT.
+//
+//   9. VERIFICACIÓN DE EMAIL ANTES DE QUE EL USUARIO EXISTA.
+//      El email se prueba ANTES de crear la fila en tb_user: mientras nadie demuestre
+//      acceso a la casilla, el registro vive en tb_signup_request. Evita dos cosas: que
+//      alguien ocupe (squatting) la dirección de otra persona con un registro que nunca
+//      va a verificar, y que tb_user se llene de basura. Durante el registro el email es
+//      INMUTABLE: si cambia, hay que emitir un código nuevo para la dirección nueva.
+//
+//   10. ENTREGA POR CÓDIGO, NO POR LINK (por ahora).
+//      Todos los flujos que confirman acceso a un email usan un código de 6 dígitos:
+//      registro, recuperación de contraseña y cambio de email. Motivo: el producto es la
+//      app móvil, no hay frontend web y no hay deep links configurados. Un link obligaría
+//      a una página de aterrizaje, a asociar el dominio con la app (Universal Links /
+//      App Links) y a pelear con los escáneres de correo, que prefetchean el link y lo
+//      consumen antes del primer clic. El código evita las tres cosas y mantiene al
+//      usuario dentro de la app.
+//      Un código son 1.000.000 de combinaciones: por eso TODA tabla con código lleva
+//      contador de intentos (cortar en 3 a 5) y vencimiento corto. Sin esos dos límites
+//      el código es tan débil como no tener ninguno. Si hace falta más margen se agregan
+//      dígitos (8), no letras: alfanumérico complica el tipeo por caracteres ambiguos
+//      (0/O, 1/l/I) y no aporta sobre un contador que ya limita a 5 intentos.
+//      Cuando exista un cliente web, sumar el link con token largo es aditivo.
+//
+//   11. AUDITORÍA DE SEGURIDAD Y ACCESOS (tb_security_event).
+//      Bitácora append-only de todo lo que importa para seguridad: logins, fallos,
+//      cambios de contraseña, vínculos de proveedores, cambios de RBAC y accesos al
+//      módulo administrativo, con IP y ubicación aproximada derivada de la IP.
+//      Reglas duras: NUNCA guarda códigos, tokens ni contraseñas; NUNCA guarda el email
+//      en claro de un intento fallido (sería un oráculo de enumeración de usuarios),
+//      guarda un HMAC; y NO lleva FK a tb_user, porque la auditoría tiene que sobrevivir
+//      al borrado del usuario.
+//
+// CONTEXTO DE ESTA ITERACIÓN
+//   - Laravel (api-core) se da de baja: contiene solo un andamio y un demo de
+//     RabbitMQ/Redis, sin código de producto. Go pasa a ser el único servicio dueño
+//     de la API y de las escrituras, con el móvil como primer consumidor.
+//   - La tabla `users` de la migración por defecto de Laravel
+//     (0001_01_01_000000_create_users_table.php) queda obsoleta: la reemplaza tb_user.
+//   - Como hay un solo servicio y un solo verificador de tokens, HS256 con el secreto
+//     en variable de entorno es suficiente. Pasar a RS256 el día que exista un segundo
+//     componente que verifique tokens sin poder firmarlos.
+//   - Flujo de social login: SDK NATIVO en el móvil (la app obtiene el ID token y lo
+//     manda al backend). Por eso el camino de identidad NO necesita
+//     golang.org/x/oauth2 ni el client_secret de Apple: alcanza con go-oidc validando
+//     el ID token contra el JWKS del proveedor. Sumar después el redirect con PKCE para
+//     la web es aditivo: comparten tb_user_identity y el mismo validador.
+//   - Si alguna vez se canjea el authorization code de Apple: su client_secret es a su
+//     vez un JWT firmado con ES256 con la clave .p8, y Apple rechaza cualquier exp a más
+//     de 15777000 segundos (6 meses). Necesita job de rotación y firma en formato JOSE
+//     (R||S crudo, no DER).
+//   - PENDIENTE: el frontend del módulo administrativo. Laravel aportaba Blade + Vite y
+//     ahora hay que decidir entre un backoffice en Go (templ/htmx) o un SPA aparte
+//     contra la misma API. El RBAC ya está modelado para cualquiera de los dos.
+//   - Fuera del alcance a propósito: tablas de sesión (con JWT no hacen falta) y las
+//     acciones ON DELETE/UPDATE de las FK (son una decisión de negocio aparte).
+// ==============================================================================
+
+Project melzone_base {
+  database_type: 'PostgreSQL'
+  Note: 'Una base, dos esquemas: seg (identidad y permisos) y core (dominio).'
+}
+
+// ------------------------------------------------------------------------------
+// ENUMS — viven en el esquema public porque los comparten seg y core
+// ------------------------------------------------------------------------------
+
+Enum activatable_status {
+  ACTIVE
+  INACTIVE
+}
+
+Enum suspendable_status {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+Enum review_status {
+  ACTIVE
+  INACTIVE
+  MODERATED
+}
+
+Enum photo_kind {
+  COVER
+  GALLERY
+}
+
+Enum identity_provider {
+  GOOGLE
+  APPLE
+}
+
+Enum user_token_purpose {
+  PASSWORD_RESET
+  EMAIL_CHANGE
+}
+
+// ==============================================================================
+// ESQUEMA seg — IDENTIDAD Y PERMISOS
+// ==============================================================================
+
+// ---- Usuarios ----
+
+// tb_user es LA tabla base de usuarios. Un usuario de la app y uno del backoffice son
+// la misma entidad; lo que los diferencia son sus roles, no su tipo de registro.
+Table seg.tb_user {
+  co_user uuid [pk, note: 'UUID del usuario']
+  tx_name varchar [note: 'NULL permitido: en Apple el nombre llega SOLO en la primera autorización']
+  tx_email varchar [note: 'NULL permitido: Apple puede no enviarlo, y puede ser un relé @privaterelay.appleid.com. Postgres admite varios NULL en un índice único']
+  tx_password_hash varchar [note: 'NULL permitido: quien entró solo con Google/Apple no tiene contraseña. Argon2id o bcrypt, nunca la clave en claro']
+  dt_email_verified_at timestamp [note: 'Cuándo se probó el email: por el código del registro o por el claim email_verified del proveedor. Con la regla 9 siempre viene seteado; queda para trazabilidad']
+  nu_failed_attempts int [not null, default: 0, note: 'Intentos fallidos consecutivos. Se resetea al loguear bien. Sin esto el login es fuerza-bruteable']
+  dt_locked_until timestamp [note: 'Bloqueo temporal por intentos fallidos. NULL = no bloqueado']
+  tx_status suspendable_status [not null, default: 'ACTIVE']
+  dt_created_at timestamp [not null]
+  dt_updated_at timestamp [not null]
+  dt_deleted_at timestamp
+
+  Indexes {
+    // [PARTIAL UNIQUE] En SQL: UNIQUE (tx_email) WHERE dt_deleted_at IS NULL.
+    // Un unique plano dejaría el email de un usuario borrado ocupado para siempre.
+    (tx_email) [unique, name: 'ux_tb_user_email_active']
+  }
+}
+
+// ---- Tokens ----
+
+// Solo se persiste el refresh token. El access token es sin estado y no se guarda.
+// Es la única razón por la que existe la administración de sesiones: poder revocar.
+Table seg.tb_refresh_token {
+  co_refresh_token uuid [pk]
+  co_user uuid [not null]
+  tx_token_hash varchar [not null, unique, note: 'SHA-256 del token. NUNCA el token crudo: si se filtra la base, los tokens crudos son toma de cuenta de cada sesión activa']
+  co_token_family uuid [not null, note: 'Agrupa la cadena de rotaciones. Si llega un token ya rotado (señal de robo), se revoca la familia completa']
+  tx_device varchar [note: 'Etiqueta que ve el usuario: "iPhone de Ana"']
+  tx_user_agent varchar
+  tx_ip varchar
+  dt_expires_at timestamp [not null]
+  dt_revoked_at timestamp [note: 'NULL = activo. Expirado y revocado son estados distintos y se cuentan distinto']
+  dt_created_at timestamp [not null]
+  dt_updated_at timestamp [not null]
+
+  Indexes {
+    co_user
+    co_token_family
+  }
+}
+
+// Código de un solo uso para un usuario que YA existe: recuperar su contraseña o
+// verificar una dirección nueva de email. Mismo mecanismo que el registro (regla 10):
+// código de 6 dígitos, no link. Sin frontend web ni deep links configurados, el link
+// solo agrega una página de aterrizaje y el problema de los escáneres de correo.
+// Sin soft delete: igual que el refresh, el estado vive en sus columnas.
+//
+// Regla de aplicación: al emitir un código nuevo hay que invalidar los anteriores del
+// mismo usuario y propósito (marcarles dt_used_at). NO se puede expresar como índice
+// único parcial porque el predicado dependería de now(), y PostgreSQL exige que los
+// predicados de índice sean inmutables.
+Table seg.tb_user_token {
+  co_user_token uuid [pk]
+  co_user uuid [not null]
+  tx_purpose user_token_purpose [not null]
+  tx_code_hash varchar [not null, unique, note: 'SHA-256 del código de 6 dígitos enviado por email. NUNCA el código crudo']
+  tx_target varchar [not null, note: 'Email al que se envió el código. En EMAIL_CHANGE es el email nuevo que se verifica; en PASSWORD_RESET es el email vigente al pedirlo. Al consumirlo se compara con el actual: si el email ya cambió, el código se rechaza']
+  nu_attempts int [not null, default: 0, note: 'Intentos de validación. Cortar en 3 a 5. Es el control que realmente protege: 6 dígitos son 1.000.000 de combinaciones']
+  dt_expires_at timestamp [not null, note: 'Vida corta: 5 a 10 minutos']
+  dt_used_at timestamp [note: 'Un solo uso. NULL = sin usar. Reusarlo debe fallar']
+  dt_created_at timestamp [not null]
+  dt_updated_at timestamp [not null]
+
+  Indexes {
+    co_user
+    tx_purpose
+  }
+}
+
+// Registro pendiente: el usuario NO existe todavía en tb_user. Se crea recién cuando
+// prueba que controla el email con el código de 6 dígitos (ver regla 10). Sin soft
+// delete: o se convierte en usuario o expira y se borra.
+Table seg.tb_signup_request {
+  co_signup_request uuid [pk]
+  tx_email varchar [not null, unique, note: 'Email a verificar. INMUTABLE durante el registro: si cambia, hay que emitir un código nuevo']
+  tx_name varchar [not null, note: 'Se copia a tb_user al verificar']
+  tx_password_hash varchar [not null, note: 'Argon2id, hasheado ANTES de guardar. Nunca la clave en claro, ni siquiera para un registro sin verificar']
+  tx_code_hash varchar [not null, note: 'SHA-256 del código de 6 dígitos enviado por email. NUNCA el código crudo']
+  nu_attempts int [not null, default: 0, note: 'Intentos de validación. Cortar en 3 a 5. Sin este contador un código de 6 dígitos se fuerza en minutos']
+  dt_expires_at timestamp [not null, note: '10 minutos como máximo']
+  dt_created_at timestamp [not null]
+  dt_updated_at timestamp [not null]
+}
+
+// ---- Identidad federada (Google / Apple) ----
+
+// Una fila por proveedor vinculado. Un mismo usuario puede tener Google Y Apple,
+// y por eso la relación es usuario -> identidades, no una columna en tb_user.
+Table seg.tb_user_identity {
+  co_user_identity uuid [pk]
+  co_user uuid [not null]
+  tx_provider identity_provider [not null]
+  tx_provider_user_id varchar [not null, note: 'El claim `sub` del proveedor. Es la CLAVE de resolución del login federado, nunca el email']
+  tx_email varchar [note: 'Email que devolvió el proveedor. En Apple puede ser un relé. Informativo: no se resuelve identidad por acá']
+  dt_linked_at timestamp [not null, note: 'Cuándo se vinculó el proveedor a la cuenta']
+  dt_created_at timestamp [not null]
+  dt_updated_at timestamp [not null]
+  dt_deleted_at timestamp
+
+  Indexes {
+    // [PARTIAL UNIQUE] En SQL: UNIQUE (tx_provider, tx_provider_user_id)
+    // WHERE dt_deleted_at IS NULL. Es la clave que evita que la misma persona
+    // termine con dos usuarios distintos según con quién entró.
+    (tx_provider, tx_provider_user_id) [unique, name: 'ux_tb_user_identity_provider_sub']
+    co_user
+  }
+}
+
+// ---- RBAC (role-based access control) ----
+
+// Rol: agrupador de permisos, asignable a usuarios. Ej. SUPERADMIN, ADMIN, EDITOR.
+Table seg.tb_role {
+  co_role uuid [pk]
+  tx_name varchar [not null, note: 'Ej. SUPERADMIN, ADMIN, EDITOR']
+  tx_description text
+  tx_status activatable_status [not null, default: 'ACTIVE']
+  dt_created_at timestamp [not null]
+  dt_updated_at timestamp [not null]
+  dt_deleted_at timestamp
+
+  Indexes {
+    // [PARTIAL UNIQUE] En SQL: UNIQUE (tx_name) WHERE dt_deleted_at IS NULL.
+    (tx_name) [unique, name: 'ux_tb_role_name_active']
+  }
+}
+
+// Permiso: una acción concreta ejecutable en el módulo administrativo.
+// Es un catálogo que siembra la aplicación, no algo que se cree desde la UI.
+Table seg.tb_permission {
+  co_permission uuid [pk]
+  tx_code varchar [not null, note: 'Clave estable que evalúa el código: place.create, place.update, review.moderate, admin.access']
+  tx_module varchar [not null, note: 'Agrupador para la UI del backoffice: PLACES, MENUS, REVIEWS, ROUTES, USERS, ROLES']
+  tx_name varchar [not null, note: 'Nombre visible: Crear lugar']
+  tx_description text
+  tx_status activatable_status [not null, default: 'ACTIVE']
+  dt_created_at timestamp [not null]
+  dt_updated_at timestamp [not null]
+  dt_deleted_at timestamp
+
+  Indexes {
+    // [PARTIAL UNIQUE] En SQL: UNIQUE (tx_code) WHERE dt_deleted_at IS NULL.
+    (tx_code) [unique, name: 'ux_tb_permission_code_active']
+  }
+}
+
+// Puente usuario <-> rol. Sin soft delete (regla 3): una fila borrada lógicamente
+// impediría volver a asignar el mismo rol al mismo usuario.
+Table seg.tb_user_role {
+  co_user uuid [not null]
+  co_role uuid [not null]
+  dt_created_at timestamp [not null]
+  dt_updated_at timestamp [not null]
+
+  Indexes {
+    // Clave primaria compuesta: pk_tb_user_role
+    (co_user, co_role) [pk]
+    co_role
+  }
+}
+
+// Puente rol <-> permiso. Sin soft delete (regla 3).
+Table seg.tb_role_permission {
+  co_role uuid [not null]
+  co_permission uuid [not null]
+  dt_created_at timestamp [not null]
+  dt_updated_at timestamp [not null]
+
+  Indexes {
+    // Clave primaria compuesta: pk_tb_role_permission
+    (co_role, co_permission) [pk]
+    co_permission
+  }
+}
+
+// ==============================================================================
+// ESQUEMA seg — AUDITORÍA
+// ==============================================================================
+
+// Bitácora inmutable de eventos de seguridad y accesos. Append-only: una fila nunca se
+// actualiza ni se borra individualmente; la retención se aplica por partición mensual
+// (PARTITION BY RANGE (dt_created_at), borrar = DROP PARTITION) o por lote. DBML no
+// puede expresar el particionado, va como nota de implementación.
+//
+// NO lleva FK a tb_user a propósito: la auditoría tiene que sobrevivir al borrado del
+// usuario, y un ON DELETE CASCADE se llevaría la evidencia justo cuando más la necesitás.
+//
+// Catálogo de eventos: varchar con convención punto, NO Enum. Un catálogo de eventos
+// crece con cada funcionalidad nueva, y un Enum de PostgreSQL obliga a migrar el tipo
+// cada vez (y no se puede quitar un valor).
+//   auth.login.success          auth.login.failed           auth.logout
+//   auth.password.changed       auth.password.set           auth.password.reset_requested
+//   auth.password.reset_completed
+//   auth.email.verify_requested auth.email.verified         auth.email.changed
+//   auth.identity.linked        auth.identity.unlinked
+//   auth.token.refresh_reused   auth.sessions.revoked       auth.account.locked
+//   auth.account.unlocked
+//   rbac.role.assigned          rbac.role.revoked           rbac.permission.changed
+//   admin.access.granted        admin.access.denied
+//   admin.user.suspended        admin.user.reactivated
+Table seg.tb_security_event {
+  co_security_event uuid [pk]
+  tx_event varchar [not null, note: 'Ver catálogo arriba. Nunca guardar acá secretos, códigos ni tokens']
+  co_user uuid [note: 'SUJETO del evento: a quién le pasó. NULL en un intento fallido que no resuelve a usuario. Sin FK: ver comentario de la tabla']
+  co_actor_user uuid [note: 'QUIÉN lo hizo cuando no fue el propio sujeto: un administrativo del backoffice. NULL = el propio usuario o el sistema']
+  tx_email_hash varchar [note: 'HMAC-SHA256 del email intentado, con secreto del servidor. Permite distinguir un ataque masivo de uno dirigido a una casilla, sin guardar el email en claro (sería un oráculo de enumeración de usuarios)']
+  tx_ip varchar [note: 'IP de origen. Es dato personal: define la política de retención']
+  tx_country varchar(2) [note: 'ISO 3166-1 alpha-2, derivado de la IP. NO es GPS']
+  tx_city varchar [note: 'Derivado de la IP. Aproximado por definición: con VPN o datos móviles puede no corresponder a la persona']
+  tx_user_agent varchar
+  js_metadata jsonb [note: 'Contexto adicional del evento. NUNCA códigos, tokens ni contraseñas']
+  dt_created_at timestamp [not null, note: 'Único timestamp: un evento no se modifica']
+
+  Indexes {
+    (co_user, dt_created_at) [name: 'ix_tb_security_event_user']
+    (tx_event, dt_created_at) [name: 'ix_tb_security_event_event']
+    tx_ip [name: 'ix_tb_security_event_ip']
+  }
+}
+
+// ==============================================================================
+// ESQUEMA core — DOMINIO
+// ==============================================================================
+
+Table core.tb_place {
+  co_place uuid [pk, note: 'UUID del lugar (Ej. Información como MELIA)']
+  co_owner_user uuid [note: 'Dueño del lugar. NULL en lugares curados por el backoffice']
+  tx_name varchar [not null, note: 'Nombre real/legal']
+  tx_title varchar [not null, note: 'Nombre comercial para la App']
+  tx_description text
+  tx_category varchar [not null, note: 'Hotel, Arepera, Parque, etc.']
+  nu_latitude decimal(9,6) [not null, check: `nu_latitude BETWEEN -90 AND 90`]
+  nu_longitude decimal(9,6) [not null, check: `nu_longitude BETWEEN -180 AND 180`]
+  tx_address varchar
+  js_social_media jsonb [note: '{"instagram": "...", "web": "..."}']
+  tx_status suspendable_status [not null, default: 'ACTIVE']
+  dt_created_at timestamp [not null]
+  dt_updated_at timestamp [not null]
+  dt_deleted_at timestamp
+
+  Indexes {
+    co_owner_user
+  }
+}
+
+// Horarios del lugar. Reemplaza el par único open/close de tb_place: permite
+// horarios distintos por día y locales que cruzan la medianoche.
+Table core.tb_place_schedule {
+  co_schedule uuid [pk]
+  co_place uuid [not null]
+  nu_day_of_week int [not null, check: `nu_day_of_week BETWEEN 1 AND 7`, note: 'ISO-8601: 1=Lunes ... 7=Domingo']
+  dt_open_time time [not null]
+  dt_close_time time [not null, note: 'Si <= dt_open_time, el cierre es al día siguiente (cruza medianoche). Ej. abre 20:00, cierra 02:00']
+  dt_created_at timestamp [not null]
+  dt_updated_at timestamp [not null]
+
+  Indexes {
+    (co_place, nu_day_of_week, dt_open_time) [unique, name: 'ux_tb_place_schedule_slot']
+  }
+}
+
+Table core.tb_place_photo {
+  co_photo uuid [pk]
+  co_place uuid [not null]
+  tx_url varchar [not null, note: 'URL de la imagen en S3/Cloud']
+  tx_type photo_kind [not null, note: 'COVER o GALLERY. Una sola COVER por lugar: regla de aplicación']
+  nu_order int [not null]
+  tx_status activatable_status [not null, default: 'ACTIVE']
+  dt_created_at timestamp [not null]
+  dt_updated_at timestamp [not null]
+  dt_deleted_at timestamp
+
+  Indexes {
+    co_place
+  }
+}
+
+// Nivel intermedio entre lugar y plato: un lugar puede tener varias cartas
+// (Desayuno, Almuerzo, Cena, Vinos).
+Table core.tb_menu {
+  co_menu uuid [pk]
+  co_place uuid [not null]
+  tx_name varchar [not null, note: 'Ej. Desayuno, Almuerzo, Cena']
+  tx_description text
+  tx_status activatable_status [not null, default: 'ACTIVE']
+  dt_created_at timestamp [not null]
+  dt_updated_at timestamp [not null]
+  dt_deleted_at timestamp
+
+  Indexes {
+    co_place
+  }
+}
+
+Table core.tb_menu_item {
+  co_menu_item uuid [pk]
+  co_menu uuid [not null, note: 'Cuelga del menú, no del lugar']
+  tx_name varchar [not null]
+  tx_description text
+  nu_price decimal(10,2) [not null, check: `nu_price >= 0`]
+  tx_status activatable_status [not null, default: 'ACTIVE']
+  dt_created_at timestamp [not null]
+  dt_updated_at timestamp [not null]
+  dt_deleted_at timestamp
+
+  Indexes {
+    co_menu
+  }
+}
+
+Table core.tb_review {
+  co_review uuid [pk]
+  co_user uuid [not null, note: 'Autor de la reseña. FK real a seg.tb_user (entre esquemas)']
+  co_place uuid [not null]
+  nu_rating int [not null, check: `nu_rating BETWEEN 1 AND 5`]
+  tx_comment text
+  tx_status review_status [not null, default: 'ACTIVE']
+  dt_created_at timestamp [not null]
+  dt_updated_at timestamp [not null]
+  dt_deleted_at timestamp
+
+  Indexes {
+    co_place
+    co_user
+    // [PARTIAL UNIQUE] En SQL: UNIQUE (co_user, co_place) WHERE dt_deleted_at IS NULL.
+    // Una reseña por usuario y lugar. Sin el filtro, una reseña moderada o borrada
+    // dejaría al usuario sin poder volver a reseñar ese lugar.
+    (co_user, co_place) [unique, name: 'ux_tb_review_user_place_active']
+  }
+}
+
+Table core.tb_route {
+  co_route uuid [pk]
+  co_user uuid [not null, note: 'Usuario creador. FK real a seg.tb_user (entre esquemas)']
+  tx_name varchar [not null]
+  tx_description text
+  tx_status activatable_status [not null, default: 'ACTIVE']
+  dt_created_at timestamp [not null]
+  dt_updated_at timestamp [not null]
+  dt_deleted_at timestamp
+
+  Indexes {
+    co_user
+  }
+}
+
+// Puente ruta <-> lugar, con orden de visita. Sin soft delete a propósito:
+// con clave compuesta, una fila borrada lógicamente impediría volver a agregar
+// ese lugar a la misma ruta.
+Table core.tb_route_place {
+  co_route uuid [not null]
+  co_place uuid [not null]
+  nu_order int [not null, note: 'Orden de visita (1, 2, 3...)']
+  dt_created_at timestamp [not null]
+  dt_updated_at timestamp [not null]
+
+  Indexes {
+    // Clave primaria compuesta: pk_tb_route_place
+    (co_route, co_place) [pk]
+    co_place
+  }
+}
+
+// ==============================================================================
+// RELACIONES — todas FK reales, incluidas las que cruzan esquemas
+// ==============================================================================
+
+// --- seg: identidad y permisos ---
+
+Ref: seg.tb_refresh_token.co_user > seg.tb_user.co_user
+Ref: seg.tb_user_token.co_user > seg.tb_user.co_user
+Ref: seg.tb_user_identity.co_user > seg.tb_user.co_user
+Ref: seg.tb_user_role.co_user > seg.tb_user.co_user
+Ref: seg.tb_user_role.co_role > seg.tb_role.co_role
+Ref: seg.tb_role_permission.co_role > seg.tb_role.co_role
+Ref: seg.tb_role_permission.co_permission > seg.tb_permission.co_permission
+
+// --- core -> seg: entre esquemas, FK real ---
+
+// `>?` marca el lado opcional: co_owner_user es nullable, un lugar curado no tiene dueño.
+Ref: core.tb_place.co_owner_user >? seg.tb_user.co_user
+Ref: core.tb_review.co_user > seg.tb_user.co_user
+Ref: core.tb_route.co_user > seg.tb_user.co_user
+
+// --- core: dominio ---
+
+// Lugares
+Ref: core.tb_place_schedule.co_place > core.tb_place.co_place
+Ref: core.tb_place_photo.co_place > core.tb_place.co_place
+Ref: core.tb_menu.co_place > core.tb_place.co_place
+Ref: core.tb_menu_item.co_menu > core.tb_menu.co_menu
+
+// Reseñas
+Ref: core.tb_review.co_place > core.tb_place.co_place
+
+// Rutas
+Ref: core.tb_route_place.co_route > core.tb_route.co_route
+Ref: core.tb_route_place.co_place > core.tb_place.co_place
