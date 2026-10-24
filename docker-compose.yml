@@ -39,8 +39,9 @@ services:
     volumes:
       # Carpeta para persistencia de datos reales
       - ./database/data:/var/lib/postgresql/data
-      # Script de inicialización de bases de datos
-      - ./database/init-db-postgres.sql:/docker-entrypoint-initdb.d/init-db-postgres.sql
+      # Scripts de inicialización: una base `melzone`, esquemas seg + core
+      # (corren solo con el directorio de datos vacío)
+      - ./database/init:/docker-entrypoint-initdb.d
     networks:
       - melzone_network
     # --- BROKER DE MENSAJES ---
