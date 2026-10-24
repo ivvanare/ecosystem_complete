@@ -8,14 +8,14 @@ Canonical source: `database/diagram_base.txt`
 
 | ID | Task | Specs | Route | Commit |
 |----|------|-------|-------|--------|
-| T1 | Rework init: remove two-database `init-db-postgres.sql`; add `database/init/01-create-database.sql` (`CREATE DATABASE melzone`); mount `./database/init` in `docker-compose.yml` | S1 | inline | pending |
-| T2 | `02-schemas-enums.sql`: `\connect melzone`, `CREATE SCHEMA seg/core`, 6 enums in `public` | S1, S13 | inline | pending |
-| T3 | `03-seg-tables.sql`: 10 `seg` tables, indexes, 4 partial uniques, `tb_security_event` RANGE partitioning (2026 months + DEFAULT) | S2–S5, S7–S12, S14 | inline | pending |
-| T4 | `04-core-tables.sql`: 8 `core` tables, checks (S6), indexes, 1 partial unique | S2, S4–S6, S14 | inline | pending |
-| T5 | `05-foreign-keys.sql`: 17 FKs incl. 3 cross-schema; no ON DELETE/UPDATE actions | S3, S14, S15 | inline | pending |
-| T6 | Sync docs that describe the two-database topology (`AGENTS.md`, `api-core/README.md` if applicable) | S1 | inline | pending |
-| T7 | Verification: parse all `.sql` with pgsql-ast-parser; S#→DDL checklist; commit `verify_base_model.sql` runnable assertions | S1–S15 | inline | pending |
-| T8 | Work-unit commits (docs+diagram, T1+T2, T3, T4+T5, T6+T7) and close | — | inline | pending |
+| T1 | Rework init: remove two-database `init-db-postgres.sql`; add `database/init/01-create-database.sql` (`CREATE DATABASE melzone`); mount `./database/init` in `docker-compose.yml` | S1 | inline | c12c1a3 (deletion rode in 3b94db6) |
+| T2 | `02-schemas-enums.sql`: `\connect melzone`, `CREATE SCHEMA seg/core`, 6 enums in `public` | S1, S13 | inline | c12c1a3 |
+| T3 | `03-seg-tables.sql`: 10 `seg` tables, indexes, 4 partial uniques, `tb_security_event` RANGE partitioning (2026 months + DEFAULT) | S2–S5, S7–S12, S14 | inline | 884bccb |
+| T4 | `04-core-tables.sql`: 8 `core` tables, checks (S6), indexes, 1 partial unique | S2, S4–S6, S14 | inline | 127eefb |
+| T5 | `05-foreign-keys.sql`: 17 FKs incl. 3 cross-schema; no ON DELETE/UPDATE actions | S3, S14, S15 | inline | 127eefb |
+| T6 | Sync docs that describe the two-database topology (`AGENTS.md`, both READMEs) | S1 | inline | 822f2c6 |
+| T7 | Verification: real PG15 parse (libpg_query); S#→DDL checklist; committed `verify_base_model.sql` runnable assertions | S1–S15 | inline | 5fdbe96 |
+| T8 | Work-unit commits and close | — | inline | 3b94db6, c12c1a3, 884bccb, 127eefb, 5fdbe96, 822f2c6 + this one |
 
 ## Log
 
@@ -48,3 +48,8 @@ Canonical source: `database/diagram_base.txt`
   limitation), replaced by the real parser. Structural checklist S1–S15 mapped to
   DDL: complete. Behavioral live run deferred (no docker/PG here): script committed
   at database/verify_base_model.sql.
+- L6 — Slice boundary (1787 authored lines on feat/base-domain-model, past the
+  ~400-line review budget). Suggested delivery chain if a PR is opened:
+  PR1 = 3b94db6 (docs + canonical diagram) → PR2 = c12c1a3 + 884bccb (init +
+  seg schema) → PR3 = 127eefb + 5fdbe96 + 822f2c6 (core + FKs + verify + doc
+  sync). Push/PR remain the user's decision.
