@@ -81,6 +81,9 @@ add a silent fallback.
 - `database/provision/01-create-database.sql` is provisioning, not a migration: it is not
   applied by compose nor by the service. psql meta-commands (`\connect`) are stripped by
   the loader for the same reason.
+- The HTTP contract is `api/openapi.yaml`. Every new endpoint updates it in the same
+  commit, and every error uses `{"error":{"code","message"}}` — clients parse `code`,
+  never `message`.
 - `/health/live` must never touch a dependency; `/health/ready` aggregates probes.
   `postgres` and `redis` are required, `rabbitmq` is optional (degrades, does not fail).
 - There is no proxy in front of the API: `r.RemoteAddr` is the client address, which is

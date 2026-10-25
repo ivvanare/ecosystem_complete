@@ -1,0 +1,830 @@
+openapi: 3.1.0
+
+info:
+  title: melia API
+  version: 1.0.0
+  description: |
+    Contract for the security module (identity, sessions, RBAC) plus the health surface.
+
+    This is the single source of truth for the mobile app and the admin panel. Shapes
+    follow `database/diagram_base.txt`; field names are the API's, not the column names.
+
+    Conventions
+    - Identifiers are UUID strings.
+    - Timestamps are RFC 3339 in UTC (`2026-03-15T10:00:00Z`).
+    - Lists are paginated: `?page=` (1-based, default 1) and `?limit=` (default 20, max 100).
+    - Errors always use the same envelope (see `Error`), never a bare string.
+    - Access tokens are stateless JWTs (HS256) sent as `Authorization: Bearer <token>`.
+    - Refresh tokens are opaque and rotating: every refresh returns a new one and the
+      previous one dies. Presenting a rotated token revokes the whole family.
+
+servers:
+  - url: http://localhost:9000
+    description: local docker compose
+
+tags:
+  - name: Health
+    description: Liveness and readiness. No authentication.
+  - name: Auth
+    description: Registration, login, sessions and credential recovery.
+  - name: Identity
+    description: The authenticated caller's own profile.
+  - name: Admin
+    description: Backoffice operations. Requires the `admin.access` permission.
+
+security: []
+
+paths:
+  /health/live:
+    get:
+      tags: [Health]
+      operationId: getLiveness
+      summary: Liveness probe
+      description: Never touches a dependency. A failure here means the process is broken.
+      responses:
+        "200":
+          description: Process is alive.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, const: ok }
+
+  /health/ready:
+    get:
+      tags: [Health]
+      operationId: getReadiness
+      summary: Readiness probe
+      description: |
+        Runs every configured dependency probe. `postgres` and `redis` are required;
+        `rabbitmq` is optional and only degrades the report.
+      responses:
+        "200":
+          description: All required dependencies answered.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Readiness" }
+        "503":
+          description: A required dependency failed (`unavailable`) or an optional one failed (`degraded`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Readiness" }
+
+  /v1/auth/signup:
+    post:
+      tags: [Auth]
+      operationId: startSignup
+      summary: Start registration by proving ownership of the email
+      description: |
+        Sends a 6-digit code to the email. The account does not exist yet: the pending
+        registration lives in `tb_signup_request` until the code is verified, so nobody
+        can squat an address they cannot read.
+
+        Always answers `202`, whether or not the email is already registered — the
+        response must never reveal account existence. If it is registered, the email
+        tells the owner instead of sending a code.
+
+        The email is immutable for the duration of the flow: changing it means starting
+        a new signup with a new code.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, name, password]
+              properties:
+                email: { type: string, format: email }
+                name: { type: string, minLength: 1, maxLength: 120 }
+                password:
+                  type: string
+                  format: password
+                  minLength: 12
+                  description: Hashed with Argon2id before it is stored, even before verification.
+      responses:
+        "202":
+          description: Code sent (or deliberately pretended to be sent).
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /v1/auth/signup/verify:
+    post:
+      tags: [Auth]
+      operationId: verifySignup
+      summary: Finish registration with the emailed code
+      description: |
+        Consumes the pending registration and creates the user. The code is single use,
+        expires in 10 minutes and allows at most 5 attempts; exhausting them invalidates
+        the registration.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code]
+              properties:
+                email: { type: string, format: email }
+                code: { type: string, pattern: "^[0-9]{6}$" }
+      responses:
+        "201":
+          description: User created and session started.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenPair" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /v1/auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: Exchange email and password for a session
+      description: |
+        Answers `401 invalid_credentials` for both an unknown email and a wrong password,
+        and records an HMAC of the attempted email in the audit log — never the address in
+        clear, which would be an enumeration oracle.
+
+        Consecutive failures increment `nu_failed_attempts`; past the threshold the account
+        is locked and answers `423` until `dt_locked_until` passes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, format: password }
+                device:
+                  type: string
+                  maxLength: 120
+                  description: Human label shown to the user, e.g. "iPhone de Ana".
+      responses:
+        "200":
+          description: Session started.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenPair" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "423":
+          $ref: "#/components/responses/Locked"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /v1/auth/refresh:
+    post:
+      tags: [Auth]
+      operationId: refreshSession
+      summary: Rotate the refresh token and get a new access token
+      description: |
+        Rotation is mandatory: the presented token is revoked and a new one is issued in
+        the same family. Presenting a token that was already rotated is treated as theft —
+        the whole family is revoked and the response is `401 refresh_reused`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        "200":
+          description: New pair issued; the previous refresh token is dead.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenPair" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      summary: End the current session
+      description: Revokes the refresh family of the presented refresh token.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refresh_token: { type: string }
+      responses:
+        "204":
+          description: Session revoked. Idempotent.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/auth/password/forgot:
+    post:
+      tags: [Auth]
+      operationId: requestPasswordReset
+      summary: Send a reset code
+      description: |
+        Public: the caller is not logged in, which is the whole point. Always answers `202`
+        regardless of whether the email exists.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "202":
+          description: Code sent (or deliberately pretended to be sent).
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /v1/auth/password/reset:
+    post:
+      tags: [Auth]
+      operationId: resetPassword
+      summary: Set a new password with the emailed code
+      description: |
+        On success every refresh family of the user is revoked: a password reset must end
+        sessions everywhere.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code, new_password]
+              properties:
+                email: { type: string, format: email }
+                code: { type: string, pattern: "^[0-9]{6}$" }
+                new_password: { type: string, format: password, minLength: 12 }
+      responses:
+        "200":
+          description: Password changed; all sessions revoked.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /v1/auth/password/change:
+    post:
+      tags: [Auth]
+      operationId: changePassword
+      summary: Change the password of the authenticated user
+      description: |
+        Requires the current password. On success every refresh family is revoked,
+        including the caller's, which must log in again.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password: { type: string, format: password }
+                new_password: { type: string, format: password, minLength: 12 }
+      responses:
+        "200":
+          description: Password changed; all sessions revoked.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /v1/auth/email/change:
+    post:
+      tags: [Auth]
+      operationId: startEmailChange
+      summary: Start changing the account email
+      description: |
+        Sends a code to the NEW address, proving ownership before the change lands. The
+        password is required so a stolen access token alone cannot move the account.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_email, password]
+              properties:
+                new_email: { type: string, format: email }
+                password: { type: string, format: password }
+      responses:
+        "202":
+          description: Code sent to the new address.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /v1/auth/email/change/verify:
+    post:
+      tags: [Auth]
+      operationId: verifyEmailChange
+      summary: Confirm the email change with the emailed code
+      description: |
+        The code was issued for a specific target address. If the account email changed
+        meanwhile, the code is rejected rather than applied to the new state.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string, pattern: "^[0-9]{6}$" }
+      responses:
+        "200":
+          description: Email changed.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /v1/auth/social:
+    post:
+      tags: [Auth]
+      operationId: loginWithProvider
+      summary: Exchange a Google or Apple ID token for a session
+      description: |
+        The mobile app obtains the ID token with the provider's NATIVE SDK and sends it
+        here; there is no redirect and no client secret. The backend validates it against
+        the provider's JWKS and issues its own JWT — the provider token is never a
+        credential for this API.
+
+        Identity is resolved by `(provider, sub)`, never by email: Apple invents relay
+        addresses and may withhold the email entirely.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider, id_token]
+              properties:
+                provider: { type: string, enum: [GOOGLE, APPLE] }
+                id_token: { type: string }
+                device: { type: string, maxLength: 120 }
+      responses:
+        "200":
+          description: Session started, account created on first sight of the identity.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenPair" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /v1/me:
+    get:
+      tags: [Identity]
+      operationId: getMe
+      summary: The authenticated caller
+      description: |
+        Returns the profile together with the effective roles and permissions. The panel
+        decides what to show from `permissions`; it must not infer capability from a role
+        name.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/admin/users:
+    get:
+      tags: [Admin]
+      operationId: listUsers
+      summary: List users
+      description: Requires `admin.access`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+        - name: q
+          in: query
+          description: Case-insensitive match on name or email.
+          schema: { type: string, maxLength: 120 }
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/UserStatus" }
+      responses:
+        "200":
+          description: Page of users.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/UserSummary" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/admin/users/{userId}/roles:
+    patch:
+      tags: [Admin]
+      operationId: setUserRoles
+      summary: Replace the roles of a user
+      description: |
+        Requires `admin.access`. Sends the complete desired set, not a delta: the bridge
+        table is replaced. A user enters the backoffice because an active role grants
+        `admin.access`, never because the record is "of type admin".
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [roles]
+              properties:
+                roles:
+                  type: array
+                  items: { type: string }
+                  description: Role names, e.g. ["EDITOR"].
+      responses:
+        "200":
+          description: Roles replaced.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserSummary" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /v1/admin/roles:
+    get:
+      tags: [Admin]
+      operationId: listRoles
+      summary: List roles
+      description: Requires `admin.access`.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Roles with their permissions.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Role" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/admin/permissions:
+    get:
+      tags: [Admin]
+      operationId: listPermissions
+      summary: List the permission catalogue
+      description: Requires `admin.access`. Grouped for the backoffice UI by `module`.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Permissions.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Permission" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/admin/audit-events:
+    get:
+      tags: [Admin]
+      operationId: listAuditEvents
+      summary: Read the security audit log
+      description: |
+        Requires `admin.access`. The log is append-only: this endpoint reads, and no
+        endpoint updates or deletes an event. Emails are never returned in clear — failed
+        attempts carry an HMAC instead.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+        - name: event
+          in: query
+          description: Exact event name, e.g. `auth.login.failed`.
+          schema: { type: string, maxLength: 80 }
+        - name: userId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Page of events, newest first.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/AuditEvent" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Stateless HS256 access token, 15 minutes.
+
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+
+  responses:
+    BadRequest:
+      description: The request is well-formed but the action cannot be completed.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error:
+              code: invalid_code
+              message: The code is incorrect or has expired.
+    Unauthorized:
+      description: Missing, expired or invalid credentials.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          examples:
+            invalidCredentials:
+              value:
+                error: { code: invalid_credentials, message: Email or password is incorrect. }
+            refreshReused:
+              value:
+                error: { code: refresh_reused, message: This session was revoked because the token was reused. }
+    Forbidden:
+      description: Authenticated but the account lacks the required permission.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: permission_denied, message: You do not have permission to perform this action. }
+    NotFound:
+      description: The resource does not exist.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: not_found, message: Not found. }
+    Conflict:
+      description: The request conflicts with the current state.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: email_unavailable, message: That email cannot be used. }
+    Locked:
+      description: The account is temporarily locked after repeated failures.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error:
+              code: account_locked
+              message: Too many failed attempts. Try again later.
+              details: { retry_after_seconds: 900 }
+    TooManyRequests:
+      description: Rate limited. Honor `Retry-After`.
+      headers:
+        Retry-After:
+          schema: { type: integer }
+          description: Seconds to wait before retrying.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: rate_limited, message: Too many requests. Try again later. }
+    ValidationError:
+      description: One or more fields failed validation.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error:
+              code: validation_failed
+              message: The request has invalid fields.
+              details:
+                fields:
+                  - { field: password, code: too_short }
+
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Stable machine-readable code. Never parse `message`.
+          pattern: "^[a-z][a-z0-9_]*$"
+        message:
+          type: string
+          description: Human-readable text, safe to show. Never leaks whether an account exists.
+        details:
+          type: object
+          additionalProperties: true
+
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error: { $ref: "#/components/schemas/Error" }
+
+    TokenPair:
+      type: object
+      required: [access_token, token_type, expires_in, refresh_token, refresh_expires_in]
+      properties:
+        access_token:
+          type: string
+          description: 'HS256 JWT. Send as `Authorization: Bearer <access_token>`.'
+        token_type: { type: string, const: Bearer }
+        expires_in:
+          type: integer
+          description: Access token lifetime in seconds.
+          example: 900
+        refresh_token:
+          type: string
+          description: Opaque. Rotates on every use; store it in secure storage on the device.
+        refresh_expires_in:
+          type: integer
+          example: 2592000
+
+    Readiness:
+      type: object
+      required: [status, checks]
+      properties:
+        status: { type: string, enum: [ok, degraded, unavailable] }
+        checks:
+          type: array
+          items:
+            type: object
+            required: [name, status, required]
+            properties:
+              name: { type: string, example: postgres }
+              status: { type: string, enum: [ok, error] }
+              required: { type: boolean }
+
+    UserStatus:
+      type: string
+      enum: [ACTIVE, INACTIVE, SUSPENDED]
+
+    UserSummary:
+      type: object
+      required: [id, status, roles]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: [string, "null"] }
+        email: { type: [string, "null"], format: email }
+        status: { $ref: "#/components/schemas/UserStatus" }
+        email_verified_at: { type: [string, "null"], format: date-time }
+        roles:
+          type: array
+          items: { type: string }
+        created_at: { type: string, format: date-time }
+
+    Me:
+      allOf:
+        - $ref: "#/components/schemas/UserSummary"
+        - type: object
+          required: [permissions]
+          properties:
+            permissions:
+              type: array
+              items: { type: string }
+              description: Effective permission codes, e.g. ["admin.access", "place.create"].
+
+    Role:
+      type: object
+      required: [id, name, status]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, example: ADMIN }
+        description: { type: [string, "null"] }
+        status: { type: string, enum: [ACTIVE, INACTIVE] }
+        permissions:
+          type: array
+          items: { type: string }
+
+    Permission:
+      type: object
+      required: [id, code, module, name, status]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string, example: admin.access }
+        module: { type: string, example: USERS }
+        name: { type: string, example: Access the backoffice }
+        status: { type: string, enum: [ACTIVE, INACTIVE] }
+
+    AuditEvent:
+      type: object
+      required: [id, event, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        event: { type: string, example: auth.login.failed }
+        user_id: { type: [string, "null"], format: uuid }
+        actor_user_id: { type: [string, "null"], format: uuid }
+        email_hash: { type: [string, "null"], description: HMAC-SHA256. Never the address. }
+        ip: { type: [string, "null"] }
+        country: { type: [string, "null"], description: ISO 3166-1 alpha-2 derived from the IP. }
+        city: { type: [string, "null"] }
+        user_agent: { type: [string, "null"] }
+        metadata: { type: [object, "null"] }
+        created_at: { type: string, format: date-time }
+
+    Page:
+      type: object
+      required: [page, limit, total]
+      properties:
+        page: { type: integer, minimum: 1 }
+        limit: { type: integer, minimum: 1, maximum: 100 }
+        total: { type: integer, minimum: 0 }

@@ -26,6 +26,10 @@ docker compose up --build
 
 ## Endpoints
 
+The HTTP contract lives in **[`openapi.yaml`](openapi.yaml)** (OpenAPI 3.1): 19 operations
+covering health, auth, identity and the admin RBAC surface. It is the source of truth for
+the mobile app and the admin panel; new endpoints update it in the same commit.
+
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/health/live` | Liveness. Never touches a dependency. `200 {"status":"ok"}` |

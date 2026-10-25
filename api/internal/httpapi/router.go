@@ -48,11 +48,21 @@ func New(opts Options) http.Handler {
 }
 
 func notFound(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusNotFound, errorResponse{Error: "not found"})
+	writeJSON(w, http.StatusNotFound, errorEnvelope{
+		Error: errorBody{Code: "not_found", Message: "Not found."},
+	})
 }
 
-type errorResponse struct {
-	Error string `json:"error"`
+// errorBody is the only error shape the API exposes. api/openapi.yaml defines it and
+// every endpoint must reuse it: clients parse `code`, never `message`.
+type errorBody struct {
+	Code    string         `json:"code"`
+	Message string         `json:"message"`
+	Details map[string]any `json:"details,omitempty"`
+}
+
+type errorEnvelope struct {
+	Error errorBody `json:"error"`
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

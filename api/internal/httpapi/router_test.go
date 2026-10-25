@@ -148,11 +148,16 @@ func TestUnknownPathReturnsJSONNotFound(t *testing.T) {
 		t.Fatalf("status = %d, want 404", rec.Code)
 	}
 
-	var body map[string]string
+	var body struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("body is not JSON: %v", err)
 	}
-	if body["error"] != "not found" {
-		t.Errorf("error = %q, want %q", body["error"], "not found")
+	if body.Error.Code != "not_found" {
+		t.Errorf("error code = %q, want %q", body.Error.Code, "not_found")
 	}
 }
