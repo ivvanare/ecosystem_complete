@@ -34,7 +34,7 @@ func Connect(ctx context.Context, dsn string, attempts int, logger *slog.Logger)
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("connecting to postgres: %w", err)
+		return nil, fmt.Errorf("connecting to postgres (DATABASE_URL): %w", err)
 	}
 
 	if logger != nil {
@@ -124,6 +124,38 @@ func (l *PostgresLedger) Applied(ctx context.Context, name string) (bool, error)
 		`SELECT EXISTS (SELECT 1 FROM seg.tb_schema_migration WHERE tx_name = $1)`, name,
 	).Scan(&exists)
 	return exists, err
+}
+
+// Count reports how many schema files the ledger holds.
+func (l *PostgresLedger) Count(ctx context.Context) (int, error) {
+	var count int
+	err := l.Pool.QueryRow(ctx, `SELECT count(*) FROM seg.tb_schema_migration`).Scan(&count)
+	return count, err
+}
+
+// SchemaPresent reports whether seg.tb_user exists, which only the base model creates.
+func (l *PostgresLedger) SchemaPresent(ctx context.Context) (bool, error) {
+	var exists bool
+	err := l.Pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_tables WHERE schemaname = 'seg' AND tablename = 'tb_user'
+		)`,
+	).Scan(&exists)
+	return exists, err
+}
+
+// Adopt records every schema file as applied without executing it.
+func (l *PostgresLedger) Adopt(ctx context.Context, names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	_, err := l.Pool.Exec(ctx, `
+		INSERT INTO seg.tb_schema_migration (tx_name)
+		SELECT unnest($1::text[])
+		ON CONFLICT (tx_name) DO NOTHING`,
+		names,
+	)
+	return err
 }
 
 // Record marks the schema file as applied.

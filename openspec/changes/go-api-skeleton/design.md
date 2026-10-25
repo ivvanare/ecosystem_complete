@@ -61,9 +61,23 @@ Two options were considered:
 
 The second wins. Consequences handled explicitly:
 
-- `01-create-database.sql` is skipped: you cannot `CREATE DATABASE melzone` from a
-  connection already inside `melzone`, and creating databases is provisioning, not
-  migration.
+- **One applier, not two.** The PostgreSQL entrypoint mount is removed and the container
+  only creates the database (`POSTGRES_DB=melzone`). An earlier draft kept both: the
+  entrypoint applied 01–05 on a fresh volume while the service applied the same files
+  against a freshly created ledger, hit `schema "seg" already exists` on the first
+  non-idempotent `CREATE SCHEMA`, and `restart: always` turned it into a crash loop.
+  One applier is not a style preference; the two paths are mutually exclusive.
+- **Adoption instead of a crash on legacy volumes.** A volume created before the ledger
+  existed already has the schema, so its ledger is empty and every file looks pending.
+  When the ledger is empty *and* `seg.tb_user` exists, the service records every file as
+  applied without executing it and logs a warning pointing at
+  `database/verify_base_model.sql`. The alternative — refusing to start and asking for
+  `down -v` — is correct for a database with data and hostile in this pre-production
+  project; the drift check keeps adoption honest.
+- `01-create-database.sql` moves to `database/provision/`: it is provisioning, not a
+  migration. You cannot `CREATE DATABASE melzone` from a connection already inside
+  `melzone`. The loader still refuses an `01-create-database.sql` in `DB_INIT_DIR` so a
+  stray copy cannot reintroduce the failure.
 - psql meta-commands (`\connect`, `\c`) are shell-level directives, not SQL. Lines whose
   trimmed form starts with `\` are stripped. `02-schemas-enums.sql` starts with
   `\connect melzone`, so without this every startup would fail.

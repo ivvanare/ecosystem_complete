@@ -29,8 +29,13 @@ type Executor interface {
 // Ledger records which schema files already ran.
 type Ledger interface {
 	Ensure(ctx context.Context) error
+	Count(ctx context.Context) (int, error)
 	Applied(ctx context.Context, name string) (bool, error)
 	Record(ctx context.Context, name string) error
+	// SchemaPresent reports whether the domain schema already exists in the database.
+	SchemaPresent(ctx context.Context) (bool, error)
+	// Adopt records files as applied without executing them.
+	Adopt(ctx context.Context, names []string) error
 }
 
 // Runner applies pending schema files from Dir.
@@ -51,6 +56,14 @@ func (r *Runner) Run(ctx context.Context) ([]string, error) {
 	migrations, err := Load(r.Dir)
 	if err != nil {
 		return nil, err
+	}
+
+	adopted, err := r.adoptExisting(ctx, migrations)
+	if err != nil {
+		return nil, err
+	}
+	if adopted > 0 {
+		return nil, nil
 	}
 
 	applied := make([]string, 0, len(migrations))
@@ -77,6 +90,54 @@ func (r *Runner) Run(ctx context.Context) ([]string, error) {
 	}
 
 	return applied, nil
+}
+
+// adoptExisting baselines a database whose schema was created before the ledger
+// existed — for example by the PostgreSQL entrypoint on a fresh volume, or by a manual
+// psql run. Without this, the first startup would re-apply DDL that already exists and
+// fail on `schema "seg" already exists`, and `restart: always` would turn that into a
+// crash loop.
+//
+// Adoption is deliberately narrow: only when the ledger is completely empty AND the
+// schema is already there. A partially applied schema is not silently accepted; it
+// fails loudly, and database/verify_base_model.sql is the drift check.
+func (r *Runner) adoptExisting(ctx context.Context, migrations []Migration) (int, error) {
+	if len(migrations) == 0 {
+		return 0, nil
+	}
+
+	recorded, err := r.Ledger.Count(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("counting applied schema files: %w", err)
+	}
+	if recorded > 0 {
+		return 0, nil
+	}
+
+	present, err := r.Ledger.SchemaPresent(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("checking for an existing schema: %w", err)
+	}
+	if !present {
+		return 0, nil
+	}
+
+	names := make([]string, 0, len(migrations))
+	for _, migration := range migrations {
+		names = append(names, migration.Name)
+	}
+	if err := r.Ledger.Adopt(ctx, names); err != nil {
+		return 0, fmt.Errorf("adopting existing schema: %w", err)
+	}
+
+	if r.Logger != nil {
+		r.Logger.Warn("existing schema adopted without executing files",
+			slog.Int("files", len(names)),
+			slog.String("hint", "run database/verify_base_model.sql to check for drift"),
+		)
+	}
+
+	return len(names), nil
 }
 
 // Load reads the schema directory, keeping NN-*.sql files in lexical order.

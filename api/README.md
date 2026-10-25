@@ -54,14 +54,28 @@ worse than one that refuses to start.
 
 ## Schema bootstrap
 
-`database/init/NN-*.sql` stays the single source of truth for the schema — the same files
-the PostgreSQL entrypoint runs. At startup the service applies the pending ones and
-records each in `seg.tb_schema_migration`, so restarts are no-ops.
+`database/init/NN-*.sql` is the single source of truth for the schema, and the service is
+the only thing that applies it. The PostgreSQL container creates the database
+(`POSTGRES_DB=melzone`) and nothing else; there is no `docker-entrypoint-initdb.d` mount,
+because two appliers of the same DDL cannot coexist — the entrypoint runs on a fresh
+volume, the service runs on every start, and the second one would hit
+`schema "seg" already exists`.
+
+At startup the service applies the pending files and records each in
+`seg.tb_schema_migration`, so restarts are no-ops.
 
 Two adaptations are deliberate:
 
-- `01-create-database.sql` is skipped. A service connected to `melzone` cannot create it.
+- `database/provision/01-create-database.sql` is not part of the set. A service
+  connected to `melzone` cannot create it; it exists for a manual bootstrap against a
+  bare server.
 - psql meta-commands (`\connect ...`) are stripped. They are psql directives, not SQL.
+
+When the ledger is empty but the schema is already there — a volume created before the
+ledger existed, or a manual `psql` run — the service **adopts** the schema: it records
+every file as applied without executing it, logs a warning, and points at
+`database/verify_base_model.sql` for a drift check. A partially applied schema is not
+silently accepted: it fails loudly.
 
 Set `DB_AUTO_MIGRATE=false` when another tool owns the schema.
 

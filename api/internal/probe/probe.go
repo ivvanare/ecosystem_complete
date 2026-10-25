@@ -66,11 +66,24 @@ func (r RabbitMQ) Name() string { return "rabbitmq" }
 // Required reports that the API can serve without the broker.
 func (r RabbitMQ) Required() bool { return false }
 
-// Check opens and immediately closes a broker connection.
-func (r RabbitMQ) Check(context.Context) error {
+// Check opens and immediately closes a broker connection, honouring the caller's
+// deadline so an optional probe cannot outlive the readiness budget.
+func (r RabbitMQ) Check(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	timeout := r.DialTimeout
 	if timeout <= 0 {
 		timeout = defaultDialTimeout
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining < timeout {
+			timeout = remaining
+		}
+	}
+	if timeout <= 0 {
+		return context.DeadlineExceeded
 	}
 
 	conn, err := amqp.DialConfig(r.URL, amqp.Config{Dial: amqp.DefaultDial(timeout)})

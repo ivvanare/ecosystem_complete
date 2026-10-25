@@ -30,11 +30,13 @@ func (f *fakeExecutor) Exec(_ context.Context, sql string) error {
 
 // fakeLedger is an in-memory ledger.
 type fakeLedger struct {
-	applied     map[string]bool
-	recorded    []string
-	ensured     int
-	failEnsure  error
-	failApplied error
+	applied       map[string]bool
+	recorded      []string
+	adopted       []string
+	ensured       int
+	schemaPresent bool
+	failEnsure    error
+	failApplied   error
 }
 
 func newFakeLedger(applied ...string) *fakeLedger {
@@ -60,6 +62,18 @@ func (f *fakeLedger) Applied(_ context.Context, name string) (bool, error) {
 func (f *fakeLedger) Record(_ context.Context, name string) error {
 	f.recorded = append(f.recorded, name)
 	f.applied[name] = true
+	return nil
+}
+
+func (f *fakeLedger) Count(context.Context) (int, error) { return len(f.applied), nil }
+
+func (f *fakeLedger) SchemaPresent(context.Context) (bool, error) { return f.schemaPresent, nil }
+
+func (f *fakeLedger) Adopt(_ context.Context, names []string) error {
+	f.adopted = append(f.adopted, names...)
+	for _, name := range names {
+		f.applied[name] = true
+	}
 	return nil
 }
 
@@ -265,5 +279,75 @@ func TestRetryStopsOnCancelledContext(t *testing.T) {
 
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("error = %v, want context.Canceled", err)
+	}
+}
+
+func TestRunAdoptsExistingSchemaWithoutExecutingIt(t *testing.T) {
+	executor := &fakeExecutor{}
+	ledger := newFakeLedger()
+	ledger.schemaPresent = true
+	runner := &Runner{Dir: t.TempDir(), Executor: executor, Ledger: ledger}
+	writeFiles(t, runner.Dir, map[string]string{
+		"02-schemas-enums.sql": "CREATE SCHEMA seg;",
+		"03-seg-tables.sql":    "CREATE TABLE seg.tb_user ();",
+	})
+
+	applied, err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if len(applied) != 0 {
+		t.Errorf("applied = %v, want none when adopting", applied)
+	}
+	if len(executor.ran) != 0 {
+		t.Errorf("executed %d batches, want none when adopting an existing schema", len(executor.ran))
+	}
+	if len(ledger.adopted) != 2 {
+		t.Fatalf("adopted %v, want both files recorded", ledger.adopted)
+	}
+	if ledger.adopted[0] != "02-schemas-enums.sql" || ledger.adopted[1] != "03-seg-tables.sql" {
+		t.Errorf("adopted = %v, want lexical order", ledger.adopted)
+	}
+}
+
+func TestRunStillExecutesWhenLedgerHasEntries(t *testing.T) {
+	executor := &fakeExecutor{}
+	ledger := newFakeLedger("02-schemas-enums.sql")
+	ledger.schemaPresent = true
+	runner := &Runner{Dir: t.TempDir(), Executor: executor, Ledger: ledger}
+	writeFiles(t, runner.Dir, map[string]string{
+		"02-schemas-enums.sql": "CREATE SCHEMA seg;",
+		"03-seg-tables.sql":    "CREATE TABLE seg.tb_user ();",
+	})
+
+	applied, err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if len(applied) != 1 || applied[0] != "03-seg-tables.sql" {
+		t.Errorf("applied = %v, want only 03", applied)
+	}
+	if len(ledger.adopted) != 0 {
+		t.Errorf("adopted %v, want no adoption once the ledger is populated", ledger.adopted)
+	}
+}
+
+func TestRunAppliesEverythingWhenSchemaIsAbsent(t *testing.T) {
+	executor := &fakeExecutor{}
+	ledger := newFakeLedger()
+	runner := &Runner{Dir: t.TempDir(), Executor: executor, Ledger: ledger}
+	writeFiles(t, runner.Dir, map[string]string{
+		"02-schemas-enums.sql": "CREATE SCHEMA seg;",
+	})
+
+	applied, err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if len(applied) != 1 {
+		t.Errorf("applied = %v, want the file to run", applied)
+	}
+	if len(ledger.adopted) != 0 {
+		t.Errorf("adopted %v, want no adoption on an empty database", ledger.adopted)
 	}
 }

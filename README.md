@@ -91,10 +91,14 @@ start without the required ones. Full table in **[api/README.md](api/README.md)*
 
 ## Schema
 
-`database/init/NN-*.sql` is the single source of truth for the schema: the PostgreSQL
-container runs it on an empty data volume, and the Go service applies any pending file at
-startup, recording each one in `seg.tb_schema_migration`. Restarts are therefore no-ops,
-and schema state no longer depends on whether the data volume was fresh.
+`database/init/NN-*.sql` is the single source of truth for the schema, and the Go service
+is the only applier: it runs pending files at startup and records each in
+`seg.tb_schema_migration`, so restarts are no-ops. The PostgreSQL container only creates
+the empty database (`POSTGRES_DB=melzone`) — no `docker-entrypoint-initdb.d` mount, since
+two appliers of the same DDL would collide on a fresh volume.
+
+A volume whose schema predates the ledger is adopted (recorded, not re-executed) with a
+warning; `database/verify_base_model.sql` is the drift check.
 
 The canonical model is `database/diagram_base.txt` (DBML for dbdiagram.io): 18 tables
 across `seg` (identity, RBAC, audit) and `core` (places, schedules, menus, reviews,

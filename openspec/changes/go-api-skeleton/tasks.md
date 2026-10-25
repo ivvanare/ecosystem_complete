@@ -56,3 +56,28 @@ Branch: `feat/go-api` (cut from `feat/base-domain-model`, which supplies `databa
   --base-ref master --committed-only --json`): `risk: high`, `review_due: true`,
   reasons `hot_path` (deleted `api-core/config/auth.php`) and `process_boundary`
   (`api/internal/db/migrate.go`). Verification tier: independent verifier required.
+- L9 — Independent verification (delegated, `gentle-ai-verify`), read-only over a clean
+  copy: S1, S2, S3, S4, S6, S7, S8, S10, S11 **met** with observed evidence; two
+  blockers found:
+  **B1** — the PostgreSQL entrypoint and the service both applied `01–05`. On a fresh
+  volume the container applied them, the service then saw an empty ledger, treated all
+  files as pending, hit `CREATE SCHEMA seg;` (not idempotent) and crash-looped under
+  `restart: always`. D5's "first run on an already-initialized database is safe" was
+  wrong.
+  **B2** — S9 claimed `database` kept "its current configuration", but the committed
+  compose adds `shm_size`, UTF8 initdb args, the `melzone_pgdata` named volume and a
+  `pg_isready` healthcheck. The item was unmet as written.
+  Advisories: A1 malformed `DATABASE_URL` did not name the variable; A2 "distroless-style"
+  wording vs `alpine:3`; A3 `probe.RabbitMQ` ignored its context; A4 the host does have
+  compose v2 (the daemon is the unusable part); A5 the `api-core` deletion rode in the
+  docs commit instead of the `refactor!` one.
+- L10 — Correction batch (one scoped pass over both blockers):
+  **B1** — single applier. `docker-compose.yml` sets `POSTGRES_DB: melzone` and no longer
+  mounts `docker-entrypoint-initdb.d`; `database/init/01-create-database.sql` moves to
+  `database/provision/` (provisioning, not migration); the runner gains narrow
+  **adoption** for legacy volumes (empty ledger + `seg.tb_user` present → record without
+  executing, warn, point at `database/verify_base_model.sql`). Covering tests:
+  adopt-skip, no-adopt-when-ledger-populated, no-adopt-when-schema-absent.
+  **B2** — S9 rewritten to state the `database` service changes instead of denying them.
+  Also fixed: A1 (`DATABASE_URL` named in the connect error) and A3 (RabbitMQ probe
+  honours the caller deadline). A2 and A5 are accepted as-is and recorded here.

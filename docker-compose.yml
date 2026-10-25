@@ -58,9 +58,9 @@ services:
     environment:
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: my_admin_pass
-      # Se deja en `postgres` a propósito: 01-create-database.sql crea `melzone`
-      # y los archivos siguientes hacen \connect melzone.
-      POSTGRES_DB: postgres
+      # La base se crea acá, no desde un script: el esquema lo aplica el servicio
+      # (database/init/02..05) y lo registra en seg.tb_schema_migration.
+      POSTGRES_DB: melzone
       # Encoding explícito. OJO con la collation: el default (C) ordena los acentos
       # al final ("Ávila" después de "Z"), y eso se nota en un catálogo en español.
       # Si hace falta ordenar bien, es ICU (--locale-provider=icu --icu-locale=es).
@@ -72,8 +72,6 @@ services:
       # root:root (no lo podés limpiar sin sudo) y `down -v` no lo borra, que es
       # justo lo que necesitás cuando iterás sobre los scripts de init.
       - melzone_pgdata:/var/lib/postgresql/data
-      # Scripts 01-05. Corren SOLO con el volumen vacío y en orden alfabético.
-      - ./database/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       # Permite que otro servicio dependa con depends_on: condition: service_healthy
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d postgres"]

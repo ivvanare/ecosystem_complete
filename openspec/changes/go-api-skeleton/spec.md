@@ -50,16 +50,22 @@ default database or cache address.
 
 ### S5 — The service applies the canonical schema files
 
-`database/init/NN-*.sql` stays the single source of truth for the schema. At startup,
-when `DB_AUTO_MIGRATE` is true, the service:
+`database/init/NN-*.sql` stays the single source of truth for the schema, and the service
+is its only applier: the PostgreSQL container creates the database and applies no DDL. At
+startup, when `DB_AUTO_MIGRATE` is true, the service:
 
 1. ensures its ledger table `seg.tb_schema_migration (tx_name text primary key, dt_applied_at timestamptz not null default now())`;
 2. reads `DB_INIT_DIR`, keeps files matching `NN-*.sql`, sorts them lexically;
-3. skips `01-create-database.sql` — a service connected to `melzone` cannot create it;
+3. never executes `01-create-database.sql` — a service connected to `melzone` cannot
+   create it. The provisioning script lives in `database/provision/`; the loader still
+   guards against a copy reappearing in `DB_INIT_DIR`;
 4. strips psql meta-command lines (any line whose trimmed form starts with `\`, such as
    `\connect melzone`);
 5. executes each pending file's text as one statement batch and records its filename;
-6. skips files already recorded, so a restart is a no-op.
+6. skips files already recorded, so a restart is a no-op;
+7. when the ledger is empty but the schema already exists (a volume predating the ledger,
+   or a manual `psql` run), records every file as applied **without executing it** and
+   logs a warning. A partially applied schema is not adopted silently; it fails loudly.
 
 A failure stops startup with the failing filename in the error; files that already ran
 stay recorded.
@@ -84,8 +90,11 @@ longer contains `fastcgi_pass`, `SCRIPT_FILENAME`, or a document root for PHP.
 
 The `api_core` service is replaced by `api` (`build: ./api`, `container_name:
 melzone_api`), receiving `DATABASE_URL`, `REDIS_ADDR`, `RABBITMQ_URL`, `DB_INIT_DIR`
-and mounting `./database/init` read-only. `database`, `redis`, `rabbitmq`, `webserver`
-and `soketi` keep their current configuration.
+and mounting `./database/init` read-only. `redis`, `rabbitmq`, `webserver` and `soketi`
+keep their current configuration. `database` keeps its image, credentials and port, and
+additionally carries a named data volume (`melzone_pgdata` instead of the `./database/data`
+bind mount), `shm_size`, UTF8 initdb arguments and a `pg_isready` healthcheck — while no
+longer mounting the init scripts, because the service is their only applier.
 
 ### S10 — Documentation matches the runtime
 
