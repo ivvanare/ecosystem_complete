@@ -25,8 +25,8 @@ Test runner: `npx ng test crud-maker` (vitest, inside gui/admin workspace)
 | ID | Spec | Route | Status | Commit | Evidence |
 |----|------|-------|--------|--------|----------|
 | T1 | S1, S4.1, S4.2 | inline | **done** | 0452437 (swept by concurrent session) + `feat(crud-maker)` follow-up | RED observed (TS7006/missing modules) → GREEN: 36/36 tests pass, 490ms |
-| T2 | S3, S4.5 | inline | pending | — | RED first for query builder + envelope |
-| T3 | S1, S3, S4.3, S4.4 | inline | pending | — | RED first with FakeTransport |
+| T2 | S3, S4.5 | inline | **done** | see `feat(crud-maker)` state commit | RED observed (Cannot resolve './crud-list-state') → GREEN: 58/58 tests pass |
+| T3 | S1, S3, S4.3, S4.4 | inline | **done** | see `feat(crud-maker)` engine commit | RED observed (Cannot resolve ./params, ./crud-controller, ./http-transport) → GREEN: 72/72; `ng build crud-maker` packages; admin suite 2/2 |
 | T4 | S2 (ng-zorro pages/components + route gen) | inline | blocked-pending-approval | — | requires `ng add ng-zorro-antd` authorization |
 
 Writer trigger check: T2/T3 depend on T1 types (not independent units) → no parallel-writer reason; parent implements inline following this logbook. Output budget: lib tests via ng test; app suite at seam check.
@@ -37,4 +37,4 @@ Writer trigger check: T2/T3 depend on T1 types (not independent units) → no pa
 - **L2** (exploration evidence, read-only explorer over tymon/admin, ses_e8f02a832ffecNmQCu8gMuZ67f, saved as engram obs 2197): Angular 20.3 zoneless PrimeNG app. CRUD "config" is actually a TS service per entity extending `BaseResourceService` (1130-line `providedIn:'root'` singleton) declaring `Attribute[]` with embedded closures (`table.getter`, `input` FormFields, `can*` overrides). Generic renderers (`app-table`, `app-form` 14 types, paginator) receive the model instance. Fluent query builder → REST params (`col_op=value`, `col:DESC`, `page,perPage`). Only one full vertical exists (FAQ). Weaknesses adopted as S4:1 non-serializable config, 2 duplicated table/form configs, 3 shared mutable singletons via `Object.create` clones, 4 hard deps (AuthService/MessageService/sessionStorage in model), 5 DOM hacks, 6 half-implemented detail mode, 7 signals on 2 fields only, 8 manual routing + `parseInt('')` NaN.
 - **L3**: Best practices verified via `angular-cli` MCP `get_best_practices` (v22): Signal Forms stable, `@Service` over `@Injectable`, no explicit OnPush/standalone, `input()/output()/model()`, `computed/linkedSignal`, no mutate/ngClass/ngStyle.
 - **L4** (delivery hazard, 2026-10-24): A concurrent agent session working on api/k6 keeps `git add -A`ing the whole worktree: it swept T1's types/registry/specs into `0452437 test(k6): fix the signup error-rate threshold...`. Work continues on `feat/go-api`; each T now gets its own commit, but commit hygiene across the two sessions needs user awareness.
-- **Next**: T2 — signal list-state kernel (page/sort/filters/search → computed query, envelope normalization) with RED→GREEN.
+- **Next**: T4 (ng-zorro pages/components + route generation) requires explicit approval for `ng add ng-zorro-antd` (new dependency + global styles). Base logic (T1–T3) is complete and packaged.
