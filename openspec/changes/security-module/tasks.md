@@ -30,3 +30,10 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
 - L3 — The seed file is `database/init/06-seeds.sql`, which also proves the incremental
   path: an existing database with `02..05` in the ledger must apply only `06` on the next
   start, without touching the rest.
+- L4 — Live evidence (rebuilt image, existing database): the ledger went from `02..05` to
+  `02..06`, so the incremental path applies only the new file. Ten permissions landed with
+  their modules. Preflight from `http://localhost:5173` answered `204` with the exact
+  `Allow-Origin`, `Allow-Credentials: true`, `Allow-Headers` including `X-CSRF-Token`,
+  `Allow-Methods`, `Max-Age: 600` and `Vary: Origin`; a preflight from an unknown origin
+  answered `404` with no CORS headers at all. One query error was mine, not the data's:
+  `GROUP BY 1` on a concatenation containing `count(*)`.
