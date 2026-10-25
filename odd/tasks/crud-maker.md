@@ -24,9 +24,9 @@ Test runner: `npx ng test crud-maker` (vitest, inside gui/admin workspace)
 
 | ID | Spec | Route | Status | Commit | Evidence |
 |----|------|-------|--------|--------|----------|
-| T1 | S1, S4.1, S4.2 | inline | **done** | 0452437 (swept by concurrent session) + `feat(crud-maker)` follow-up | RED observed (TS7006/missing modules) → GREEN: 36/36 tests pass, 490ms |
-| T2 | S3, S4.5 | inline | **done** | see `feat(crud-maker)` state commit | RED observed (Cannot resolve './crud-list-state') → GREEN: 58/58 tests pass |
-| T3 | S1, S3, S4.3, S4.4 | inline | **done** | see `feat(crud-maker)` engine commit | RED observed (Cannot resolve ./params, ./crud-controller, ./http-transport) → GREEN: 72/72; `ng build crud-maker` packages; admin suite 2/2 |
+| T1 | S1, S4.1, S4.2 | inline | **done** | 1e5dfdf (+0452437 swept types/registry/specs) | RED observed (TS7006/missing modules) → GREEN: 36/36 tests pass, 490ms |
+| T2 | S3, S4.5 | inline | **done** | bd7efb7 | RED observed (Cannot resolve './crud-list-state') → GREEN: 58/58 tests pass |
+| T3 | S1, S3, S4.3, S4.4 | inline | **done** | a7f0cae | RED observed (Cannot resolve ./params, ./crud-controller, ./http-transport) → GREEN: 72/72; `ng build crud-maker` packages; admin suite 2/2 |
 | T4 | S2 (ng-zorro pages/components + route gen) | inline | blocked-pending-approval | — | requires `ng add ng-zorro-antd` authorization |
 
 Writer trigger check: T2/T3 depend on T1 types (not independent units) → no parallel-writer reason; parent implements inline following this logbook. Output budget: lib tests via ng test; app suite at seam check.
