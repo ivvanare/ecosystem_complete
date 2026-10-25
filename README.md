@@ -12,7 +12,6 @@ supporting services in Docker.
 | Database | PostgreSQL 15 (one database `melia`, schemas `seg` + `core`) |
 | Message Broker | RabbitMQ 3 with management plugin |
 | Cache | Redis 7 |
-| Web Server | Nginx Alpine (reverse proxy) |
 
 Laravel (`api-core/`) was decommissioned: it held only scaffolding and a RabbitMQ/Redis
 demo, with no product code. The canonical model states Go as the sole owner of the API
@@ -37,8 +36,7 @@ docker compose up -d --build
 ```
 
 This starts:
-- **melzone_api** (Go) - internal port 8080
-- **melzone_nginx** - port 9000 → 80
+- **melzone_api** (Go) - port 9000 → 8080, the only HTTP entry point
 - **melzone_db** (PostgreSQL) - port 5432
 - **melzone_mq** (RabbitMQ) - ports 5672, 15672 (management UI)
 - **melzone_redis** - port 6379
@@ -60,8 +58,6 @@ melZone/
 │   ├── internal/      # config, httpapi, db, probe
 │   ├── Dockerfile
 │   └── README.md      # service documentation
-├── nginx/             # Reverse proxy configuration
-│   └── default.conf
 ├── database/          # PostgreSQL schema: canonical DBML + init scripts
 │   ├── diagram_base.txt
 │   ├── init/          # 01..05 SQL, applied by the container and by the service
@@ -155,7 +151,7 @@ Use this to monitor queue health, message rates, and failed jobs.
   `core` (domain) — canonical spec: `database/diagram_base.txt`
 - **Schema bootstrap**: the service applies `database/init/*.sql`, tracked in
   `seg.tb_schema_migration`; `01-create-database.sql` is provisioning and is skipped
-- **Nginx** proxies HTTP to `api:8080`; it no longer executes PHP
+- **No proxy in front**: the Go service listens on `:8080` and is published as `9000`. TLS and rate limiting belong at the deployment edge (load balancer or ingress) when the target is decided, not in a hop that terminates nothing
 - **Sessions**: not modelled — the security design uses stateless JWT plus rotating
   refresh tokens (`seg.tb_refresh_token`)
 - **Testing**: isolated from production services by design

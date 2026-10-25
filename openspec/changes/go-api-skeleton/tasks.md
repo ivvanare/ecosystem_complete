@@ -17,7 +17,8 @@ Branch: `feat/go-api` (cut from `feat/base-domain-model`, which supplies `databa
 | T7 | `api/Dockerfile`, `api/.env.example`, `api/.dockerignore` | S7 | inline | 24804c0 |
 | T8 | `nginx/default.conf` proxy, `docker-compose.yml` `api_core`→`api` | S8, S9 | inline | 59e350a |
 | T9 | Delete `api-core/`; sync `README.md`, `AGENTS.md`, `api/README.md` | S1, S10 | inline | 0e54671 |
-| T10 | Verification: `go build`, `go vet`, `go test ./...`, independent verify pass | S11 | delegated (verifier) | pending |
+| T10 | Verification: `go build`, `go vet`, `go test ./...`, independent verify pass | S11 | delegated (verifier) | done (see L9) |
+| T11 | Remove the Nginx tier: delete `nginx/`, drop `webserver`, publish `9000:8080` on `api`, refresh docs | S8, S9, S10 | inline | see L13 |
 
 ## Log
 
@@ -97,3 +98,11 @@ Branch: `feat/go-api` (cut from `feat/base-domain-model`, which supplies `databa
   IF NOT EXISTS` fix documented in L11, which is why that fix is its own commit. Not
   covered by the acknowledged review of target `sha256:ebedfbad…`: its candidate was
   frozen before these edits.
+- L13 — Nginx removed on user decision ("¿aún lo necesitamos?" → "dale sacalo"). Evidence
+  for the decision: `nginx/default.conf` had no TLS, gzip, `limit_req`, cache or
+  `resolver`; the review had already flagged a stale upstream (name resolved once, so
+  every image redeploy meant 502 until a manual restart) and a `keepalive 16` pool that
+  never engaged. The tier was a hop that terminated nothing. `api` now publishes
+  `9000:8080`, so the public URL is unchanged; `nginx/` and the `webserver` service are
+  gone; TLS and rate limiting are deferred to the deployment edge. With no proxy,
+  `r.RemoteAddr` is the client address used by `tb_security_event`.

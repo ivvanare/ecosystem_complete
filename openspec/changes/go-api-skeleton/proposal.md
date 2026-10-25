@@ -19,7 +19,6 @@ This change executes the first half of that sentence and lands the runway for th
   bootstrap driven by the existing `database/init/*.sql` files, graceful shutdown.
 - Multi-stage `api/Dockerfile`; `api/.env.example`; `api/README.md`.
 - `docker-compose.yml`: `api_core` (PHP-FPM) replaced by `api` (Go).
-- `nginx/default.conf`: FastCGI replaced by reverse proxy.
 - Documentation sync (`README.md`, `AGENTS.md`).
 
 ### Out of Scope
@@ -42,4 +41,5 @@ This change executes the first half of that sentence and lands the runway for th
 - `database-bootstrap`: the same `database/init/*.sql` files are now also applied by the
   service at startup, tracked in a ledger table, so schema state no longer depends on
   the PostgreSQL container's first-run entrypoint.
-- `web-tier`: Nginx proxies HTTP to the Go service instead of executing PHP.
+- `web-tier`: the Go service becomes the only HTTP entry point; the Nginx tier is
+  removed and its port is published directly by the API.

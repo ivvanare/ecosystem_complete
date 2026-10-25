@@ -3,7 +3,7 @@
 ## D1 — Directory `api/`, module `github.com/ivvanare/ecosystem_complete/api`
 
 The PHP app lived in `api-core/`. Reusing that name for a Go service invites stale
-tooling assumptions, and `api/` reads correctly next to `database/` and `nginx/`. The
+tooling assumptions, and `api/` reads correctly next to `database/`. The
 module path follows the repository remote so the packages are importable if the service
 ever splits into its own repo.
 
@@ -126,10 +126,21 @@ could not be pulled or built here. The Dockerfile is written against that tag an
 limitation is recorded in `tasks.md`; a `docker build` on a host with a running daemon
 is the deferred check.
 
-## D11 — Nginx keeps the port, changes the protocol
+## D11 — No proxy: the Go service is the edge
 
-The public port stays `9000:80` so existing muscle memory and any local script keep
-working; only `fastcgi_pass` becomes `proxy_pass http://api:8080`. `X-Forwarded-For`
-and `X-Real-IP` are forwarded because the security model stores client IPs in
-`tb_security_event` — dropping them later would silently write proxy IPs into audit
-rows.
+The first version kept Nginx and swapped `fastcgi_pass` for `proxy_pass`. That was a hop
+that paid for nothing: the config had no TLS, no gzip, no rate limiting and no cache, so
+all it did was forward bytes — while adding two defects. It resolved the `api` name once
+at startup, so every redeploy (now an image rebuild, not a bind mount) left it pointing at
+a dead address and returning 502 until restarted by hand; and its `keepalive 16` upstream
+pool never engaged because the `Connection` header was never cleared.
+
+With two health routes and no static assets, the honest topology is direct: `api` publishes
+`9000:8080`, so the public URL is unchanged and a container fewer can break. TLS and rate
+limiting are real needs, but they belong to the edge that terminates them — a load
+balancer, an ingress, or Caddy — and that target is not chosen yet. Picking it later with
+information beats guessing now.
+
+Consequence worth naming: with no proxy, `r.RemoteAddr` **is** the client address, which is
+exactly what `tb_security_event` stores. When an edge appears, `X-Forwarded-For` must be
+trusted only from that edge, never blindly.

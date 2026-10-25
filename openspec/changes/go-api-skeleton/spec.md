@@ -9,7 +9,7 @@ ITERACIÓN, §7–§11). Where that file is silent, the decision is recorded in 
 
 `api-core/` no longer exists in the tree after this change. No PHP file, `composer.json`,
 `artisan`, Blade template, Vite config, or Laravel-specific documentation remains, and
-nothing in `docker-compose.yml` or `nginx/default.conf` references it.
+nothing in `docker-compose.yml` references it.
 
 ### S2 — One Go service owns the HTTP API
 
@@ -83,19 +83,20 @@ stay recorded.
 (`CGO_ENABLED=0`), the runtime stage is `alpine` with CA certificates, runs as a
 non-root user, and exposes `8080`. No source tree and no toolchain in the final image.
 
-### S8 — Nginx proxies instead of executing PHP
+### S8 — The Go service is the only HTTP entry point
 
-`nginx/default.conf` forwards every request to the Go service (`proxy_pass`) and no
-longer contains `fastcgi_pass`, `SCRIPT_FILENAME`, or a document root for PHP.
+There is no proxy in front of the API: `nginx/` is gone and the `webserver` service no
+longer exists. The `api` service publishes `9000:8080`, so the same public URL keeps
+working while every request reaches the Go handler directly. TLS and rate limiting are
+deferred to the deployment edge, which is not chosen yet.
 
 ### S9 — Compose runs the Go service
 
 The `api_core` service is replaced by `api` (`build: ./api`, `container_name:
 melia_api`), receiving `DATABASE_URL`, `REDIS_ADDR`, `RABBITMQ_URL`, `DB_INIT_DIR`
-and mounting `./database/init` read-only. `redis`, `rabbitmq` and `soketi` keep their
-current configuration. `webserver` keeps its image, container name and `9000:80` mapping,
-loses the `./api-core` volume and gains `depends_on: api` — both mandatory consequences of
-S1 and S8. `database` keeps its image, credentials and port, and additionally carries a
+and mounting `./database/init` read-only, published as `9000:8080`. `redis`, `rabbitmq`
+and `soketi` keep their current configuration; `webserver` (Nginx) is removed entirely.
+`database` keeps its image, credentials and port, and additionally carries a
 named data volume (`melia_pgdata` instead of the `./database/data` bind mount),
 `shm_size`, UTF8 initdb arguments, a `pg_isready` healthcheck, `POSTGRES_DB: melia`
 (the container now creates the database that the provisioning script used to create) and

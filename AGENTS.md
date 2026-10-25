@@ -8,7 +8,6 @@ Compact guidance for OpenCode agents working in this repository.
 - **Database**: PostgreSQL 15 (one database `melia`, schemas `seg` + `core` — spec: `database/diagram_base.txt`)
 - **Message Broker**: RabbitMQ 3 with management plugin
 - **Cache**: Redis 7
-- **Web Server**: Nginx Alpine (reverse proxy to `api:8080`, no PHP)
 
 Laravel (`api-core/`) was removed on purpose: it held only scaffolding and a
 RabbitMQ/Redis demo. The diagram names Go as the sole owner of the API and of writes,
@@ -22,7 +21,6 @@ melZone/
 │   ├── cmd/api/       # entrypoint: config, wiring, signals, graceful shutdown
 │   ├── internal/      # config · httpapi · db · probe
 │   └── Dockerfile
-├── nginx/             # Reverse proxy configuration
 ├── database/          # PostgreSQL init scripts + canonical DBML
 ├── openspec/          # Change proposals, specs, task logs
 └── docker-compose.yml # Multi-service orchestration
@@ -45,8 +43,7 @@ Start everything: `docker compose up -d --build`
 
 | Service | Container | Port |
 |---------|------------|------|
-| API (Go) | melzone_api | internal:8080 |
-| Nginx | melzone_nginx | 9000 → 80 |
+| API (Go) | melzone_api | 9000 → 8080 |
 | PostgreSQL | melzone_db | 5432 |
 | RabbitMQ | melzone_mq | 5672, 15672 (mgmt) |
 | Redis | melzone_redis | 6379 |
@@ -84,8 +81,9 @@ add a silent fallback.
   the loader for the same reason.
 - `/health/live` must never touch a dependency; `/health/ready` aggregates probes.
   `postgres` and `redis` are required, `rabbitmq` is optional (degrades, does not fail).
-- Nginx forwards `X-Forwarded-For` / `X-Real-IP` because the security model stores client
-  IPs in `seg.tb_security_event`.
+- There is no proxy in front of the API: `r.RemoteAddr` is the client address, which is
+  what `seg.tb_security_event` stores. The day an edge (load balancer, ingress) appears,
+  trust `X-Forwarded-For` only from that edge and never blindly.
 - Security design (not implemented yet) is specified in `database/diagram_base.txt`
   §7–§11: stateless access JWT (HS256 now), rotating hashed refresh tokens, RBAC via
   user → role → permission, email ownership proven by code before `tb_user` exists,
