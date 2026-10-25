@@ -112,3 +112,20 @@ Branch: `feat/go-api` (cut from `feat/base-domain-model`, which supplies `databa
   one publisher of host `9000`, mapped to container `8080`; `HTTP_ADDR` default stays
   `:8080`; health routes and the 404 catch-all unchanged; `gofmt`/`vet`/`test` clean.
   `assess` over `801879e..HEAD` reports medium risk, `under_budget`, no native review.
+- L15 — First live run of the stack (Docker daemon available to the user, commands run
+  with `sudo`). Build succeeded and resolved `golang:1.27-alpine`, closing D10's open
+  question. Three failures found and fixed in sequence, each by a separate commit:
+  (1) `go mod download` died because the bridge resolver refuses queries → `build.network:
+  host`; (2) `open /app/database/init: permission denied` because the bind-mounted host
+  directory was mode `700` owned by the developer while the container runs as an Alpine
+  system uid → build context moved to the repository root and `database/init` copied into
+  the image (also closes review advisory R3-7); (3) nothing else.
+  Verified live against a genuinely empty database: four files applied in order with `01`
+  excluded, ledger exactly `02,03,04,05`, 19 objects in `seg`+`core` (18 regular tables +
+  the partitioned parent `tb_security_event`), 17 foreign keys, 13 data partitions plus 52
+  inherited partition indexes, `/health/live` 200, `/health/ready` 200 with postgres and
+  redis `ok` and rabbitmq optional, container healthy. Restart applied `files_applied: 0`
+  (the ledger no-op contract, never previously exercised). An event dated 2026-03-15 routed
+  to `tb_security_event_2026_03`, and the out-of-range case is covered by the assertion
+  script. The `IF NOT EXISTS` fix recorded in L11 was confirmed necessary: `Ensure` creates
+  schema `seg` before `02` runs, so the empty-database path would have aborted with 42P06.

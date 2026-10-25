@@ -69,12 +69,13 @@ add a silent fallback.
 ## Key Architecture Notes
 
 - Schema source of truth is `database/init/NN-*.sql`, and the **service is the only
-  applier** (the image copies that directory to `/app/database/init`; never bind-mount it
-  — a host dir the container user cannot read aborts startup). it runs pending files at startup and records them in
-  `seg.tb_schema_migration`. The container just creates the database
-  (`POSTGRES_DB=melia`); never add a `docker-entrypoint-initdb.d` mount — two appliers
-  collide with `schema "seg" already exists`. Never let a second copy of the DDL appear in
-  the tree either.
+  applier**: it runs pending files at startup and records them in
+  `seg.tb_schema_migration`. The image copies that directory to `/app/database/init`;
+  never bind-mount it, because a host dir the container user cannot read aborts startup.
+  The container just creates the database (`POSTGRES_DB=melia`); never add a
+  `docker-entrypoint-initdb.d` mount — two appliers collide with
+  `schema "seg" already exists`. Never let a second copy of the DDL appear in the tree
+  either.
 - An empty ledger over an existing schema triggers **adoption** (recorded, not executed)
   with a warning. `database/verify_base_model.sql` is the drift check.
 - `database/provision/01-create-database.sql` is provisioning, not a migration: it is not
