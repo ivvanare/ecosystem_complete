@@ -8,15 +8,15 @@ Branch: `feat/go-api` (cut from `feat/base-domain-model`, which supplies `databa
 
 | ID | Task | Specs | Route | Commit |
 |----|------|-------|-------|--------|
-| T1 | Tracking docs for this change | — | inline | pending |
-| T2 | Module scaffold + `internal/config` with RED→GREEN tests | S2, S3, S11 | inline | pending |
-| T3 | `internal/httpapi`: router, `/health/live`, `/health/ready`, 404 JSON + tests | S4, S11 | inline | pending |
-| T4 | `internal/db`: pgx pool with bounded retry; schema bootstrap loader/runner + tests | S5, S11 | inline | pending |
-| T5 | `internal/probe`: postgres, redis, rabbitmq probes | S4 | inline | pending |
-| T6 | `cmd/api/main.go`: wiring, logger, graceful shutdown | S3, S6 | inline | pending |
-| T7 | `api/Dockerfile`, `api/.env.example`, `api/.dockerignore` | S7 | inline | pending |
-| T8 | `nginx/default.conf` proxy, `docker-compose.yml` `api_core`→`api` | S8, S9 | inline | pending |
-| T9 | Delete `api-core/`; sync `README.md`, `AGENTS.md`, `api/README.md` | S1, S10 | inline | pending |
+| T1 | Tracking docs for this change | — | inline | 81b23b0 |
+| T2 | Module scaffold + `internal/config` with RED→GREEN tests | S2, S3, S11 | inline | 871ee13 |
+| T3 | `internal/httpapi`: router, `/health/live`, `/health/ready`, 404 JSON + tests | S4, S11 | inline | 871ee13 |
+| T4 | `internal/db`: pgx pool with bounded retry; schema bootstrap loader/runner + tests | S5, S11 | inline | 871ee13 |
+| T5 | `internal/probe`: postgres, redis, rabbitmq probes | S4 | inline | 871ee13 |
+| T6 | `cmd/api/main.go`: wiring, logger, graceful shutdown | S3, S6 | inline | 871ee13 |
+| T7 | `api/Dockerfile`, `api/.env.example`, `api/.dockerignore` | S7 | inline | 24804c0 |
+| T8 | `nginx/default.conf` proxy, `docker-compose.yml` `api_core`→`api` | S8, S9 | inline | 59e350a |
+| T9 | Delete `api-core/`; sync `README.md`, `AGENTS.md`, `api/README.md` | S1, S10 | inline | 0e54671 |
 | T10 | Verification: `go build`, `go vet`, `go test ./...`, independent verify pass | S11 | delegated (verifier) | pending |
 
 ## Log
@@ -41,3 +41,18 @@ Branch: `feat/go-api` (cut from `feat/base-domain-model`, which supplies `databa
   (D5); bounded pool retry, no unbounded wait (D6); RabbitMQ optional (D7); no dotenv
   (D8); injected `getenv` (D9); unverified `golang:1.27-alpine` tag (D10); Nginx keeps
   port 9000 and forwards client IPs for the audit model (D11).
+- L6 — Verification evidence (executed, not assumed): `gofmt -l .` clean;
+  `go vet ./...` clean; `go test ./...` green for config, db, httpapi, probe;
+  `go build -o /tmp/melzone-api ./cmd/api` produces a 19 MB static binary; the
+  `docker-compose.yml` parses as YAML with services `api, webserver, database,
+  rabbitmq, redis, soketi`; runtime fail-fast exercised on the built binary —
+  no env → exit 1 naming `DATABASE_URL`, only `DATABASE_URL` → exit 1 naming
+  `REDIS_ADDR`, `LOG_LEVEL=verbose` → exit 1 naming `LOG_LEVEL`.
+- L7 — Not verified here, deferred by L3: `docker build` of `api/Dockerfile`
+  (including whether the `golang:1.27-alpine` tag resolves), a live run against
+  PostgreSQL/Redis/RabbitMQ, `/health/ready` against real dependencies, and the
+  first real application of `database/init/*.sql` through `seg.tb_schema_migration`.
+- L8 — Native risk assessment over `master..HEAD` (`gentle-ai review assess
+  --base-ref master --committed-only --json`): `risk: high`, `review_due: true`,
+  reasons `hot_path` (deleted `api-core/config/auth.php`) and `process_boundary`
+  (`api/internal/db/migrate.go`). Verification tier: independent verifier required.
