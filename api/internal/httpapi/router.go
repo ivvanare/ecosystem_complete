@@ -22,6 +22,7 @@ type Options struct {
 	ProbeTimeout       time.Duration
 	Logger             *slog.Logger
 	CORSAllowedOrigins []string
+	Signup             SignupRequester
 }
 
 const defaultProbeTimeout = 2 * time.Second
@@ -43,6 +44,12 @@ func New(opts Options) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", h.live)
 	mux.HandleFunc("GET /health/ready", h.ready)
+
+	if opts.Signup != nil {
+		auth := &authHandlers{signup: opts.Signup, logger: logger}
+		mux.HandleFunc("POST /v1/auth/signup", auth.startSignup)
+	}
+
 	mux.HandleFunc("/", notFound)
 
 	return CORS(opts.CORSAllowedOrigins)(mux)

@@ -18,7 +18,8 @@ with the mobile app as first consumer. Do not reintroduce PHP tooling.
 ```
 melZone/
 ├── api/               # The only application: Go service
-│   ├── cmd/api/       # entrypoint: config, wiring, signals, graceful shutdown
+│   ├── cmd/api/       # HTTP entrypoint: config, wiring, signals, graceful shutdown
+│   ├── cmd/worker/    # queue consumer: delivers mail over SMTP
 │   ├── internal/      # config · httpapi · db · probe
 │   └── Dockerfile
 ├── database/          # PostgreSQL init scripts + canonical DBML
@@ -44,6 +45,8 @@ Start everything: `docker compose up -d --build`
 | Service | Container | Port |
 |---------|------------|------|
 | API (Go) | melzone_api | 9000 → 8080 |
+| Worker (Go) | melzone_worker | — |
+| Mailpit (dev) | melzone_mailpit | 8025 (UI), 1025 (SMTP) |
 | PostgreSQL | melzone_db | 5432 |
 | RabbitMQ | melzone_mq | 5672, 15672 (mgmt) |
 | Redis | melzone_redis | 6379 |

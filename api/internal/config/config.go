@@ -16,6 +16,9 @@ const (
 	DefaultHTTPAddr        = ":8080"
 	DefaultDBInitDir       = "/app/database/init"
 	DefaultShutdownTimeout = 10 * time.Second
+	DefaultMailQueue       = "melia.mail"
+	DefaultSMTPAddr        = "mailpit:1025"
+	DefaultMailFrom        = "no-reply@melia.test"
 )
 
 // Config is the fully resolved runtime configuration.
@@ -26,6 +29,9 @@ type Config struct {
 	RabbitMQURL     string
 	DBInitDir       string
 	CORSOrigins     []string
+	MailQueue       string
+	SMTPAddr        string
+	MailFrom        string
 	AutoMigrate     bool
 	LogLevel        slog.Level
 	ShutdownTimeout time.Duration
@@ -41,6 +47,9 @@ func Load(getenv func(string) string) (Config, error) {
 		RabbitMQURL:     lookup(getenv, "RABBITMQ_URL"),
 		DBInitDir:       valueOr(getenv, "DB_INIT_DIR", DefaultDBInitDir),
 		CORSOrigins:     splitList(lookup(getenv, "CORS_ALLOWED_ORIGINS")),
+		MailQueue:       valueOr(getenv, "MAIL_QUEUE", DefaultMailQueue),
+		SMTPAddr:        valueOr(getenv, "SMTP_ADDR", DefaultSMTPAddr),
+		MailFrom:        valueOr(getenv, "MAIL_FROM", DefaultMailFrom),
 		AutoMigrate:     true,
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: DefaultShutdownTimeout,

@@ -19,6 +19,8 @@ import (
 	"github.com/ivvanare/ecosystem_complete/api/internal/db"
 	"github.com/ivvanare/ecosystem_complete/api/internal/httpapi"
 	"github.com/ivvanare/ecosystem_complete/api/internal/probe"
+	"github.com/ivvanare/ecosystem_complete/api/internal/queue"
+	"github.com/ivvanare/ecosystem_complete/api/internal/signup"
 )
 
 // readHeaderTimeout bounds slow-header connections without capping request bodies.
@@ -64,12 +66,24 @@ func run() error {
 		probes = append(probes, probe.RabbitMQ{URL: cfg.RabbitMQURL})
 	}
 
+	// Signup needs the broker to deliver codes. Without it the route stays unregistered
+	// rather than accepting a request it cannot fulfil.
+	var signupService httpapi.SignupRequester
+	if cfg.RabbitMQURL == "" {
+		logger.Warn("RABBITMQ_URL is empty: signup is disabled because codes cannot be delivered")
+	} else {
+		publisher := queue.NewAMQP(cfg.RabbitMQURL, cfg.MailQueue)
+		defer func() { _ = publisher.Close() }()
+		signupService = signup.New(signup.NewPostgresStore(pool), publisher, logger)
+	}
+
 	server := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: httpapi.New(httpapi.Options{
 			Probes:             probes,
 			Logger:             logger,
 			CORSAllowedOrigins: cfg.CORSOrigins,
+			Signup:             signupService,
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}

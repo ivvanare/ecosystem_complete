@@ -49,6 +49,9 @@ Both non-`ok` states return `503`.
 | `HTTP_ADDR` | no | `:8080` | listen address |
 | `RABBITMQ_URL` | no | empty | when empty, the rabbitmq probe is omitted |
 | `CORS_ALLOWED_ORIGINS` | no | empty | comma-separated browser origins; empty disables CORS |
+| `MAIL_QUEUE` | no | `melia.mail` | durable queue the API publishes mail to |
+| `SMTP_ADDR` | no | `mailpit:1025` | SMTP target used by the worker |
+| `MAIL_FROM` | no | `no-reply@melia.test` | envelope sender |
 | `DB_INIT_DIR` | no | `/app/database/init` | directory holding `NN-*.sql` |
 | `DB_AUTO_MIGRATE` | no | `true` | apply pending schema files at startup |
 | `LOG_LEVEL` | no | `info` | `debug`, `info`, `warn`, `error` |
@@ -87,6 +90,20 @@ complete schema from a half-built one that still has `seg.tb_user`, which is exa
 the drift script exists.
 
 Set `DB_AUTO_MIGRATE=false` when another tool owns the schema.
+
+## Signup and mail
+
+`POST /v1/auth/signup` writes the pending registration to `seg.tb_signup_request` and
+publishes one message to the `melia.mail` queue. A separate process (`cmd/worker`) consumes
+it and delivers it over SMTP. Keeping them apart means a slow mail server cannot hold an
+HTTP request.
+
+In development the SMTP target is **Mailpit** (`docker compose up`): it accepts everything
+and shows it at <http://localhost:8025>. Nothing leaves the machine.
+
+The code is never stored in clear: the row keeps `tx_code_hash` (SHA-256) and the mail
+carries the only copy of the digits. If the queue is unreachable the request fails with
+`500` rather than pretending a code was sent.
 
 ## Tests
 

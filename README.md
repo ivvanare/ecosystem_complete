@@ -37,6 +37,8 @@ docker compose up -d --build
 
 This starts:
 - **melzone_api** (Go) - port 9000 → 8080, the only HTTP entry point
+- **melzone_worker** (Go) - consumes the mail queue and delivers over SMTP
+- **melzone_mailpit** - catches all email in dev, UI on port 8025
 - **melzone_db** (PostgreSQL) - port 5432
 - **melzone_mq** (RabbitMQ) - ports 5672, 15672 (management UI)
 - **melzone_redis** - port 6379
@@ -54,7 +56,8 @@ curl http://localhost:9000/health/ready   # per-dependency report
 ```
 melZone/
 ├── api/               # Go service (the only application)
-│   ├── cmd/api/       # entrypoint: config, wiring, signals, shutdown
+│   ├── cmd/api/       # HTTP entrypoint: config, wiring, signals, shutdown
+│   ├── cmd/worker/    # queue consumer: mail delivery over SMTP
 │   ├── internal/      # config, httpapi, db, probe
 │   ├── Dockerfile
 │   └── README.md      # service documentation
@@ -108,7 +111,8 @@ Inside `api/`:
 
 | Command | Purpose |
 |---------|---------|
-| `go run ./cmd/api` | Run the service (export the env vars first) |
+| `go run ./cmd/api` | Run the HTTP service (export the env vars first) |
+| `go run ./cmd/worker` | Run the mail worker (needs `RABBITMQ_URL`) |
 | `go test ./...` | Run the test suite (no external services needed) |
 | `go build ./...` | Compile |
 | `go vet ./...` | Static analysis |

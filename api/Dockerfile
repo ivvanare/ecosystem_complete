@@ -13,7 +13,8 @@ COPY api/go.mod api/go.sum ./
 RUN go mod download
 
 COPY api/ ./
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api \
+ && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/worker ./cmd/worker
 
 # --- Runtime stage ---
 FROM alpine:3
@@ -23,6 +24,7 @@ RUN apk add --no-cache ca-certificates \
     && adduser -S -G app app
 
 COPY --from=build /out/api /usr/local/bin/api
+COPY --from=build /out/worker /usr/local/bin/worker
 
 # Canonical schema. Copied in, never bind-mounted: a host directory the container user
 # cannot read (mode 700, other uid) would otherwise abort startup.
