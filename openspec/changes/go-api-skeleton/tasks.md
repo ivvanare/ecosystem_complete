@@ -81,3 +81,12 @@ Branch: `feat/go-api` (cut from `feat/base-domain-model`, which supplies `databa
   **B2** — S9 rewritten to state the `database` service changes instead of denying them.
   Also fixed: A1 (`DATABASE_URL` named in the connect error) and A3 (RabbitMQ probe
   honours the caller deadline). A2 and A5 are accepted as-is and recorded here.
+- L11 — Defect found after the acknowledged review, while the tree was being changed
+  outside this session: `PostgresLedger.Ensure` creates schema `seg` before any schema
+  file runs (`api/internal/db/pool.go`), so a bare `CREATE SCHEMA seg;` in
+  `02-schemas-enums.sql` aborts startup with `42P06` on a truly empty database — the one
+  path where `seg.tb_user` does not exist and adoption cannot apply. Neither the suite
+  nor the independent verification could catch it: the executor is a fake, so no real
+  SQL runs. Fixed with `CREATE SCHEMA IF NOT EXISTS` for `seg` and `core`, committed as
+  its own unit. The unrelated database rename that arrived in the same working tree is
+  committed separately, after this one.

@@ -3,8 +3,11 @@
 -- los únicos objetos que usan ambos esquemas".
 \connect melzone
 
-CREATE SCHEMA seg;
-CREATE SCHEMA core;
+-- El ledger de migraciones nace en seg (seg.tb_schema_migration), así que el esquema
+-- seg ya existe cuando este archivo corre. IF NOT EXISTS evita que el applier choque
+-- consigo mismo con "schema seg already exists" (SQLSTATE 42P06).
+CREATE SCHEMA IF NOT EXISTS seg;
+CREATE SCHEMA IF NOT EXISTS core;
 
 -- Enums live in public because seg and core share them (PostgreSQL types live in one
 -- schema and public is in the default search_path, so they are used unqualified).
