@@ -57,3 +57,13 @@ Each slice is one work unit with its tests; the contract is already fixed.
   Consequence the contract does not decide: where the SPA keeps the refresh token. Bearer
   in `localStorage` is readable by any XSS; in-memory only forces a re-login on reload.
   Flagged for the user rather than chosen here.
+- L7 — User decision: the panel's refresh token goes in an httpOnly cookie, not
+  `localStorage`. Consequences applied to the contract: C3 now splits refresh transport by
+  client (mobile body, panel cookie); C13 had just claimed "no cookies,
+  `Access-Control-Allow-Credentials` off", which the decision contradicts, so credentials
+  are now on and the origin list can never be `*`; C14 adds the CSRF rules the cookie
+  requires (JSON-only content type plus double-submit `X-CSRF-Token` against a readable
+  `csrf_token` cookie). `openapi.yaml` gained the optional `refresh_token` cookie
+  parameter, the optional body, `X-CSRF-Token`, `Set-Cookie` headers on the four
+  token-issuing responses, and `refresh_token` became optional in `TokenPair`.
+  Re-validated: 19 paths, 19 operations, refs resolve, no duplicate ids.

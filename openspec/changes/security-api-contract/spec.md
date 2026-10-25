@@ -39,8 +39,13 @@ Two flows must never reveal whether an account exists:
 > rota en cada uso. Reusar un refresh ya rotado invalida la familia completa."
 
 - Access: HS256 JWT, 15 minutes, `Authorization: Bearer`. Not stored server-side.
-- Refresh: opaque, 30 days, returned in the body (the mobile app stores it in secure
-  storage). Only its SHA-256 lives in `tb_refresh_token.tx_token_hash`.
+- Refresh: opaque, 30 days. Only its SHA-256 lives in `tb_refresh_token.tx_token_hash`.
+  Transport depends on the client, because the clients are not equivalent:
+  - **Mobile**: returned in the JSON body and kept in the device's secure storage.
+  - **Panel (SPA)**: returned as `Set-Cookie: refresh_token=...; HttpOnly; Secure;
+    SameSite=Lax; Path=/v1/auth` — JavaScript can never read it.
+  `/v1/auth/refresh` and `/v1/auth/logout` accept the token from the body **or** from that
+  cookie; the body is optional when the cookie is present.
 - Every `/v1/auth/refresh` revokes the presented token and issues a new one in the same
   `co_token_family`.
 - Presenting an already-rotated token is treated as theft: the whole family is revoked and
@@ -116,7 +121,7 @@ are the API's names, never the `co_`/`tx_` column names.
 
 | Decision | Current contract | Revisit when |
 |---|---|---|
-| Panel auth transport | **Decided:** the panel is a SPA calling this API, so bearer token — same mechanism as mobile | — |
+| Panel auth transport | **Decided:** the panel is a SPA. Access token (bearer) stays in memory only; the refresh token travels in an httpOnly cookie and is never exposed to JavaScript | — |
 | Rate limiting | Not in the contract; `429` shape defined | An edge exists (LB/ingress) or a Go middleware lands |
 | Token lifetimes | 15 min / 30 days | Product decides otherwise; they become env vars |
 | Password policy | `minLength: 12` | A policy with strength rules is agreed |
@@ -134,8 +139,27 @@ cross-origin request and `Authorization` makes it non-simple: the browser sends 
 - `Access-Control-Max-Age` is set so the preflight is not paid on every call.
 - Preflight must not require authentication: an `OPTIONS` that answers `401` breaks the
   SPA before it can send a token.
-- No cookies are used, so `Access-Control-Allow-Credentials` stays off; the token travels
-  in the `Authorization` header.
+- `Access-Control-Allow-Credentials: true` is required, because the refresh cookie must be
+  sent cross-origin — which is exactly why the origin list can never contain `*`. With
+  credentials, a wildcard origin is invalid and silently breaks the browser.
+- `SameSite=Lax` is enough when the SPA and the API share a registrable domain
+  (`admin.example.com` → `api.example.com`); `SameSite=None` is required only if they are
+  different sites, and it widens the CSRF surface (see C14).
 
 This is a server requirement, not a schema one: `openapi.yaml` documents the operations,
 and CORS is the transport rule that lets a browser reach them.
+
+### C14 — The refresh cookie needs CSRF protection
+
+A cookie is sent by the browser automatically, so a cross-site form post can trigger a
+refresh with the user's session. Two rules:
+
+- The refresh and logout endpoints accept `Content-Type: application/json` only, which
+  blocks simple cross-site form posts.
+- They additionally require the double-submit token: the SPA sends `X-CSRF-Token` with a
+  value that matches a non-HttpOnly `csrf_token` cookie issued alongside the refresh
+  cookie. A cross-site caller can send the cookie but cannot read it to echo the header.
+- `logout` is idempotent and revokes only the presented family, so a forced logout is the
+  worst a bypass achieves.
+
+The mobile path is unaffected: it sends the refresh token in the body and no cookie.

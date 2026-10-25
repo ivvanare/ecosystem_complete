@@ -132,7 +132,11 @@ paths:
                 code: { type: string, pattern: "^[0-9]{6}$" }
       responses:
         "201":
-          description: User created and session started.
+          description: User created and session started. Browser clients receive the refresh token as a cookie.
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+              description: '`refresh_token=...; HttpOnly; Secure; SameSite=Lax; Path=/v1/auth` plus a readable `csrf_token`.'
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TokenPair" }
@@ -171,7 +175,11 @@ paths:
                   description: Human label shown to the user, e.g. "iPhone de Ana".
       responses:
         "200":
-          description: Session started.
+          description: Session started. Browser clients receive the refresh token as a cookie.
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+              description: '`refresh_token=...; HttpOnly; Secure; SameSite=Lax; Path=/v1/auth` plus a readable `csrf_token`.'
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TokenPair" }
@@ -193,18 +201,38 @@ paths:
         Rotation is mandatory: the presented token is revoked and a new one is issued in
         the same family. Presenting a token that was already rotated is treated as theft —
         the whole family is revoked and the response is `401 refresh_reused`.
+
+        The token comes from the body (mobile) or from the httpOnly `refresh_token`
+        cookie (panel). Cookie callers must also send `X-CSRF-Token` matching the readable
+        `csrf_token` cookie; body callers do not.
+      parameters:
+        - name: refresh_token
+          in: cookie
+          required: false
+          description: Present for the panel; never readable by JavaScript.
+          schema: { type: string }
+        - name: X-CSRF-Token
+          in: header
+          required: false
+          description: Required when the refresh token arrives as a cookie.
+          schema: { type: string }
       requestBody:
-        required: true
+        required: false
         content:
           application/json:
             schema:
               type: object
-              required: [refresh_token]
               properties:
-                refresh_token: { type: string }
+                refresh_token:
+                  type: string
+                  description: Omit when the cookie carries it.
       responses:
         "200":
           description: New pair issued; the previous refresh token is dead.
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+              description: Rotated `refresh_token` cookie plus a fresh readable `csrf_token`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TokenPair" }
@@ -219,6 +247,15 @@ paths:
       description: Revokes the refresh family of the presented refresh token.
       security:
         - bearerAuth: []
+      parameters:
+        - name: refresh_token
+          in: cookie
+          required: false
+          schema: { type: string }
+        - name: X-CSRF-Token
+          in: header
+          required: false
+          schema: { type: string }
       requestBody:
         required: false
         content:
@@ -722,7 +759,7 @@ components:
 
     TokenPair:
       type: object
-      required: [access_token, token_type, expires_in, refresh_token, refresh_expires_in]
+      required: [access_token, token_type, expires_in]
       properties:
         access_token:
           type: string
@@ -734,7 +771,9 @@ components:
           example: 900
         refresh_token:
           type: string
-          description: Opaque. Rotates on every use; store it in secure storage on the device.
+          description: |
+            Opaque, rotates on every use. Omitted when the client is a browser and the
+            token travels in the httpOnly cookie instead.
         refresh_expires_in:
           type: integer
           example: 2592000
