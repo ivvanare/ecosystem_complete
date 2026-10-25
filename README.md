@@ -65,6 +65,7 @@ melZone/
 │   ├── diagram_base.txt
 │   ├── init/          # 01..05 SQL, applied by the container and by the service
 │   └── verify_base_model.sql
+├── tests/k6/          # Load tests (k6)
 ├── openspec/          # Change proposals, specs and task logs
 ├── docker-compose.yml # Multi-service orchestration
 ├── AGENTS.md          # Guidelines for AI agents
@@ -130,6 +131,10 @@ Inside `api/`:
 ```bash
 cd api && go test ./...
 ```
+
+Load tests live in `tests/k6/` (k6): `smoke.js` checks the contract without writing
+anything, `signup.js` measures the write path and the Argon2id cost. See
+[tests/k6/README.md](tests/k6/README.md).
 
 ---
 

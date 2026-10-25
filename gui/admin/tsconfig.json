@@ -3,6 +3,9 @@
 {
   "compileOnSave": false,
   "compilerOptions": {
+    "paths": {
+      "crud-maker": ["./dist/crud-maker"]
+    },
     "noImplicitOverride": true,
     "noPropertyAccessFromIndexSignature": true,
     "noImplicitReturns": true,
@@ -26,6 +29,12 @@
     },
     {
       "path": "./tsconfig.spec.json"
+    },
+    {
+      "path": "./projects/crud-maker/tsconfig.lib.json"
+    },
+    {
+      "path": "./projects/crud-maker/tsconfig.spec.json"
     }
   ]
 }

@@ -23,6 +23,7 @@ melZone/
 │   ├── internal/      # config · httpapi · db · probe
 │   └── Dockerfile
 ├── database/          # PostgreSQL init scripts + canonical DBML
+├── tests/k6/          # Load tests (k6)
 ├── openspec/          # Change proposals, specs, task logs
 └── docker-compose.yml # Multi-service orchestration
 ```
@@ -37,6 +38,8 @@ All commands run inside `api/`:
 | `go test ./...` | Full suite, no external services required |
 | `go build ./...` / `go vet ./...` | Compile / static analysis |
 | `go build -o /tmp/api ./cmd/api` | Build a binary without polluting the tree |
+| `k6 run tests/k6/smoke.js` | Contract smoke against a running API (writes nothing) |
+| `k6 run tests/k6/signup.js` | Signup load; writes rows and queues mail |
 
 ## Docker Services
 

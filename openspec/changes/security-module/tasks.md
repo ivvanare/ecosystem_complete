@@ -37,3 +37,14 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
   `Allow-Methods`, `Max-Age: 600` and `Vary: Origin`; a preflight from an unknown origin
   answered `404` with no CORS headers at all. One query error was mine, not the data's:
   `GROUP BY 1` on a concatenation containing `count(*)`.
+- L5 — k6 suites added under `tests/k6/`: `smoke.js` (contract, writes nothing) and
+  `signup.js` (write path plus Argon2id cost, writes one pending row and one queued mail
+  per iteration). Both were validated with a real k6 binary (v2.3.0, run from /tmp, nothing
+  installed system-wide).
+  Live results: `smoke.js` green — 460/460 checks, `http_req_failed` 0%, p(95) 3.74 ms over
+  220 requests. `signup.js` returned 404 on 151/151 requests because the running container
+  predates the signup commit, which is the expected signal of a stale image and not a
+  script defect.
+  One defect found in the suite itself: `smoke.js` requests a 404 on purpose, and k6 counts
+  non-2xx as failed requests, so the first run reported 45% failures with every check
+  green. Fixed with `http.setResponseCallback(http.expectedStatuses(...))` and documented.

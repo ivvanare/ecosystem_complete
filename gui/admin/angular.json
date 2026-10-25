@@ -24,9 +24,7 @@
                 "input": "public"
               }
             ],
-            "styles": [
-              "src/styles.css"
-            ]
+            "styles": ["src/styles.css"]
           },
           "configurations": {
             "production": {
@@ -66,6 +64,32 @@
         },
         "test": {
           "builder": "@angular/build:unit-test"
+        }
+      }
+    },
+    "crud-maker": {
+      "projectType": "library",
+      "root": "projects/crud-maker",
+      "sourceRoot": "projects/crud-maker/src",
+      "prefix": "crud",
+      "architect": {
+        "build": {
+          "builder": "@angular/build:ng-packagr",
+          "configurations": {
+            "production": {
+              "tsConfig": "projects/crud-maker/tsconfig.lib.prod.json"
+            },
+            "development": {
+              "tsConfig": "projects/crud-maker/tsconfig.lib.json"
+            }
+          },
+          "defaultConfiguration": "production"
+        },
+        "test": {
+          "builder": "@angular/build:unit-test",
+          "options": {
+            "tsConfig": "projects/crud-maker/tsconfig.spec.json"
+          }
         }
       }
     }
