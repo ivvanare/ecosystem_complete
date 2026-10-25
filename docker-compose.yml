@@ -4,6 +4,10 @@ services:
     build:
       context: ./api
       dockerfile: Dockerfile
+      # El build descarga módulos de Go, así que necesita DNS. En hosts donde el
+      # resolver del bridge no responde (192.168.x.x:53 refused) el build muere en
+      # `go mod download`; con host network usa el resolver del host.
+      network: host
     container_name: melzone_api
     restart: always
     environment:
