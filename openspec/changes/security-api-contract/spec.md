@@ -116,7 +116,26 @@ are the API's names, never the `co_`/`tx_` column names.
 
 | Decision | Current contract | Revisit when |
 |---|---|---|
-| Panel auth transport | Bearer token, same as mobile | The backoffice turns out server-rendered (templ/htmx) → httpOnly cookie |
+| Panel auth transport | **Decided:** the panel is a SPA calling this API, so bearer token — same mechanism as mobile | — |
 | Rate limiting | Not in the contract; `429` shape defined | An edge exists (LB/ingress) or a Go middleware lands |
 | Token lifetimes | 15 min / 30 days | Product decides otherwise; they become env vars |
 | Password policy | `minLength: 12` | A policy with strength rules is agreed |
+
+### C13 — A browser SPA needs CORS, and the contract must say so
+
+Because the panel is a SPA served from a different origin than the API, every call is a
+cross-origin request and `Authorization` makes it non-simple: the browser sends an
+`OPTIONS` preflight before the real request.
+
+- The API answers preflight for the allowed origins only, configured by
+  `CORS_ALLOWED_ORIGINS` (comma-separated, no wildcard when credentials are involved).
+- Allowed request headers: `Authorization`, `Content-Type`. Allowed methods: the ones the
+  contract uses.
+- `Access-Control-Max-Age` is set so the preflight is not paid on every call.
+- Preflight must not require authentication: an `OPTIONS` that answers `401` breaks the
+  SPA before it can send a token.
+- No cookies are used, so `Access-Control-Allow-Credentials` stays off; the token travels
+  in the `Authorization` header.
+
+This is a server requirement, not a schema one: `openapi.yaml` documents the operations,
+and CORS is the transport rule that lets a browser reach them.

@@ -17,6 +17,8 @@ Specs: `spec.md` (C1–C12) · Contract: `api/openapi.yaml`
 
 Each slice is one work unit with its tests; the contract is already fixed.
 
+0. CORS middleware driven by `CORS_ALLOWED_ORIGINS`, with the preflight exempt from auth
+   (C13). The panel cannot call anything until this exists.
 1. Seeds of roles and permissions (`admin.access`, `place.*`, `review.moderate`, …) and the
    pgx repository layer. No endpoints.
 2. Signup + verify (`tb_signup_request`), which introduces the first RabbitMQ publisher and
@@ -50,3 +52,8 @@ Each slice is one work unit with its tests; the contract is already fixed.
 - L5 — Deliberately not decided: panel transport (bearer vs httpOnly cookie), rate-limit
   placement, token lifetimes as env vars, password strength policy. They are listed in C12
   so the implementation does not quietly pick one.
+- L6 — User decision: the admin panel is a SPA that calls the API, so the panel transport
+  is bearer (C12 resolved) and the API now owes CORS with an auth-free preflight (C13).
+  Consequence the contract does not decide: where the SPA keeps the refresh token. Bearer
+  in `localStorage` is readable by any XSS; in-memory only forces a re-login on reload.
+  Flagged for the user rather than chosen here.
