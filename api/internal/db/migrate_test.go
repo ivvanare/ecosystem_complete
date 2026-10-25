@@ -91,7 +91,7 @@ func TestLoadKeepsSchemaFilesInLexicalOrder(t *testing.T) {
 	writeFiles(t, dir, map[string]string{
 		"05-foreign-keys.sql":    "ALTER TABLE core.tb_route ADD CONSTRAINT x FOREIGN KEY (co_user) REFERENCES seg.tb_user(co_user);",
 		"02-schemas-enums.sql":   "CREATE SCHEMA IF NOT EXISTS seg;",
-		"01-create-database.sql": "CREATE DATABASE melzone;",
+		"01-create-database.sql": "CREATE DATABASE melia;",
 		"notes.txt":              "not a migration",
 		"README.md":              "# docs",
 	})
@@ -115,7 +115,7 @@ func TestLoadKeepsSchemaFilesInLexicalOrder(t *testing.T) {
 func TestLoadStripsPsqlMetaCommands(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{
-		"02-schemas-enums.sql": "\\connect melzone\nCREATE SCHEMA IF NOT EXISTS seg;\n  \\c melzone\nCREATE SCHEMA IF NOT EXISTS core;",
+		"02-schemas-enums.sql": "\\connect melia\nCREATE SCHEMA IF NOT EXISTS seg;\n  \\c melia\nCREATE SCHEMA IF NOT EXISTS core;",
 	})
 
 	migrations, err := Load(dir)

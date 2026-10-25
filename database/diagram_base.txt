@@ -126,7 +126,7 @@
 //     acciones ON DELETE/UPDATE de las FK (son una decisión de negocio aparte).
 // ==============================================================================
 
-Project melzone_base {
+Project melia_base {
   database_type: 'PostgreSQL'
   Note: 'Una base, dos esquemas: seg (identidad y permisos) y core (dominio).'
 }

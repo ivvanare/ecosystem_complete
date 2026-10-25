@@ -23,7 +23,7 @@ The service reads:
 
 | Variable | Required | Default | Meaning |
 |---|---|---|---|
-| `DATABASE_URL` | yes | — | PostgreSQL DSN, e.g. `postgres://user:pass@host:5432/melzone?sslmode=disable` |
+| `DATABASE_URL` | yes | — | PostgreSQL DSN, e.g. `postgres://user:pass@host:5432/melia?sslmode=disable` |
 | `REDIS_ADDR` | yes | — | `host:port` |
 | `HTTP_ADDR` | no | `:8080` | listen address |
 | `RABBITMQ_URL` | no | empty | `amqp://user:pass@host:5672/` |
@@ -56,11 +56,11 @@ startup, when `DB_AUTO_MIGRATE` is true, the service:
 
 1. ensures its ledger table `seg.tb_schema_migration (tx_name text primary key, dt_applied_at timestamptz not null default now())`;
 2. reads `DB_INIT_DIR`, keeps files matching `NN-*.sql`, sorts them lexically;
-3. never executes `01-create-database.sql` — a service connected to `melzone` cannot
+3. never executes `01-create-database.sql` — a service connected to `melia` cannot
    create it. The provisioning script lives in `database/provision/`; the loader still
    guards against a copy reappearing in `DB_INIT_DIR`;
 4. strips psql meta-command lines (any line whose trimmed form starts with `\`, such as
-   `\connect melzone`);
+   `\connect melia`);
 5. executes each pending file's text as one statement batch and records its filename;
 6. skips files already recorded, so a restart is a no-op;
 7. when the ledger is empty but `seg.tb_user` already exists (a volume predating the
@@ -91,13 +91,13 @@ longer contains `fastcgi_pass`, `SCRIPT_FILENAME`, or a document root for PHP.
 ### S9 — Compose runs the Go service
 
 The `api_core` service is replaced by `api` (`build: ./api`, `container_name:
-melzone_api`), receiving `DATABASE_URL`, `REDIS_ADDR`, `RABBITMQ_URL`, `DB_INIT_DIR`
+melia_api`), receiving `DATABASE_URL`, `REDIS_ADDR`, `RABBITMQ_URL`, `DB_INIT_DIR`
 and mounting `./database/init` read-only. `redis`, `rabbitmq` and `soketi` keep their
 current configuration. `webserver` keeps its image, container name and `9000:80` mapping,
 loses the `./api-core` volume and gains `depends_on: api` — both mandatory consequences of
 S1 and S8. `database` keeps its image, credentials and port, and additionally carries a
-named data volume (`melzone_pgdata` instead of the `./database/data` bind mount),
-`shm_size`, UTF8 initdb arguments, a `pg_isready` healthcheck, `POSTGRES_DB: melzone`
+named data volume (`melia_pgdata` instead of the `./database/data` bind mount),
+`shm_size`, UTF8 initdb arguments, a `pg_isready` healthcheck, `POSTGRES_DB: melia`
 (the container now creates the database that the provisioning script used to create) and
 no init-script mount, because the service is their only applier.
 

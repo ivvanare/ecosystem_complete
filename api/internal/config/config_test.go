@@ -14,7 +14,7 @@ func env(values map[string]string) func(string) string {
 
 func validEnv() map[string]string {
 	return map[string]string{
-		"DATABASE_URL": "postgres://admin:pass@database:5432/melzone?sslmode=disable",
+		"DATABASE_URL": "postgres://admin:pass@database:5432/melia?sslmode=disable",
 		"REDIS_ADDR":   "redis:6379",
 	}
 }

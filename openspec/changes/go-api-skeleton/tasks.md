@@ -90,3 +90,10 @@ Branch: `feat/go-api` (cut from `feat/base-domain-model`, which supplies `databa
   SQL runs. Fixed with `CREATE SCHEMA IF NOT EXISTS` for `seg` and `core`, committed as
   its own unit. The unrelated database rename that arrived in the same working tree is
   committed separately, after this one.
+- L12 — Rename `melzone` → `melia` across diagram, init scripts, verify script, compose
+  (`POSTGRES_DB` and DSN), `api/.env.example`, docs, constants and tests. Authored by
+  another session while this one was mid-review, so it is committed alone to keep
+  authorship and review scope legible. It arrived together with the `CREATE SCHEMA
+  IF NOT EXISTS` fix documented in L11, which is why that fix is its own commit. Not
+  covered by the acknowledged review of target `sha256:ebedfbad…`: its candidate was
+  frozen before these edits.

@@ -62,7 +62,7 @@ Two options were considered:
 The second wins. Consequences handled explicitly:
 
 - **One applier, not two.** The PostgreSQL entrypoint mount is removed and the container
-  only creates the database (`POSTGRES_DB=melzone`). An earlier draft kept both: the
+  only creates the database (`POSTGRES_DB=melia`). An earlier draft kept both: the
   entrypoint applied 01–05 on a fresh volume while the service applied the same files
   against a freshly created ledger, hit `schema "seg" already exists` on the first
   non-idempotent `CREATE SCHEMA`, and `restart: always` turned it into a crash loop.
@@ -75,12 +75,12 @@ The second wins. Consequences handled explicitly:
   `down -v` — is correct for a database with data and hostile in this pre-production
   project; the drift check keeps adoption honest.
 - `01-create-database.sql` moves to `database/provision/`: it is provisioning, not a
-  migration. You cannot `CREATE DATABASE melzone` from a connection already inside
-  `melzone`. The loader still refuses an `01-create-database.sql` in `DB_INIT_DIR` so a
+  migration. You cannot `CREATE DATABASE melia` from a connection already inside
+  `melia`. The loader still refuses an `01-create-database.sql` in `DB_INIT_DIR` so a
   stray copy cannot reintroduce the failure.
 - psql meta-commands (`\connect`, `\c`) are shell-level directives, not SQL. Lines whose
   trimmed form starts with `\` are stripped. `02-schemas-enums.sql` starts with
-  `\connect melzone`, so without this every startup would fail.
+  `\connect melia`, so without this every startup would fail.
 - No statement splitting: pgx's `Exec` without arguments uses the simple query protocol,
   which accepts multiple statements. Parsing SQL to split on `;` would break on any
   future dollar-quoted body.

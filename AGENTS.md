@@ -5,7 +5,7 @@ Compact guidance for OpenCode agents working in this repository.
 ## Stack
 
 - **Runtime**: Go 1.27, static binary, `net/http` standard library (no framework)
-- **Database**: PostgreSQL 15 (one database `melzone`, schemas `seg` + `core` — spec: `database/diagram_base.txt`)
+- **Database**: PostgreSQL 15 (one database `melia`, schemas `seg` + `core` — spec: `database/diagram_base.txt`)
 - **Message Broker**: RabbitMQ 3 with management plugin
 - **Cache**: Redis 7
 - **Web Server**: Nginx Alpine (reverse proxy to `api:8080`, no PHP)
@@ -74,7 +74,7 @@ add a silent fallback.
 - Schema source of truth is `database/init/NN-*.sql`, and the **service is the only
   applier**: it runs pending files at startup and records them in
   `seg.tb_schema_migration`. The container just creates the database
-  (`POSTGRES_DB=melzone`); never add a `docker-entrypoint-initdb.d` mount — two appliers
+  (`POSTGRES_DB=melia`); never add a `docker-entrypoint-initdb.d` mount — two appliers
   collide with `schema "seg" already exists`. Never let a second copy of the DDL appear in
   the tree either.
 - An empty ledger over an existing schema triggers **adoption** (recorded, not executed)

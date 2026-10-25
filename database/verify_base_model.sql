@@ -1,9 +1,9 @@
 -- ============================================================================
--- verify_base_model.sql — runnable assertions for the melzone base model.
+-- verify_base_model.sql — runnable assertions for the melia base model.
 -- Spec: database/diagram_base.txt · Change: openspec/changes/base-domain-model
 --
 -- Usage (live PostgreSQL 15, e.g. docker compose up database):
---   psql -h localhost -U admin -d melzone -v ON_ERROR_STOP=1 -f database/verify_base_model.sql
+--   psql -h localhost -U admin -d melia -v ON_ERROR_STOP=1 -f database/verify_base_model.sql
 --
 -- Every check RAISEs EXCEPTION on failure. All behavioral inserts run inside a
 -- transaction that is ROLLED BACK at the end: the database is left untouched.
@@ -15,8 +15,8 @@ BEGIN;
 -- ---- S1: topology — one database, schemas seg + core ------------------------
 DO $$
 BEGIN
-    IF current_database() <> 'melzone' THEN
-        RAISE EXCEPTION 'S1 FAIL: expected database melzone, got %', current_database();
+    IF current_database() <> 'melia' THEN
+        RAISE EXCEPTION 'S1 FAIL: expected database melia, got %', current_database();
     END IF;
     IF (SELECT count(*) FROM information_schema.schemata
         WHERE schema_name IN ('seg', 'core')) <> 2 THEN

@@ -8,7 +8,7 @@ This change lands the runtime only. No domain or security endpoint exists yet.
 ## Requirements
 
 - Go 1.27
-- PostgreSQL 15 (`melzone`, schemas `seg` + `core`), Redis 7, RabbitMQ 3
+- PostgreSQL 15 (`melia`, schemas `seg` + `core`), Redis 7, RabbitMQ 3
 - Or Docker for the whole stack
 
 ## Run
@@ -56,7 +56,7 @@ worse than one that refuses to start.
 
 `database/init/NN-*.sql` is the single source of truth for the schema, and the service is
 the only thing that applies it. The PostgreSQL container creates the database
-(`POSTGRES_DB=melzone`) and nothing else; there is no `docker-entrypoint-initdb.d` mount,
+(`POSTGRES_DB=melia`) and nothing else; there is no `docker-entrypoint-initdb.d` mount,
 because two appliers of the same DDL cannot coexist — the entrypoint runs on a fresh
 volume, the service runs on every start, and the second one would hit
 `schema "seg" already exists`.
@@ -67,7 +67,7 @@ At startup the service applies the pending files and records each in
 Two adaptations are deliberate:
 
 - `database/provision/01-create-database.sql` is not part of the set. A service
-  connected to `melzone` cannot create it; it exists for a manual bootstrap against a
+  connected to `melia` cannot create it; it exists for a manual bootstrap against a
   bare server.
 - psql meta-commands (`\connect ...`) are stripped. They are psql directives, not SQL.
 

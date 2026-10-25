@@ -6,7 +6,7 @@
 -- seg.tb_security_event intentionally has NO FK to tb_user: the audit must
 -- survive user deletion (rule 11).
 -- ============================================================================
-\connect melzone
+\connect melia
 
 -- ---- seg: identity and permissions ----
 

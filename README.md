@@ -9,7 +9,7 @@ supporting services in Docker.
 |-----------|-------------|
 | Runtime | Go 1.27 (static binary, distroless-style image) |
 | HTTP | `net/http` standard library (`ServeMux` method patterns, no framework) |
-| Database | PostgreSQL 15 (one database `melzone`, schemas `seg` + `core`) |
+| Database | PostgreSQL 15 (one database `melia`, schemas `seg` + `core`) |
 | Message Broker | RabbitMQ 3 with management plugin |
 | Cache | Redis 7 |
 | Web Server | Nginx Alpine (reverse proxy) |
@@ -94,7 +94,7 @@ start without the required ones. Full table in **[api/README.md](api/README.md)*
 `database/init/NN-*.sql` is the single source of truth for the schema, and the Go service
 is the only applier: it runs pending files at startup and records each in
 `seg.tb_schema_migration`, so restarts are no-ops. The PostgreSQL container only creates
-the empty database (`POSTGRES_DB=melzone`) — no `docker-entrypoint-initdb.d` mount, since
+the empty database (`POSTGRES_DB=melia`) — no `docker-entrypoint-initdb.d` mount, since
 two appliers of the same DDL would collide on a fresh volume.
 
 A volume whose schema predates the ledger is adopted (recorded, not re-executed) with a
@@ -151,7 +151,7 @@ Use this to monitor queue health, message rates, and failed jobs.
 ## Key Architecture Notes
 
 - **Go is the only application service**: `net/http` + pgx + go-redis + amqp091
-- **One PostgreSQL database**: `melzone` with schemas `seg` (identity/permissions) and
+- **One PostgreSQL database**: `melia` with schemas `seg` (identity/permissions) and
   `core` (domain) — canonical spec: `database/diagram_base.txt`
 - **Schema bootstrap**: the service applies `database/init/*.sql`, tracked in
   `seg.tb_schema_migration`; `01-create-database.sql` is provisioning and is skipped
@@ -167,7 +167,7 @@ Use this to monitor queue health, message rates, and failed jobs.
 The service reads the process environment; see `api/.env.example` for the full list.
 
 ```bash
-export DATABASE_URL='postgres://admin:my_admin_pass@localhost:5432/melzone?sslmode=disable'
+export DATABASE_URL='postgres://admin:my_admin_pass@localhost:5432/melia?sslmode=disable'
 export REDIS_ADDR='localhost:6379'
 export DB_INIT_DIR='../database/init'
 cd api && go run ./cmd/api

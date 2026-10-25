@@ -2,11 +2,11 @@
 -- Go service. Use it only to bootstrap a fresh PostgreSQL server by hand:
 --
 --   psql -U <admin> -f database/provision/01-create-database.sql
---   psql -U <admin> -d melzone -f database/init/02-schemas-enums.sql
+--   psql -U <admin> -d melia -f database/init/02-schemas-enums.sql
 --   ... 03, 04, 05
 --
--- In Docker the database is created by POSTGRES_DB=melzone and the service applies
+-- In Docker the database is created by POSTGRES_DB=melia and the service applies
 -- 02..05 to it, recording each file in seg.tb_schema_migration.
 --
 -- Canonical spec: database/diagram_base.txt — "UNA BASE DE DATOS, DOS ESQUEMAS".
-CREATE DATABASE melzone;
+CREATE DATABASE melia;

@@ -4,7 +4,7 @@
 -- Column prefixes per diagram rule 1: co_ uuid, tx_ text, nu_ numeric,
 -- dt_ timestamp, js_ json. Lifecycle buckets per rule 3 (see spec S4).
 -- ============================================================================
-\connect melzone
+\connect melia
 
 -- ---------------------------------------------------------------------------
 -- tb_user: THE base user table. App and backoffice users are the same entity;

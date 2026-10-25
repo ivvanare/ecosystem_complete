@@ -185,7 +185,7 @@ func isSchemaFile(name string) bool {
 	return first >= '0' && first <= '9' && second >= '0' && second <= '9' && name[2] == '-'
 }
 
-// stripMetaCommands drops psql directives such as `\connect melzone`. They are
+// stripMetaCommands drops psql directives such as `\connect melia`. They are
 // interpreted by the psql client, not by the server, so they are invalid SQL.
 func stripMetaCommands(sql string) string {
 	lines := strings.Split(sql, "\n")

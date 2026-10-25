@@ -1,7 +1,7 @@
--- Schemas and shared enums for melzone.
+-- Schemas and shared enums for melia.
 -- Spec: database/diagram_base.txt — "public → solo los Enum compartidos, porque son
 -- los únicos objetos que usan ambos esquemas".
-\connect melzone
+\connect melia
 
 -- El ledger de migraciones nace en seg (seg.tb_schema_migration), así que el esquema
 -- seg ya existe cuando este archivo corre. IF NOT EXISTS evita que el applier choque

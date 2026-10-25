@@ -4,7 +4,7 @@
 -- Cross-schema FK columns (co_user / co_owner_user -> seg.tb_user) are indexed
 -- here (rule 2); the constraints live in 05-foreign-keys.sql.
 -- ============================================================================
-\connect melzone
+\connect melia
 
 -- ---------------------------------------------------------------------------
 -- tb_place: a venue (e.g. MELIA). co_owner_user is NULL for backoffice-curated
