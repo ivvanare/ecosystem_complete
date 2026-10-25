@@ -4,83 +4,99 @@ Compact guidance for OpenCode agents working in this repository.
 
 ## Stack
 
-- **Runtime**: PHP 8.2 (FPM Alpine) with Laravel 12
+- **Runtime**: Go 1.27, static binary, `net/http` standard library (no framework)
 - **Database**: PostgreSQL 15 (one database `melzone`, schemas `seg` + `core` — spec: `database/diagram_base.txt`)
 - **Message Broker**: RabbitMQ 3 with management plugin
 - **Cache**: Redis 7
-- **Web Server**: Nginx Alpine (proxies to FPM on port 9000)
-- **Frontend**: Vite (dev mode) + Blade templates
+- **Web Server**: Nginx Alpine (reverse proxy to `api:8080`, no PHP)
+
+Laravel (`api-core/`) was removed on purpose: it held only scaffolding and a
+RabbitMQ/Redis demo. The diagram names Go as the sole owner of the API and of writes,
+with the mobile app as first consumer. Do not reintroduce PHP tooling.
 
 ## Repository Structure
 
 ```
 melZone/
-├── api-core/          # Main Laravel application
-├── nginx/             # Nginx configuration
-├── database/          # PostgreSQL init scripts and data volume
+├── api/               # The only application: Go service
+│   ├── cmd/api/       # entrypoint: config, wiring, signals, graceful shutdown
+│   ├── internal/      # config · httpapi · db · probe
+│   └── Dockerfile
+├── nginx/             # Reverse proxy configuration
+├── database/          # PostgreSQL init scripts + canonical DBML
+├── openspec/          # Change proposals, specs, task logs
 └── docker-compose.yml # Multi-service orchestration
 ```
 
-This is NOT a monorepo — `api-core` is the only application. All PHP work happens there.
-
 ## Developer Commands
 
-Inside `api-core/`:
+All commands run inside `api/`:
 
 | Command | Purpose |
 |---------|---------|
-| `composer test` | Run tests (clears config, then `artisan test`) |
-| `composer setup` | Full setup: install deps, migrate, npm build |
-| `composer dev` | Concurrent: server + queue listener + logs + vite |
-
-Run single test: `php artisan test --filter=TestName`
+| `go run ./cmd/api` | Run the service (export env vars first) |
+| `go test ./...` | Full suite, no external services required |
+| `go build ./...` / `go vet ./...` | Compile / static analysis |
+| `go build -o /tmp/api ./cmd/api` | Build a binary without polluting the tree |
 
 ## Docker Services
 
-Start everything: `docker-compose up -d`
+Start everything: `docker compose up -d --build`
 
 | Service | Container | Port |
 |---------|------------|------|
-| API | melzone_api | internal:9000 |
+| API (Go) | melzone_api | internal:8080 |
 | Nginx | melzone_nginx | 9000 → 80 |
 | PostgreSQL | melzone_db | 5432 |
 | RabbitMQ | melzone_mq | 5672, 15672 (mgmt) |
 | Redis | melzone_redis | 6379 |
+| Soketi | melzone_soketi | 6001, 9601 |
 
 RabbitMQ management UI: http://localhost:15672 (admin/admin_pass)
 
+## Configuration
+
+The service reads the **process environment only** — no dotenv loader. Required:
+`DATABASE_URL`, `REDIS_ADDR`. Optional: `HTTP_ADDR` (default `:8080`), `RABBITMQ_URL`,
+`DB_INIT_DIR` (default `/app/database/init`), `DB_AUTO_MIGRATE` (default `true`),
+`LOG_LEVEL` (`debug|info|warn|error`). Missing required values fail startup by name; never
+add a silent fallback.
+
 ## Testing
 
-- Framework: PHPUnit 11 (via Laravel's `artisan test`)
-- Config: `phpunit.xml` uses **SQLite in-memory** for tests (`DB_CONNECTION=sqlite`, `DB_DATABASE=:memory:`)
-- Cache set to `array`, sessions to `array`, queues to `sync` during testing
-- Test suites: `tests/Unit/` and `tests/Feature/`
-
-## Environment
-
-- Copy `.env.example` to `.env` and run `php artisan key:generate`
-- Production-like config in `.env.example`:
-  - `QUEUE_CONNECTION=rabbitmq` (not sync)
-  - `CACHE_STORE=redis` with `REDIS_CLIENT=phpredis`
-  - `SESSION_DRIVER=database`
+- Framework: standard `go test` (no testify requirement in new tests)
+- Tests must not need PostgreSQL, Redis or RabbitMQ: probes and the migration ledger are
+  interfaces, so tests pass fakes
+- `api/internal/...` is a closed surface — keep it that way so packages stay free to move
 
 ## Key Architecture Notes
 
-- Queue driver: RabbitMQ via `vladimir-yuldashev/laravel-queue-rabbitmq`
-- Redis client: `phpredis` extension (installed via PECL in Dockerfile), NOT Predis
-- PostgreSQL init (`database/init/`) creates one database `melzone` with schemas `seg` (identity/permissions) and `core` (domain) — replaces the former two-database topology (`coreapp` + `apiseg`); init runs only on an empty data volume
-- Event example in `routes/web.php`: `OperacionRealizada` dispatches to RabbitMQ
-- **Queue + Cache Example**: See `api-core/README.md` for complete documentation
-  - Flow: HTTP Request → Event → RabbitMQ Queue → Listener → Redis Cache
-  - Test routes: `/test-operacion` (dispatch) and `/check-cache/{store}` (view cached data)
+- Schema source of truth is `database/init/NN-*.sql`. The container applies it on an empty
+  volume; the service also applies pending files at startup and records them in
+  `seg.tb_schema_migration`. Never let a second copy of the DDL appear in the tree.
+- `01-create-database.sql` is provisioning, skipped by the service (a connection inside
+  `melzone` cannot create it). psql meta-commands (`\connect`) are stripped for the same
+  reason.
+- `/health/live` must never touch a dependency; `/health/ready` aggregates probes.
+  `postgres` and `redis` are required, `rabbitmq` is optional (degrades, does not fail).
+- Nginx forwards `X-Forwarded-For` / `X-Real-IP` because the security model stores client
+  IPs in `seg.tb_security_event`.
+- Security design (not implemented yet) is specified in `database/diagram_base.txt`
+  §7–§11: stateless access JWT (HS256 now), rotating hashed refresh tokens, RBAC via
+  user → role → permission, email ownership proven by code before `tb_user` exists,
+  append-only audit log with no FK to users.
 
 ## Code Style
 
-- Laravel Pint for linting (configured in `composer.json`)
-- No custom rules detected — uses default Pint preset
+- `gofmt` / `go vet` clean; no formatter config needed
+- Errors wrapped with `%w` and context; never discarded silently
+- Logging with `log/slog`; the logger is injected, not a package global
 
 ## Gotchas
 
-- Windows paths in `docker-compose.yml` use forward slashes (`E:/proyects/...`)
-- Dockerfile installs `linux-headers` explicitly to fix `sockets` extension build
-- Session and cache use database driver in production (not Redis directly for sessions)
+- Go may be installed at `/usr/local/go/bin` and not on `PATH`
+- The canonical model expects UUID primary keys and `co_`/`tx_`/`nu_`/`dt_`/`js_` column
+  prefixes — follow them, the diagram is the contract
+- `database/init` runs only when the PostgreSQL volume is empty; reset with
+  `docker compose down -v`
+- Session tables are intentionally absent: auth uses JWT plus refresh tokens
