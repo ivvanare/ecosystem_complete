@@ -18,9 +18,10 @@ type Probe interface {
 
 // Options configures the router.
 type Options struct {
-	Probes       []Probe
-	ProbeTimeout time.Duration
-	Logger       *slog.Logger
+	Probes             []Probe
+	ProbeTimeout       time.Duration
+	Logger             *slog.Logger
+	CORSAllowedOrigins []string
 }
 
 const defaultProbeTimeout = 2 * time.Second
@@ -44,7 +45,7 @@ func New(opts Options) http.Handler {
 	mux.HandleFunc("GET /health/ready", h.ready)
 	mux.HandleFunc("/", notFound)
 
-	return mux
+	return CORS(opts.CORSAllowedOrigins)(mux)
 }
 
 func notFound(w http.ResponseWriter, _ *http.Request) {

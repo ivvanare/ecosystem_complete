@@ -25,6 +25,7 @@ type Config struct {
 	RedisAddr       string
 	RabbitMQURL     string
 	DBInitDir       string
+	CORSOrigins     []string
 	AutoMigrate     bool
 	LogLevel        slog.Level
 	ShutdownTimeout time.Duration
@@ -39,6 +40,7 @@ func Load(getenv func(string) string) (Config, error) {
 		RedisAddr:       lookup(getenv, "REDIS_ADDR"),
 		RabbitMQURL:     lookup(getenv, "RABBITMQ_URL"),
 		DBInitDir:       valueOr(getenv, "DB_INIT_DIR", DefaultDBInitDir),
+		CORSOrigins:     splitList(lookup(getenv, "CORS_ALLOWED_ORIGINS")),
 		AutoMigrate:     true,
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: DefaultShutdownTimeout,
@@ -68,6 +70,21 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// splitList parses a comma-separated variable, dropping blanks.
+func splitList(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			values = append(values, part)
+		}
+	}
+	return values
 }
 
 func lookup(getenv func(string) string, key string) string {

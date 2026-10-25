@@ -122,3 +122,29 @@ func TestLoadTrimsSurroundingWhitespace(t *testing.T) {
 		t.Errorf("RedisAddr = %q, want trimmed value", cfg.RedisAddr)
 	}
 }
+
+func TestLoadParsesCORSOrigins(t *testing.T) {
+	values := validEnv()
+	values["CORS_ALLOWED_ORIGINS"] = " https://admin.melia.test , https://melia.test ,, "
+
+	cfg, err := Load(env(values))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(cfg.CORSOrigins) != 2 {
+		t.Fatalf("CORSOrigins = %v, want 2 entries", cfg.CORSOrigins)
+	}
+	if cfg.CORSOrigins[0] != "https://admin.melia.test" || cfg.CORSOrigins[1] != "https://melia.test" {
+		t.Errorf("CORSOrigins = %v, want trimmed values in order", cfg.CORSOrigins)
+	}
+}
+
+func TestLoadHasNoCORSOriginsByDefault(t *testing.T) {
+	cfg, err := Load(env(validEnv()))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(cfg.CORSOrigins) != 0 {
+		t.Errorf("CORSOrigins = %v, want none: a server must not invent an allowed origin", cfg.CORSOrigins)
+	}
+}

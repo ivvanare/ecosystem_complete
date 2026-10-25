@@ -80,7 +80,7 @@ Only the runtime exists today; domain and security endpoints are the next change
 | `GET` | `/health/ready` | Readiness: postgres + redis required, rabbitmq optional |
 
 Configuration is environment-only: `DATABASE_URL`, `REDIS_ADDR`, `HTTP_ADDR`,
-`RABBITMQ_URL`, `DB_INIT_DIR`, `DB_AUTO_MIGRATE`, `LOG_LEVEL`. The service refuses to
+`RABBITMQ_URL`, `CORS_ALLOWED_ORIGINS`, `DB_INIT_DIR`, `DB_AUTO_MIGRATE`, `LOG_LEVEL`. The service refuses to
 start without the required ones. Full table in **[api/README.md](api/README.md)**.
 
 ---

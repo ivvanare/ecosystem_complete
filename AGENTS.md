@@ -81,6 +81,9 @@ add a silent fallback.
 - `database/provision/01-create-database.sql` is provisioning, not a migration: it is not
   applied by compose nor by the service. psql meta-commands (`\connect`) are stripped by
   the loader for the same reason.
+- The admin panel is a SPA on another origin: CORS is driven by `CORS_ALLOWED_ORIGINS`
+  and enables credentials (the refresh token is an httpOnly cookie), so a wildcard origin
+  is never valid and a preflight must never require authentication.
 - The HTTP contract is `api/openapi.yaml`. Every new endpoint updates it in the same
   commit, and every error uses `{"error":{"code","message"}}` — clients parse `code`,
   never `message`.

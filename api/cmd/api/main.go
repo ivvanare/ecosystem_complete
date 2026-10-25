@@ -65,8 +65,12 @@ func run() error {
 	}
 
 	server := &http.Server{
-		Addr:              cfg.HTTPAddr,
-		Handler:           httpapi.New(httpapi.Options{Probes: probes, Logger: logger}),
+		Addr: cfg.HTTPAddr,
+		Handler: httpapi.New(httpapi.Options{
+			Probes:             probes,
+			Logger:             logger,
+			CORSAllowedOrigins: cfg.CORSOrigins,
+		}),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
 

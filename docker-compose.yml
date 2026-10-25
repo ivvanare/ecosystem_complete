@@ -17,6 +17,8 @@ services:
       REDIS_ADDR: redis:6379
       RABBITMQ_URL: amqp://admin:admin_pass@rabbitmq:5672/
       DB_INIT_DIR: /app/database/init
+      # Origen del panel (Vite en dev). Vacío = sin CORS.
+      CORS_ALLOWED_ORIGINS: http://localhost:5173
       LOG_LEVEL: info
     depends_on:
       database:

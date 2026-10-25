@@ -48,6 +48,7 @@ Both non-`ok` states return `503`.
 | `REDIS_ADDR` | yes | — | `host:port` |
 | `HTTP_ADDR` | no | `:8080` | listen address |
 | `RABBITMQ_URL` | no | empty | when empty, the rabbitmq probe is omitted |
+| `CORS_ALLOWED_ORIGINS` | no | empty | comma-separated browser origins; empty disables CORS |
 | `DB_INIT_DIR` | no | `/app/database/init` | directory holding `NN-*.sql` |
 | `DB_AUTO_MIGRATE` | no | `true` | apply pending schema files at startup |
 | `LOG_LEVEL` | no | `info` | `debug`, `info`, `warn`, `error` |
