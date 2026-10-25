@@ -1,6 +1,10 @@
 # Environment files
 .env
 
+# Go build output
+api/api
+api/bin/
+
 # Database data (Docker volumes)
 database/data/
 database/postgres/
