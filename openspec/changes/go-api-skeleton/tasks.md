@@ -106,3 +106,9 @@ Branch: `feat/go-api` (cut from `feat/base-domain-model`, which supplies `databa
   `9000:8080`, so the public URL is unchanged; `nginx/` and the `webserver` service are
   gone; TLS and rate limiting are deferred to the deployment edge. With no proxy,
   `r.RemoteAddr` is the client address used by `tb_security_event`.
+  Verified by an independent pass over `078c4a8` on a clean copy: no dangling
+  `nginx|webserver|fastcgi|proxy_pass|upstream` reference outside `openspec/`; no Go code
+  reads `X-Forwarded-*`; `docker compose config` resolves with five services and exactly
+  one publisher of host `9000`, mapped to container `8080`; `HTTP_ADDR` default stays
+  `:8080`; health routes and the 404 catch-all unchanged; `gofmt`/`vet`/`test` clean.
+  `assess` over `801879e..HEAD` reports medium risk, `under_budget`, no native review.
