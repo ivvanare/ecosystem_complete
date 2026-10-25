@@ -98,9 +98,11 @@ func (r *Runner) Run(ctx context.Context) ([]string, error) {
 // fail on `schema "seg" already exists`, and `restart: always` would turn that into a
 // crash loop.
 //
-// Adoption is deliberately narrow: only when the ledger is completely empty AND the
-// schema is already there. A partially applied schema is not silently accepted; it
-// fails loudly, and database/verify_base_model.sql is the drift check.
+// Adoption is deliberately narrow: only when the ledger is completely empty AND
+// `seg.tb_user` already exists. A database without that table is never adopted, so a
+// failed application still stops startup loudly. The remaining blind spot is inherent:
+// adoption cannot tell a complete schema from a half-built one that still has tb_user,
+// which is why database/verify_base_model.sql exists as the drift check.
 func (r *Runner) adoptExisting(ctx context.Context, migrations []Migration) (int, error) {
 	if len(migrations) == 0 {
 		return 0, nil

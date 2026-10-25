@@ -63,9 +63,11 @@ startup, when `DB_AUTO_MIGRATE` is true, the service:
    `\connect melzone`);
 5. executes each pending file's text as one statement batch and records its filename;
 6. skips files already recorded, so a restart is a no-op;
-7. when the ledger is empty but the schema already exists (a volume predating the ledger,
-   or a manual `psql` run), records every file as applied **without executing it** and
-   logs a warning. A partially applied schema is not adopted silently; it fails loudly.
+7. when the ledger is empty but `seg.tb_user` already exists (a volume predating the
+   ledger, or a manual `psql` run), records every file as applied **without executing
+   it** and logs a warning. Adoption is gated on that table: a database without it is
+   never adopted, so a failed application still stops startup loudly.
+   `database/verify_base_model.sql` is the drift check for an adopted database.
 
 A failure stops startup with the failing filename in the error; files that already ran
 stay recorded.
@@ -90,11 +92,14 @@ longer contains `fastcgi_pass`, `SCRIPT_FILENAME`, or a document root for PHP.
 
 The `api_core` service is replaced by `api` (`build: ./api`, `container_name:
 melzone_api`), receiving `DATABASE_URL`, `REDIS_ADDR`, `RABBITMQ_URL`, `DB_INIT_DIR`
-and mounting `./database/init` read-only. `redis`, `rabbitmq`, `webserver` and `soketi`
-keep their current configuration. `database` keeps its image, credentials and port, and
-additionally carries a named data volume (`melzone_pgdata` instead of the `./database/data`
-bind mount), `shm_size`, UTF8 initdb arguments and a `pg_isready` healthcheck — while no
-longer mounting the init scripts, because the service is their only applier.
+and mounting `./database/init` read-only. `redis`, `rabbitmq` and `soketi` keep their
+current configuration. `webserver` keeps its image, container name and `9000:80` mapping,
+loses the `./api-core` volume and gains `depends_on: api` — both mandatory consequences of
+S1 and S8. `database` keeps its image, credentials and port, and additionally carries a
+named data volume (`melzone_pgdata` instead of the `./database/data` bind mount),
+`shm_size`, UTF8 initdb arguments, a `pg_isready` healthcheck, `POSTGRES_DB: melzone`
+(the container now creates the database that the provisioning script used to create) and
+no init-script mount, because the service is their only applier.
 
 ### S10 — Documentation matches the runtime
 

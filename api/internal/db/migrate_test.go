@@ -351,3 +351,32 @@ func TestRunAppliesEverythingWhenSchemaIsAbsent(t *testing.T) {
 		t.Errorf("adopted %v, want no adoption on an empty database", ledger.adopted)
 	}
 }
+
+func TestRunIsNoOpOnRestartAfterAdoption(t *testing.T) {
+	executor := &fakeExecutor{}
+	ledger := newFakeLedger()
+	ledger.schemaPresent = true
+	runner := &Runner{Dir: t.TempDir(), Executor: executor, Ledger: ledger}
+	writeFiles(t, runner.Dir, map[string]string{
+		"02-schemas-enums.sql": "CREATE SCHEMA seg;",
+		"03-seg-tables.sql":    "CREATE TABLE seg.tb_user ();",
+	})
+
+	if _, err := runner.Run(context.Background()); err != nil {
+		t.Fatalf("first Run returned error: %v", err)
+	}
+
+	applied, err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("second Run returned error: %v", err)
+	}
+	if len(applied) != 0 {
+		t.Errorf("second Run applied %v, want nothing after adoption", applied)
+	}
+	if len(executor.ran) != 0 {
+		t.Errorf("executor ran %d batches, want none after adoption", len(executor.ran))
+	}
+	if len(ledger.adopted) != 2 {
+		t.Errorf("adopted %v on restart, adoption must happen only once", ledger.adopted)
+	}
+}

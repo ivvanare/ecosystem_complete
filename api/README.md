@@ -71,11 +71,13 @@ Two adaptations are deliberate:
   bare server.
 - psql meta-commands (`\connect ...`) are stripped. They are psql directives, not SQL.
 
-When the ledger is empty but the schema is already there — a volume created before the
-ledger existed, or a manual `psql` run — the service **adopts** the schema: it records
-every file as applied without executing it, logs a warning, and points at
-`database/verify_base_model.sql` for a drift check. A partially applied schema is not
-silently accepted: it fails loudly.
+When the ledger is empty but `seg.tb_user` already exists — a volume created before the
+ledger, or a manual `psql` run — the service **adopts** the schema: it records every file
+as applied without executing it, logs a warning, and points at
+`database/verify_base_model.sql`. Adoption is gated on that table, so a database without
+it is never adopted and a failed application stops startup loudly. Adoption cannot tell a
+complete schema from a half-built one that still has `seg.tb_user`, which is exactly why
+the drift script exists.
 
 Set `DB_AUTO_MIGRATE=false` when another tool owns the schema.
 
