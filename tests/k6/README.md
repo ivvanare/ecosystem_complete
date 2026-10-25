@@ -42,6 +42,7 @@ docker run --rm -i -v "$PWD/tests/k6:/scripts" -e BASE_URL=http://host.docker.in
 |---|---|---|
 | `BASE_URL` | `http://localhost:9000` | API under test |
 | `ORIGIN` | unset | when set, sends `Origin` so the CORS path is exercised as a browser would |
+| `SLEEP` | `1` | seconds between signup iterations. `0` measures throughput instead of smoke |
 
 ## Thresholds, and why they are loose
 
@@ -57,6 +58,13 @@ hardware exists.
 
 If `signup.js` fails on latency while `smoke.js` is green, the bottleneck is hashing, not
 the server — that is the signal this suite exists to produce.
+
+`signup.js` declares `422` as an expected status for the same reason: it sends one invalid
+request every ten iterations on purpose. Without it the error-rate threshold reports ~10%
+while every check passes.
+
+The default `SLEEP=1` caps each VU at about one request per second. That is a smoke run, not
+a throughput measurement — use `SLEEP=0` for the latter.
 
 `smoke.js` declares `404` and `503` as expected statuses. It probes an unknown path and the
 readiness endpoint on purpose, and without that declaration k6 counts them as failed

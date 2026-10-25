@@ -48,3 +48,14 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
   One defect found in the suite itself: `smoke.js` requests a 404 on purpose, and k6 counts
   non-2xx as failed requests, so the first run reported 45% failures with every check
   green. Fixed with `http.setResponseCallback(http.expectedStatuses(...))` and documented.
+- L6 — After the rebuild, the signup chain was verified end to end from the host:
+  `POST /v1/auth/signup` answered `202`, and Mailpit's API showed "Tu código de registro"
+  addressed to that exact address with a 6-digit code in the body — so the API published,
+  the worker consumed and SMTP delivered.
+  `signup.js` initially failed its error-rate threshold at 10.59% with 302/302 checks green:
+  the script sends one invalid request every ten iterations on purpose and k6 counts a 422
+  as a failed request. Fixed with `expectedStatuses(..., 422)`; re-run reports 0% failed and
+  p(95) 36.5 ms.
+  The same run exposed a design flaw in the suite: `sleep(1)` per iteration with 5 VUs
+  measures ~4 req/s, which is a smoke test, not load. `SLEEP` is now an env var and the
+  README says plainly that `SLEEP=0` is the throughput measurement.

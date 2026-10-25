@@ -21,6 +21,16 @@ import {
   uniqueEmail,
 } from './lib/config.js';
 
+// This script sends one deliberately invalid request every ten iterations to exercise
+// validation on the same path. k6 counts a 422 as a failed request unless told otherwise,
+// which made the error-rate threshold report 10.6% while every check passed.
+http.setResponseCallback(http.expectedStatuses({ min: 200, max: 299 }, 422));
+
+// Pause between iterations. The default of 1s makes five VUs measure ~4 req/s, which is a
+// smoke test with extra steps; set SLEEP=0 to measure actual throughput, accepting that
+// Argon2id will saturate the CPU long before the HTTP layer does.
+const SLEEP = __ENV.SLEEP === undefined ? 1 : Number(__ENV.SLEEP);
+
 export const options = {
   scenarios: {
     signup: {
@@ -66,5 +76,5 @@ export default function () {
     });
   }
 
-  sleep(1);
+  sleep(SLEEP);
 }
