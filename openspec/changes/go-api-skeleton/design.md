@@ -119,12 +119,26 @@ documents the contract for humans.
 Tests pass a map closure; `main` passes `os.Getenv`. No `os.Getenv` calls outside
 `main`, no package-level `Config`.
 
-## D10 — Image tag risk
+## D10 — Image tag and build network
 
-The authoring host has Go 1.27.2 but a stopped Docker daemon, so `golang:1.27-alpine`
-could not be pulled or built here. The Dockerfile is written against that tag and the
-limitation is recorded in `tasks.md`; a `docker build` on a host with a running daemon
-is the deferred check.
+`golang:1.27-alpine` was unverified while the Docker daemon was unreachable; the first
+real build resolved it, so the tag stands. That build failed later, in `go mod download`,
+because the bridge resolver on the authoring host refuses queries — fixed with
+`build.network: host` in compose. Vendoring the modules is the portable alternative if
+builds must work offline.
+
+## D12 — The schema ships in the image, it is not bind-mounted
+
+The first container run died with `open /app/database/init: permission denied`: the host
+directory was mode `700` owned by the developer, while the container runs as an Alpine
+system user (uid ~100). A `chmod` would paper over it and break again on any clone or any
+tool with a different umask.
+
+The durable fix is to stop coupling the image to host permissions: the build context is
+the repository root and `database/init` is copied to `/app/database/init`. Cost: a DDL
+change now requires an image rebuild — which is already how code changes deploy. Benefit:
+the image starts standalone, which the review had flagged as advisory (the default
+`DB_INIT_DIR` was unreachable without the mount).
 
 ## D11 — No proxy: the Go service is the edge
 

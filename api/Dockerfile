@@ -1,15 +1,18 @@
 # syntax=docker/dockerfile:1
 
+# Build context is the REPOSITORY ROOT: the runtime image ships database/init so it
+# does not depend on a host bind mount (whose permissions can deny the container user).
+
 # --- Build stage: static binary, no toolchain in the final image ---
 FROM golang:1.27-alpine AS build
 
 WORKDIR /src
 
 # Dependencies first so the module cache survives source changes.
-COPY go.mod go.sum ./
+COPY api/go.mod api/go.sum ./
 RUN go mod download
 
-COPY . .
+COPY api/ ./
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api
 
 # --- Runtime stage ---
@@ -20,6 +23,10 @@ RUN apk add --no-cache ca-certificates \
     && adduser -S -G app app
 
 COPY --from=build /out/api /usr/local/bin/api
+
+# Canonical schema. Copied in, never bind-mounted: a host directory the container user
+# cannot read (mode 700, other uid) would otherwise abort startup.
+COPY database/init /app/database/init
 
 USER app
 EXPOSE 8080

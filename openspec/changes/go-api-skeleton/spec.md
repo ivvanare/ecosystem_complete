@@ -51,8 +51,10 @@ default database or cache address.
 ### S5 — The service applies the canonical schema files
 
 `database/init/NN-*.sql` stays the single source of truth for the schema, and the service
-is its only applier: the PostgreSQL container creates the database and applies no DDL. At
-startup, when `DB_AUTO_MIGRATE` is true, the service:
+is its only applier: the PostgreSQL container creates the database and applies no DDL. The
+files are copied into the runtime image at `/app/database/init`, so the container user's
+uid never has to match a host directory. At startup, when `DB_AUTO_MIGRATE` is true, the
+service:
 
 1. ensures its ledger table `seg.tb_schema_migration (tx_name text primary key, dt_applied_at timestamptz not null default now())`;
 2. reads `DB_INIT_DIR`, keeps files matching `NN-*.sql`, sorts them lexically;
@@ -81,7 +83,8 @@ stay recorded.
 
 `api/Dockerfile` is multi-stage: `golang:1.27-alpine` builds a static binary
 (`CGO_ENABLED=0`), the runtime stage is `alpine` with CA certificates, runs as a
-non-root user, and exposes `8080`. No source tree and no toolchain in the final image.
+non-root user, and exposes `8080`. No source tree and no toolchain in the final image;
+`database/init` is copied in so the image can start standalone.
 
 ### S8 — The Go service is the only HTTP entry point
 
@@ -94,7 +97,7 @@ deferred to the deployment edge, which is not chosen yet.
 
 The `api_core` service is replaced by `api` (`build: ./api`, `container_name:
 melia_api`), receiving `DATABASE_URL`, `REDIS_ADDR`, `RABBITMQ_URL`, `DB_INIT_DIR`
-and mounting `./database/init` read-only, published as `9000:8080`. `redis`, `rabbitmq`
+and shipping `database/init` inside the image (no bind mount), published as `9000:8080`. `redis`, `rabbitmq`
 and `soketi` keep their current configuration; `webserver` (Nginx) is removed entirely.
 `database` keeps its image, credentials and port, and additionally carries a
 named data volume (`melia_pgdata` instead of the `./database/data` bind mount),

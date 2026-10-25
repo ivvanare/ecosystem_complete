@@ -55,7 +55,9 @@ worse than one that refuses to start.
 ## Schema bootstrap
 
 `database/init/NN-*.sql` is the single source of truth for the schema, and the service is
-the only thing that applies it. The PostgreSQL container creates the database
+the only thing that applies it. The files are **copied into the image** at
+`/app/database/init` — not bind-mounted — so the container user's uid never has to match
+a host directory; rebuild the image after editing the DDL. The PostgreSQL container creates the database
 (`POSTGRES_DB=melia`) and nothing else; there is no `docker-entrypoint-initdb.d` mount,
 because two appliers of the same DDL cannot coexist — the entrypoint runs on a fresh
 volume, the service runs on every start, and the second one would hit

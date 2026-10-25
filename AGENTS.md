@@ -69,7 +69,8 @@ add a silent fallback.
 ## Key Architecture Notes
 
 - Schema source of truth is `database/init/NN-*.sql`, and the **service is the only
-  applier**: it runs pending files at startup and records them in
+  applier** (the image copies that directory to `/app/database/init`; never bind-mount it
+  — a host dir the container user cannot read aborts startup). it runs pending files at startup and records them in
   `seg.tb_schema_migration`. The container just creates the database
   (`POSTGRES_DB=melia`); never add a `docker-entrypoint-initdb.d` mount — two appliers
   collide with `schema "seg" already exists`. Never let a second copy of the DDL appear in
