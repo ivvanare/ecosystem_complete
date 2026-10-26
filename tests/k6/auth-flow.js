@@ -408,6 +408,107 @@ export default function () {
     check(reused, { 'a consumed recovery code is rejected': (r) => r.status === 400 });
   });
 
+  group('email change: moves the account and kills every session', () => {
+    // A dedicated account: the change revokes its sessions and renames it.
+    const currentEmail = uniqueEmail('change');
+    const nextEmail = uniqueEmail('changed');
+
+    postJSON(http, '/v1/auth/signup', { email: currentEmail, name: 'Change', password: PASSWORD });
+    const signupCode = waitForCode(http, currentEmail, 12, /registro/i);
+    const verified = postJSON(http, '/v1/auth/signup/verify', { email: currentEmail, code: signupCode });
+    const pair = verified.json();
+    const auth = { Authorization: `Bearer ${pair.access_token}` };
+    check(verified, { 'email change account ready': (r) => r.status === 201 });
+
+    const wrongPassword = postJSON(http, '/v1/auth/email/change',
+      { new_email: nextEmail, password: 'equivocada' }, auth);
+    check(wrongPassword, {
+      'changing the email needs the password': (r) => r.status === 400,
+      'it reports invalid_password': (r) => r.json('error.code') === 'invalid_password',
+    });
+
+    const sameAddress = postJSON(http, '/v1/auth/email/change',
+      { new_email: currentEmail, password: PASSWORD }, auth);
+    check(sameAddress, { 'the current address is rejected': (r) => r.status === 422 });
+
+    const requested = postJSON(http, '/v1/auth/email/change',
+      { new_email: nextEmail, password: PASSWORD }, auth);
+    check(requested, {
+      'change request is 202': (r) => r.status === 202,
+      'change request has no body': (r) => !r.body,
+    });
+
+    // The code goes to the NEW address, which is the whole point.
+    const code = waitForCode(http, nextEmail, 12, /nuevo email/i);
+    check(code, { 'confirmation code arrived at the new address': (c) => c !== null });
+
+    const wrongCode = postJSON(http, '/v1/auth/email/change/verify', { code: '000000' }, auth);
+    check(wrongCode, {
+      'wrong confirmation code is 400': (r) => r.status === 400,
+      'it reports invalid_code': (r) => r.json('error.code') === 'invalid_code',
+    });
+
+    const applied = postJSON(http, '/v1/auth/email/change/verify', { code: code }, auth);
+    check(applied, { 'confirmation is 200': (r) => r.status === 200 });
+
+    const oldLogin = postJSON(http, '/v1/auth/login', { email: currentEmail, password: PASSWORD });
+    check(oldLogin, { 'the old address no longer logs in': (r) => r.status === 401 });
+
+    const newLogin = postJSON(http, '/v1/auth/login', { email: nextEmail, password: PASSWORD });
+    check(newLogin, { 'the new address logs in': (r) => r.status === 200 });
+
+    // The session that existed before the change is gone: the identity moved.
+    const deadSession = postJSON(http, '/v1/auth/refresh', { refresh_token: pair.refresh_token });
+    check(deadSession, { 'the pre-change session was revoked': (r) => r.status === 401 });
+
+    // One request per 24h for this flow, so a second one right away is refused.
+    const throttled = postJSON(http, '/v1/auth/email/change',
+      { new_email: uniqueEmail('otra'), password: PASSWORD }, auth);
+    check(throttled, {
+      'a second change request is 429': (r) => r.status === 429,
+      'it reports rate_limited': (r) => r.json('error.code') === 'rate_limited',
+      'it carries Retry-After': (r) => !!r.headers['Retry-After'],
+      'it reports retry_after_seconds': (r) => r.json('error.details.retry_after_seconds') > 0,
+    });
+  });
+
+  group('password recovery: throttled without leaking', () => {
+    // Recovery allows more requests than email change, so the cooldown is what triggers
+    // here. The point of the check is that the refusal is silent.
+    const quotaEmail = uniqueEmail('quota');
+
+    postJSON(http, '/v1/auth/signup', { email: quotaEmail, name: 'Quota', password: PASSWORD });
+    const signupCode = waitForCode(http, quotaEmail, 12, /registro/i);
+    const verified = postJSON(http, '/v1/auth/signup/verify', { email: quotaEmail, code: signupCode });
+    check(verified, { 'quota account ready': (r) => r.status === 201 });
+
+    const before = countMailsTo(http, quotaEmail);
+
+    const first = postJSON(http, '/v1/auth/password/forgot', { email: quotaEmail });
+    check(first, { 'first recovery request is 202': (r) => r.status === 202 });
+
+    const code = waitForCode(http, quotaEmail, 12, /contrase/i);
+    check(code, { 'recovery mail arrived': (c) => c !== null });
+
+    const afterFirst = countMailsTo(http, quotaEmail);
+    check(afterFirst, {
+      'the first request mailed exactly once': (n) => n === before + 1,
+    });
+
+    const second = postJSON(http, '/v1/auth/password/forgot', { email: quotaEmail });
+    check(second, {
+      // Silence, not 429: a 429 would reveal that the account exists.
+      'the throttled request still answers 202': (r) => r.status === 202,
+      'the throttled request has no body': (r) => !r.body,
+    });
+
+    sleep(2);
+    const afterSecond = countMailsTo(http, quotaEmail);
+    check(afterSecond, {
+      'the throttled request sent no mail': (n) => n === afterFirst,
+    });
+  });
+
   group('errors: unknown path uses the envelope', () => {
     const res = http.get(`${BASE_URL}/v1/does-not-exist`);
     check(res, {

@@ -75,6 +75,18 @@ export function latestMailTo(http, email) {
   return null;
 }
 
+// countMailsTo counts how many messages Mailpit holds for an address. It is how the suite
+// proves that a throttled request sent nothing, which is not observable from the response.
+export function countMailsTo(http, email) {
+  const res = http.get(`${MAILPIT_URL}/api/v1/messages?limit=100`);
+  if (res.status !== 200) {
+    return -1;
+  }
+  return (res.json('messages') || []).filter((message) =>
+    (message.To || []).some((t) => t.Address === email),
+  ).length;
+}
+
 // mailText returns the plain-text body of a Mailpit message.
 export function mailText(http, id) {
   const res = http.get(`${MAILPIT_URL}/api/v1/message/${id}`);

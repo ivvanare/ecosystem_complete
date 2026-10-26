@@ -211,3 +211,13 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
   `Quota{Limit: 1}` explicitly, so neither flow inherits a value meant for the other.
   Tests pin both behaviours: the default allows a second request in the window, a flow with
   `Limit: 1` refuses it.
+- L20 — k6 coverage completed for the last two slices: email change end to end and both
+  quotas, each on its own throwaway account so the rest of the journey is untouched.
+  Email change: wrong password 400, current address 422, request 202, the code arriving at
+  the **new** address, wrong code 400, applied 200, the old address no longer logging in, the
+  new one working, the pre-change session revoked, and a second request answered
+  429 `rate_limited` with `Retry-After`.
+  Recovery quota: the first request mails exactly once (counted through Mailpit's API, since
+  the refusal is silent) and the throttled one still answers 202 while sending nothing —
+  which is the property that keeps the endpoint from becoming an account oracle.
+  `countMailsTo` was added to the shared lib for that assertion.

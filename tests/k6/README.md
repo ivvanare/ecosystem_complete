@@ -41,6 +41,10 @@ what makes a real end-to-end run possible in a load-testing tool.
 | RBAC | an account with no role gets 403 `permission_denied` on `/v1/admin/*` |
 | password recovery | forgot → 202, code read from the mail, wrong code 400, short password 422, reset 200 |
 | password reset effects | the old password stops working, the new one works, and the pre-reset session is revoked |
+| email change | wrong password 400, current address 422, request 202, code to the NEW address, wrong code 400, applied 200 |
+| email change effects | the old address stops logging in, the new one works, and the pre-change session is revoked |
+| email change quota | a second request is 429 `rate_limited` with `Retry-After` |
+| recovery quota | the first request mails once; the throttled one still answers 202 and sends nothing |
 | browser session | login with an allowed `Origin` sets an httpOnly cookie and hides the token from the body; cookie refresh without CSRF is 403 |
 | errors | unknown path → 404 `not_found` |
 | CORS | preflight 204 with the exact origin and credentials; a foreign origin gets no header |
