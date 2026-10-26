@@ -37,16 +37,18 @@ func TestQuotaAllowsAfterTheCooldown(t *testing.T) {
 	}
 }
 
-func TestQuotaAllowsOneRequestPerWindowByDefault(t *testing.T) {
+func TestQuotaHonoursAFlowSpecificLimit(t *testing.T) {
 	old := quotaNow.Add(-2 * time.Hour)
 
-	// One already happened: the default is one per window, so the second is refused even
-	// though the cooldown has long passed.
-	err := (Quota{}).Check(quotaNow, &old, 1)
+	// One already happened. The shared default allows five, a flow that sets one refuses.
+	if err := (Quota{}).Check(quotaNow, &old, 1); err != nil {
+		t.Errorf("the default refused a second request inside the window: %v", err)
+	}
 
+	err := (Quota{Limit: 1}).Check(quotaNow, &old, 1)
 	var tooMany *TooManyRequestsError
 	if !errors.As(err, &tooMany) {
-		t.Fatalf("error = %v, want *TooManyRequestsError", err)
+		t.Fatalf("error = %v, want *TooManyRequestsError for Limit: 1", err)
 	}
 	if tooMany.RetryAfter != DefaultWindow {
 		t.Errorf("RetryAfter = %v, want the window", tooMany.RetryAfter)

@@ -173,7 +173,7 @@ func TestRequestIsThrottled(t *testing.T) {
 	}
 
 	store.lastAt = nil
-	store.inWindow = security.DefaultLimit
+	store.inWindow = 1 // email change allows one per window
 	if err := service.Request(context.Background(), "user-1", "nueva@melia.test", "correcta"); !errors.As(err, &quota) {
 		t.Errorf("daily limit: error = %v", err)
 	}

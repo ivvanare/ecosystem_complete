@@ -107,7 +107,9 @@ func New(store Store, publisher Publisher, auditor audit.Recorder, logger *slog.
 		Now:            time.Now,
 		GenerateCode:   security.GenerateCode,
 		VerifyPassword: security.VerifyPassword,
-		Quota:          security.Quota{},
+		// Stricter than the shared default: moving the account email is rare, so one code
+		// per day costs little and shrinks the guess space as far as it can go.
+		Quota: security.Quota{Limit: 1},
 	}
 }
 

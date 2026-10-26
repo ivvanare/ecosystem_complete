@@ -204,3 +204,10 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
   into a support burden, the options are to raise the limit for password recovery only (it
   is the flow users genuinely need) or to lengthen the code lifetime — not to relax the
   default.
+- L19 — Quota split by flow, as the user decided: **email change 1 per 24h**, **password
+  recovery 5 per 24h** (the shared default). Recovering a password is urgent and a delayed
+  mail must not lock someone out for a day; moving the account email is rare and can afford
+  the strictest value. `security.DefaultLimit` is back to 5 and `emailchange.New` sets
+  `Quota{Limit: 1}` explicitly, so neither flow inherits a value meant for the other.
+  Tests pin both behaviours: the default allows a second request in the window, a flow with
+  `Limit: 1` refuses it.
