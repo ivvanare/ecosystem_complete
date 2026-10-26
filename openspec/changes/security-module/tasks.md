@@ -14,7 +14,7 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
 | T5 | Refresh rotation with family revocation + logout | C3 | inline | this |
 | T6 | Password reset/change revoking all families | C4 | — | next |
 | T6a | Panel cookie + CSRF double submit | C3, C14 | inline | this |
-| T7 | RBAC middleware + `/v1/me` | C9 | — | next |
+| T7 | RBAC middleware + `/v1/me` + admin catalogues | C9 | inline | this |
 | T8 | Email change | C7 | — | next |
 | T9 | Audit writes on every auth event | C10 | inline (auth events) | this |
 | T10 | Social login with go-oidc | C8 | — | next |
@@ -140,3 +140,15 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
   are scoped to `/v1/auth` — the jar returns nothing and the check reads as "cookie not set"
   even when it is. Fixed by importing the constant and querying a URL inside the cookie path.
   Result: 77/77 checks, 0% failed requests, p(95) 25ms.
+- L14 — `/v1/me`, the RBAC guard and the two catalogue reads.
+  `GET /v1/me` merges the profile with the live roles and permissions; the panel authorizes
+  on `permissions`, never on a role name. `RequireAuth` parses the bearer token and puts the
+  subject in the context; `RequirePermission("admin.access")` re-reads capability from the
+  database on every request, so a disabled role stops working immediately instead of when the
+  token expires. `GET /v1/admin/roles` and `/v1/admin/permissions` sit behind it.
+  A valid token whose account was deleted answers `401`, not `404`.
+  Queries count only ACTIVE roles and ACTIVE permissions with no soft delete, matching the
+  model's lifecycle rules.
+  Covered by Go tests (allow, deny, lookup failure, missing user, deleted account) and by nine
+  k6 checks. The **allowed** admin path is only covered by Go tests: it needs a role
+  assignment and no endpoint exposes one yet.

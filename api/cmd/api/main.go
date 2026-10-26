@@ -19,6 +19,7 @@ import (
 	"github.com/ivvanare/ecosystem_complete/api/internal/config"
 	"github.com/ivvanare/ecosystem_complete/api/internal/db"
 	"github.com/ivvanare/ecosystem_complete/api/internal/httpapi"
+	"github.com/ivvanare/ecosystem_complete/api/internal/identity"
 	"github.com/ivvanare/ecosystem_complete/api/internal/login"
 	"github.com/ivvanare/ecosystem_complete/api/internal/probe"
 	"github.com/ivvanare/ecosystem_complete/api/internal/queue"
@@ -86,6 +87,9 @@ func run() error {
 	signupVerifier.Auditor = auditor
 	signupVerifier.Logger = logger
 
+	identityStore := identity.NewPostgresStore(pool)
+	identityService := identity.New(identityStore, identityStore)
+
 	loginService := login.New(login.NewPostgresStore(pool), issuer, auditor, logger)
 	loginService.MaxAttempts = cfg.LoginMaxAttempts
 	loginService.LockDuration = cfg.LoginLockDuration
@@ -112,6 +116,9 @@ func run() error {
 			Login:              loginService,
 			Rotator:            rotator,
 			CookieSecure:       cfg.CookieSecure,
+			TokenParser:        issuer,
+			Authorizer:         identityService,
+			Identity:           identityService,
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}

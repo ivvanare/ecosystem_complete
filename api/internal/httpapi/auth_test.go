@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ivvanare/ecosystem_complete/api/internal/identity"
 	"github.com/ivvanare/ecosystem_complete/api/internal/login"
 	"github.com/ivvanare/ecosystem_complete/api/internal/session"
 	"github.com/ivvanare/ecosystem_complete/api/internal/signup"
@@ -386,4 +387,106 @@ func postJSONTo(t *testing.T, handler http.Handler, path, body string) *httptest
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	return rec
+}
+
+type fakeIdentity struct {
+	me    identity.Me
+	err   error
+	roles []identity.Role
+	perms []identity.Permission
+}
+
+func (f *fakeIdentity) Me(context.Context, string) (identity.Me, error) {
+	if f.err != nil {
+		return identity.Me{}, f.err
+	}
+	return f.me, nil
+}
+
+func (f *fakeIdentity) Roles(context.Context) ([]identity.Role, error) { return f.roles, nil }
+
+func (f *fakeIdentity) Permissions(context.Context) ([]identity.Permission, error) {
+	return f.perms, nil
+}
+
+func meHandler(t *testing.T, reader IdentityReader, token string) *httptest.ResponseRecorder {
+	t.Helper()
+	parser := &fakeParser{}
+	parser.claims.Subject = "user-1"
+
+	handler := New(Options{
+		Identity:    reader,
+		TokenParser: parser,
+		Logger:      slog.New(slog.DiscardHandler),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	if token != "" {
+		req.Header.Set("Authorization", token)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestMeReturnsProfileRolesAndPermissions(t *testing.T) {
+	name, email := "Ana", "ana@melia.test"
+	reader := &fakeIdentity{me: identity.Me{
+		Profile: identity.Profile{ID: "user-1", Name: &name, Email: &email, Status: "ACTIVE"},
+		Access:  identity.Access{Roles: []string{"EDITOR"}, Permissions: []string{"admin.access"}},
+	}}
+
+	rec := meHandler(t, reader, "Bearer x")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	var body meResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body is not JSON: %v", err)
+	}
+	if body.ID != "user-1" || body.Status != "ACTIVE" {
+		t.Errorf("unexpected profile: %+v", body)
+	}
+	if len(body.Roles) != 1 || len(body.Permissions) != 1 {
+		t.Errorf("roles/permissions = %v/%v", body.Roles, body.Permissions)
+	}
+}
+
+func TestMeRequiresAToken(t *testing.T) {
+	rec := meHandler(t, &fakeIdentity{}, "")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestMeAnswersUnauthorizedWhenTheAccountIsGone(t *testing.T) {
+	rec := meHandler(t, &fakeIdentity{err: identity.ErrNotFound}, "Bearer x")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401: a valid token for a deleted user is not a 404", rec.Code)
+	}
+}
+
+func TestAdminRoutesRequireThePermission(t *testing.T) {
+	parser := &fakeParser{}
+	parser.claims.Subject = "user-1"
+
+	handler := New(Options{
+		Identity:    &fakeIdentity{perms: []identity.Permission{{Code: "admin.access"}}},
+		TokenParser: parser,
+		Authorizer:  &fakeAuthorizer{allowed: false},
+		Logger:      slog.New(slog.DiscardHandler),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/admin/permissions", nil)
+	req.Header.Set("Authorization", "Bearer x")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "permission_denied") {
+		t.Errorf("body = %s", rec.Body.String())
+	}
 }

@@ -27,6 +27,9 @@ type Options struct {
 	Login              LoginAuthenticator
 	Rotator            SessionRotator
 	CookieSecure       bool
+	TokenParser        TokenParser
+	Authorizer         Authorizer
+	Identity           IdentityReader
 }
 
 const defaultProbeTimeout = 2 * time.Second
@@ -71,6 +74,21 @@ func New(opts Options) http.Handler {
 	if opts.Rotator != nil {
 		mux.HandleFunc("POST /v1/auth/refresh", auth.refreshSession)
 		mux.HandleFunc("POST /v1/auth/logout", auth.logoutSession)
+	}
+
+	if opts.Identity != nil && opts.TokenParser != nil {
+		identityHandler := &identityHandlers{reader: opts.Identity}
+
+		mux.HandleFunc("GET /v1/me",
+			RequireAuth(opts.TokenParser, identityHandler.me))
+
+		if opts.Authorizer != nil {
+			admin := func(next http.HandlerFunc) http.HandlerFunc {
+				return RequireAuth(opts.TokenParser, RequirePermission(opts.Authorizer, AdminPermission, logger, next))
+			}
+			mux.HandleFunc("GET /v1/admin/roles", admin(identityHandler.roles))
+			mux.HandleFunc("GET /v1/admin/permissions", admin(identityHandler.permissions))
+		}
 	}
 
 	mux.HandleFunc("/", notFound)

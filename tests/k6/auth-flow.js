@@ -266,6 +266,41 @@ export default function () {
     check(again, { 'logout of an unknown token is still 204': (r) => r.status === 204 });
   });
 
+  group('identity: /v1/me', () => {
+    const auth = { Authorization: `Bearer ${loginTokens.access_token}` };
+
+    const me = http.get(`${BASE_URL}/v1/me`, { headers: auth });
+    check(me, {
+      'me is 200': (r) => r.status === 200,
+      'me returns the account email': (r) => r.json('email') === email,
+      'me reports ACTIVE': (r) => r.json('status') === 'ACTIVE',
+      'me lists roles': (r) => Array.isArray(r.json('roles')),
+      'me lists permissions': (r) => Array.isArray(r.json('permissions')),
+      'a fresh account has no capability yet': (r) => (r.json('permissions') || []).length === 0,
+    });
+
+    const anonymous = http.get(`${BASE_URL}/v1/me`);
+    check(anonymous, { 'me without a token is 401': (r) => r.status === 401 });
+
+    const bogus = http.get(`${BASE_URL}/v1/me`, { headers: { Authorization: 'Bearer inventado' } });
+    check(bogus, { 'me with a bogus token is 401': (r) => r.status === 401 });
+  });
+
+  group('admin: RBAC guards the backoffice', () => {
+    const auth = { Authorization: `Bearer ${loginTokens.access_token}` };
+
+    // The fresh account holds no role, so the guard must refuse. The allowed path needs a
+    // seeded role assignment, which no endpoint exposes yet.
+    const denied = http.get(`${BASE_URL}/v1/admin/permissions`, { headers: auth });
+    check(denied, {
+      'admin route without admin.access is 403': (r) => r.status === 403,
+      'it reports permission_denied': (r) => r.json('error.code') === 'permission_denied',
+    });
+
+    const anonymous = http.get(`${BASE_URL}/v1/admin/roles`);
+    check(anonymous, { 'admin route without a token is 401': (r) => r.status === 401 });
+  });
+
   group('browser session: cookie plus CSRF', () => {
     // A browser client is recognised by an allowed Origin. It gets the refresh token as an
     // httpOnly cookie and never in the body, and every cookie call must carry the

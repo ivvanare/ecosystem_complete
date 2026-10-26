@@ -37,6 +37,9 @@ what makes a real end-to-end run possible in a load-testing tool.
 | refresh reuse | replaying a consumed token → 401 `refresh_reused`, and the family dies with it |
 | refresh failures | unknown token and missing token → 401 `refresh_invalid` |
 | logout | 204, the family stops refreshing, and an unknown token still answers 204 |
+| identity | `/v1/me` with a bearer token, and 401 without one or with a bogus one |
+| RBAC | an account with no role gets 403 `permission_denied` on `/v1/admin/*` |
+| browser session | login with an allowed `Origin` sets an httpOnly cookie and hides the token from the body; cookie refresh without CSRF is 403 |
 | errors | unknown path → 404 `not_found` |
 | CORS | preflight 204 with the exact origin and credentials; a foreign origin gets no header |
 
@@ -98,6 +101,9 @@ a throughput measurement — use `SLEEP=0` for the latter.
 `smoke.js` declares `404` and `503` as expected statuses. It probes an unknown path and the
 readiness endpoint on purpose, and without that declaration k6 counts them as failed
 requests: the first run reported 45% failures with every check passing.
+
+The allowed admin path is not covered here: it needs a role assignment, and no endpoint
+exposes one yet. `RequirePermission`'s allow branch is covered by the Go tests.
 
 ## What is not covered yet
 

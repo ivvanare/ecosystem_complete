@@ -161,6 +161,19 @@ it automatically.
 `COOKIE_SECURE` defaults to `true`. Compose sets it to `false` for local http; leaving it
 false anywhere else is a silent downgrade.
 
+## Identity and RBAC
+
+`GET /v1/me` returns the profile with its **effective** roles and permissions. The panel
+decides what to show from `permissions`; it must never infer capability from a role name.
+
+`GET /v1/admin/roles` and `GET /v1/admin/permissions` are guarded by `admin.access`. The
+check reads the database on every request — user → active role → active permission — so
+disabling a role takes effect on the next call instead of waiting for an access token to
+expire. That is the whole reason the token carries identity only.
+
+A valid token for an account that was deleted answers `401`, not `404`: the token is real,
+the subject is gone.
+
 ## Tests
 
 ```bash
