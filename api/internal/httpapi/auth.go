@@ -37,10 +37,17 @@ type LoginAuthenticator interface {
 	Login(ctx context.Context, email, password string, meta session.Meta) (session.Tokens, error)
 }
 
+// SessionRotator rotates and closes sessions.
+type SessionRotator interface {
+	Refresh(ctx context.Context, presented string, meta session.Meta) (session.Tokens, error)
+	Logout(ctx context.Context, presented string) error
+}
+
 type authHandlers struct {
 	signup   SignupRequester
 	verifier SignupVerifier
 	login    LoginAuthenticator
+	rotator  SessionRotator
 	logger   *slog.Logger
 }
 
@@ -254,4 +261,61 @@ func (h *authHandlers) loginUser(w http.ResponseWriter, r *http.Request) {
 		RefreshToken:     tokens.RefreshToken,
 		RefreshExpiresIn: tokens.RefreshExpiresIn,
 	})
+}
+
+type refreshRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
+// refreshSession rotates the refresh token. Reuse is reported with its own code because the
+// client must stop retrying and log in again: the family is already dead.
+func (h *authHandlers) refreshSession(w http.ResponseWriter, r *http.Request) {
+	var body refreshRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+		return
+	}
+
+	meta := session.Meta{UserAgent: r.UserAgent(), IP: clientIP(r)}
+
+	tokens, err := h.rotator.Refresh(r.Context(), strings.TrimSpace(body.RefreshToken), meta)
+	if err != nil {
+		switch {
+		case errors.Is(err, session.ErrRefreshReused):
+			writeError(w, http.StatusUnauthorized, "refresh_reused", "This session was revoked because the token was reused.")
+			return
+		case errors.Is(err, session.ErrInvalidRefresh):
+			writeError(w, http.StatusUnauthorized, "refresh_invalid", "The session is no longer valid. Log in again.")
+			return
+		default:
+			h.logger.Error("refresh failed", slog.String("error", err.Error()))
+			writeError(w, http.StatusInternalServerError, "internal_error", "The request could not be completed.")
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, tokenPairResponse{
+		AccessToken:      tokens.AccessToken,
+		TokenType:        "Bearer",
+		ExpiresIn:        tokens.ExpiresIn,
+		RefreshToken:     tokens.RefreshToken,
+		RefreshExpiresIn: tokens.RefreshExpiresIn,
+	})
+}
+
+// logoutSession revokes the presented family and answers 204 even when the token is unknown:
+// the desired state is reached either way, and an error would confirm whether it existed.
+func (h *authHandlers) logoutSession(w http.ResponseWriter, r *http.Request) {
+	var body refreshRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body)
+	}
+
+	if err := h.rotator.Logout(r.Context(), strings.TrimSpace(body.RefreshToken)); err != nil {
+		h.logger.Error("logout failed", slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, "internal_error", "The request could not be completed.")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

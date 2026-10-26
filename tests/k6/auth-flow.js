@@ -138,12 +138,15 @@ export default function () {
     });
   });
 
+  let loginTokens = null;
+
   group('login: success', () => {
     const res = postJSON(http, '/v1/auth/login', {
       email: email,
       password: PASSWORD,
       device: 'k6',
     });
+    loginTokens = res.json();
     check(res, {
       'login is 200': (r) => r.status === 200,
       'login returns a pair': (r) => !!r.json('access_token') && !!r.json('refresh_token'),
@@ -207,6 +210,58 @@ export default function () {
     check(correct, {
       'correct password is still refused while locked': (r) => r.status === 423,
     });
+  });
+
+  group('refresh: rotation', () => {
+    const first = postJSON(http, '/v1/auth/refresh', { refresh_token: loginTokens.refresh_token });
+    const rotated = first.json();
+    check(first, {
+      'refresh is 200': (r) => r.status === 200,
+      'refresh returns a new refresh token': (r) => r.json('refresh_token') !== loginTokens.refresh_token,
+      'refresh returns a new access token': (r) => r.json('access_token') !== loginTokens.access_token,
+      'rotated token stays in a session': (r) => r.json('expires_in') === 900,
+    });
+
+    // Replaying the consumed token is the theft signal.
+    const replay = postJSON(http, '/v1/auth/refresh', { refresh_token: loginTokens.refresh_token });
+    check(replay, {
+      'replaying a rotated token is 401': (r) => r.status === 401,
+      'replay reports refresh_reused': (r) => r.json('error.code') === 'refresh_reused',
+    });
+
+    // ... and it takes the whole family with it, including the token just issued.
+    const afterReuse = postJSON(http, '/v1/auth/refresh', { refresh_token: rotated.refresh_token });
+    check(afterReuse, {
+      'family revocation kills the rotated token': (r) => r.status === 401,
+    });
+  });
+
+  group('refresh: unknown and malformed tokens', () => {
+    const unknown = postJSON(http, '/v1/auth/refresh', { refresh_token: 'inventado' });
+    check(unknown, {
+      'unknown refresh token is 401': (r) => r.status === 401,
+      'unknown refresh token is refresh_invalid': (r) => r.json('error.code') === 'refresh_invalid',
+    });
+
+    const missing = postJSON(http, '/v1/auth/refresh', {});
+    check(missing, {
+      'missing refresh token is 401': (r) => r.status === 401,
+    });
+  });
+
+  group('logout: revokes the family and is idempotent', () => {
+    const fresh = postJSON(http, '/v1/auth/login', { email: email, password: PASSWORD });
+    const pair = fresh.json();
+    check(fresh, { 're-login after reuse is 200': (r) => r.status === 200 });
+
+    const out = postJSON(http, '/v1/auth/logout', { refresh_token: pair.refresh_token });
+    check(out, { 'logout is 204': (r) => r.status === 204 });
+
+    const after = postJSON(http, '/v1/auth/refresh', { refresh_token: pair.refresh_token });
+    check(after, { 'refresh after logout is 401': (r) => r.status === 401 });
+
+    const again = postJSON(http, '/v1/auth/logout', { refresh_token: 'inventado' });
+    check(again, { 'logout of an unknown token is still 204': (r) => r.status === 204 });
   });
 
   group('errors: unknown path uses the envelope', () => {

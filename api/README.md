@@ -128,6 +128,17 @@ Every attempt is written to `seg.tb_security_event` with an HMAC of the email, t
 and the user agent. The log never receives a password, a code or a clear address, and an
 audit failure is logged but never fails the request.
 
+## Sessions
+
+`POST /v1/auth/refresh` rotates: the presented token is revoked in the same transaction that
+inserts its successor, inside the same family. Presenting a token that was already rotated is
+the theft signal — the whole family is revoked and the answer is `401 refresh_reused`, so the
+client must log in again. An unknown or expired token answers `401 refresh_invalid` and
+touches nothing.
+
+`POST /v1/auth/logout` revokes the family and answers `204` even for an unknown token: the
+desired state is reached either way, and an error would confirm whether the token existed.
+
 ## Tests
 
 ```bash

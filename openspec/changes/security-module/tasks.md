@@ -11,7 +11,7 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
 | T3 | Signup + verify (`tb_signup_request`), first RabbitMQ publisher + mail worker | C5 | inline | 35948ad + this |
 | T4 | Login with lockout + audit | C6, C10 | inline | this |
 | T4a | Session core: HS256 access token, rotating refresh family | C3 | inline | this |
-| T5 | Refresh rotation with family revocation | C3 | — | next |
+| T5 | Refresh rotation with family revocation + logout | C3 | inline | this |
 | T6 | Password reset/change revoking all families | C4 | — | next |
 | T7 | RBAC middleware + `/v1/me` | C9 | — | next |
 | T8 | Email change | C7 | — | next |
@@ -108,3 +108,16 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
   `http_req_failed` reported 51% because the journey requests 400/401/404/422/423 on
   purpose; those are now declared expected, leaving the metric meaningful.
   Final: 53/53 checks, 0% failed requests, p(95) 27ms.
+- L11 — Refresh rotation and logout.
+  `POST /v1/auth/refresh` revokes the presented token in the same transaction that inserts
+  its successor, inside the same family, so there is no window where both are live.
+  Presenting an already-revoked token revokes the **whole family** and answers
+  `401 refresh_reused`; an unknown or expired token answers `401 refresh_invalid` without
+  touching anything. Client metadata (device, user agent) is carried over the rotation; the
+  IP comes from the current request.
+  `POST /v1/auth/logout` revokes the family and is idempotent: an unknown token still
+  answers `204`, because an error would confirm whether it existed.
+  Both are exercised in `auth-flow.js`: rotation, replay, family death after replay, unknown
+  and missing tokens, and logout followed by a refresh that must fail.
+  Still open: the panel's httpOnly cookie and CSRF. The handlers accept the token in the body
+  only, which is right for mobile and wrong for the SPA — it is the last piece of C3/C14.

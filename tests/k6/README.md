@@ -33,6 +33,10 @@ what makes a real end-to-end run possible in a load-testing tool.
 | login | 200 with a pair |
 | login failures | wrong password 401, unknown account 401, malformed body 422 |
 | lockout | 4×401 then 423 with `Retry-After`, and the correct password is refused while locked |
+| refresh | 200 with a new pair, the rotated token differs from the presented one |
+| refresh reuse | replaying a consumed token → 401 `refresh_reused`, and the family dies with it |
+| refresh failures | unknown token and missing token → 401 `refresh_invalid` |
+| logout | 204, the family stops refreshing, and an unknown token still answers 204 |
 | errors | unknown path → 404 `not_found` |
 | CORS | preflight 204 with the exact origin and credentials; a foreign origin gets no header |
 

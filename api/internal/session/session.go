@@ -129,6 +129,11 @@ func (i *Issuer) Issue(ctx context.Context, userID string, meta Meta) (Tokens, e
 }
 
 func (i *Issuer) sign(userID string, now time.Time) (string, error) {
+	return signAccess(i.cfg, userID, now)
+}
+
+// signAccess is shared by issuance and rotation: both produce the same kind of token.
+func signAccess(cfg Config, userID string, now time.Time) (string, error) {
 	jti, err := newID()
 	if err != nil {
 		return "", err
@@ -136,13 +141,13 @@ func (i *Issuer) sign(userID string, now time.Time) (string, error) {
 
 	claims := Claims{RegisteredClaims: jwt.RegisteredClaims{
 		Subject:   userID,
-		Issuer:    i.cfg.Issuer,
+		Issuer:    cfg.Issuer,
 		IssuedAt:  jwt.NewNumericDate(now),
-		ExpiresAt: jwt.NewNumericDate(now.Add(i.cfg.AccessTTL)),
+		ExpiresAt: jwt.NewNumericDate(now.Add(cfg.AccessTTL)),
 		ID:        jti,
 	}}
 
-	signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(i.cfg.Secret)
+	signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(cfg.Secret)
 	if err != nil {
 		return "", fmt.Errorf("session: signing access token: %w", err)
 	}

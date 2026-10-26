@@ -25,6 +25,7 @@ type Options struct {
 	Signup             SignupRequester
 	SignupVerifier     SignupVerifier
 	Login              LoginAuthenticator
+	Rotator            SessionRotator
 }
 
 const defaultProbeTimeout = 2 * time.Second
@@ -51,6 +52,7 @@ func New(opts Options) http.Handler {
 		signup:   opts.Signup,
 		verifier: opts.SignupVerifier,
 		login:    opts.Login,
+		rotator:  opts.Rotator,
 		logger:   logger,
 	}
 	if opts.Signup != nil {
@@ -63,6 +65,10 @@ func New(opts Options) http.Handler {
 	}
 	if opts.Login != nil {
 		mux.HandleFunc("POST /v1/auth/login", auth.loginUser)
+	}
+	if opts.Rotator != nil {
+		mux.HandleFunc("POST /v1/auth/refresh", auth.refreshSession)
+		mux.HandleFunc("POST /v1/auth/logout", auth.logoutSession)
 	}
 
 	mux.HandleFunc("/", notFound)

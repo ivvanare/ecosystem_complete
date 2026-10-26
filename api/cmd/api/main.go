@@ -69,12 +69,14 @@ func run() error {
 		probes = append(probes, probe.RabbitMQ{URL: cfg.RabbitMQURL})
 	}
 
-	issuer := session.New(session.Config{
+	sessionConfig := session.Config{
 		Secret:     []byte(cfg.JWTSecret),
 		AccessTTL:  cfg.AccessTokenTTL,
 		RefreshTTL: cfg.RefreshTokenTTL,
 		Issuer:     "melia-api",
-	}, session.NewPostgresRefreshStore(pool))
+	}
+	issuer := session.New(sessionConfig, session.NewPostgresRefreshStore(pool))
+	rotator := session.NewRotator(session.NewPostgresRotateStore(pool), sessionConfig)
 
 	auditor := audit.NewPostgres(pool, []byte(cfg.JWTSecret))
 
@@ -108,6 +110,7 @@ func run() error {
 			Signup:             signupRequester,
 			SignupVerifier:     signupVerifier,
 			Login:              loginService,
+			Rotator:            rotator,
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}

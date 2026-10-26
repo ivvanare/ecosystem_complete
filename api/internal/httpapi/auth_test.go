@@ -308,3 +308,82 @@ func TestLoginMapsFailures(t *testing.T) {
 		}
 	})
 }
+
+type fakeRotator struct {
+	tokens    session.Tokens
+	err       error
+	presented string
+	logouts   int
+	logoutErr error
+}
+
+func (f *fakeRotator) Refresh(_ context.Context, presented string, _ session.Meta) (session.Tokens, error) {
+	f.presented = presented
+	return f.tokens, f.err
+}
+
+func (f *fakeRotator) Logout(_ context.Context, presented string) error {
+	f.logouts++
+	f.presented = presented
+	return f.logoutErr
+}
+
+func TestRefreshRotatesAndReportsReuse(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		rotator := &fakeRotator{tokens: session.Tokens{AccessToken: "a2", RefreshToken: "r2", ExpiresIn: 900}}
+		handler := New(Options{Rotator: rotator, Logger: slog.New(slog.DiscardHandler)})
+
+		rec := postJSONTo(t, handler, "/v1/auth/refresh", `{"refresh_token":"r1"}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), `"refresh_token":"r2"`) {
+			t.Errorf("body = %s", rec.Body.String())
+		}
+		if rotator.presented != "r1" {
+			t.Errorf("presented = %q", rotator.presented)
+		}
+	})
+
+	t.Run("invalid", func(t *testing.T) {
+		handler := New(Options{Rotator: &fakeRotator{err: session.ErrInvalidRefresh}, Logger: slog.New(slog.DiscardHandler)})
+		rec := postJSONTo(t, handler, "/v1/auth/refresh", `{"refresh_token":"x"}`)
+
+		if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "refresh_invalid") {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("reuse", func(t *testing.T) {
+		handler := New(Options{Rotator: &fakeRotator{err: session.ErrRefreshReused}, Logger: slog.New(slog.DiscardHandler)})
+		rec := postJSONTo(t, handler, "/v1/auth/refresh", `{"refresh_token":"x"}`)
+
+		if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "refresh_reused") {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func TestLogoutIsIdempotentAndAlways204(t *testing.T) {
+	rotator := &fakeRotator{}
+	handler := New(Options{Rotator: rotator, Logger: slog.New(slog.DiscardHandler)})
+
+	for _, body := range []string{`{"refresh_token":"r1"}`, `{}`, ``} {
+		rec := postJSONTo(t, handler, "/v1/auth/logout", body)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("status = %d for body %q, want 204", rec.Code, body)
+		}
+	}
+	if rotator.logouts != 3 {
+		t.Errorf("logout called %d times, want 3", rotator.logouts)
+	}
+}
+
+func postJSONTo(t *testing.T, handler http.Handler, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
