@@ -194,6 +194,36 @@ login lockout, so a user who locked themselves out can get back in.
 An account created only through a social provider has no password; `change` answers
 `400 invalid_password` for it rather than pretending to succeed.
 
+## Email change
+
+| Endpoint | Auth | Behaviour |
+|---|---|---|
+| `POST /v1/auth/email/change` | bearer | `202`; mails the code to the **new** address, requires the password |
+| `POST /v1/auth/email/change/verify` | bearer | `200`, `400 invalid_code`, `409 email_unavailable` |
+
+The current password is required, so a stolen access token alone cannot move an account. The
+code goes to the new address, proving ownership of it before anything changes. A successful
+change revokes every refresh family: the address that identified the account just changed.
+
+Requesting a new code invalidates the previous pending one, so only the newest code can ever
+be consumed — that is what makes a stale code unable to move the account later.
+
+### Quotas on code requests
+
+Both flows that mail a code enforce a per-user quota: a **60-second cooldown** between
+requests and **5 requests per 24 hours**. A per-token attempt counter is not enough on its
+own — if the code can be reissued at will, every reissue resets the counter and a 6-digit code
+becomes brute-forceable again. The quota is also what stops the endpoint from being used to
+flood somebody else's inbox.
+
+The two endpoints report exhaustion differently, on purpose:
+
+- **Email change** (authenticated) answers `429 rate_limited` with `Retry-After`: there is no
+  account to hide from a caller who already holds a session.
+- **Password recovery** (public) answers `202` and simply sends nothing. A `429` there would
+  reveal that the account exists, because an unknown address never exhausts a quota — it
+  never stores a token.
+
 ## Administration
 
 | Endpoint | What it does |

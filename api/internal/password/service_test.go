@@ -30,6 +30,8 @@ type fakeStore struct {
 	changeErr   error
 	changedHash string
 	password    string
+	lastAt      *time.Time
+	inWindow    int
 }
 
 func (f *fakeStore) ActiveUserID(context.Context, string) (string, error) {
@@ -46,6 +48,14 @@ func (f *fakeStore) BeginReset(context.Context, string) (ResetTx, error) {
 		return nil, f.rowErr
 	}
 	return &fakeTx{store: f}, nil
+}
+
+func (f *fakeStore) LastRequestAt(context.Context, string) (*time.Time, error) {
+	return f.lastAt, nil
+}
+
+func (f *fakeStore) CountRequestsSince(context.Context, string, time.Time) (int, error) {
+	return f.inWindow, nil
 }
 
 func (f *fakeStore) PasswordHash(context.Context, string) (string, error) {
@@ -265,5 +275,40 @@ func TestChangeRejectsAnAccountWithoutAPassword(t *testing.T) {
 
 	if err := service.Change(context.Background(), "user-1", "x", "nueva-clave-larga-123"); !errors.Is(err, ErrInvalidCurrentPassword) {
 		t.Fatalf("error = %v, want ErrInvalidCurrentPassword for a federated-only account", err)
+	}
+}
+
+func TestRequestResetIsSilentWhenTheQuotaIsExhausted(t *testing.T) {
+	recent := now.Add(-5 * time.Second)
+	store := &fakeStore{userID: "user-1", lastAt: &recent}
+	publisher := &fakePublisher{}
+	auditor := &fakeAuditor{}
+	service := newService(store, publisher, auditor)
+
+	// Silence, not 429: a 429 here would reveal that the account exists.
+	if err := service.RequestReset(context.Background(), "ana@melia.test"); err != nil {
+		t.Fatalf("RequestReset returned error: %v", err)
+	}
+	if len(store.created) != 0 || len(publisher.messages) != 0 {
+		t.Error("a throttled request still created a token or queued a mail")
+	}
+	if len(auditor.events) != 1 {
+		t.Fatalf("audit = %v, want one event", auditor.events)
+	}
+	if reason, _ := auditor.events[0].Metadata["reason"].(string); reason != "quota" {
+		t.Errorf("reason = %v, want quota", auditor.events[0].Metadata["reason"])
+	}
+}
+
+func TestRequestResetIsThrottledByTheWindowLimit(t *testing.T) {
+	store := &fakeStore{userID: "user-1", inWindow: 5}
+	publisher := &fakePublisher{}
+	service := newService(store, publisher, &fakeAuditor{})
+
+	if err := service.RequestReset(context.Background(), "ana@melia.test"); err != nil {
+		t.Fatalf("RequestReset returned error: %v", err)
+	}
+	if len(publisher.messages) != 0 {
+		t.Error("the daily limit did not stop the mail")
 	}
 }

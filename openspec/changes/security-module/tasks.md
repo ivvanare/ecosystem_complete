@@ -18,7 +18,7 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
 | T8 | Email change | C7 | — | next |
 | T8b | Password recovery and change, revoking every family | C4 | inline | this |
 | T8a | Admin users list, role assignment, audit read, first-admin bootstrap | C9, C10 | inline | this |
-| T9 | Audit writes on every auth event | C10 | inline (auth events) | this |
+| T9 | Audit writes on every auth event | C10 | inline (auth events) | done |
 | T10 | Social login with go-oidc | C8 | — | next |
 
 ## Log
@@ -182,3 +182,17 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
   Covered by eleven Go tests and eleven k6 checks: forgot → code from Mailpit → wrong code →
   short password → reset → old password dead → new password works → pre-reset session revoked
   → consumed code rejected.
+- L17 — Email change, and the quota gap the user caught before it shipped.
+  `POST /v1/auth/email/change` mails the code to the **new** address and requires the current
+  password, so a stolen access token alone cannot move an account; a successful change revokes
+  every refresh family. Requesting a new code invalidates the previous pending one, so only the
+  newest can be consumed and a stale code cannot apply later.
+  **Security fix prompted by the user**: `Request` had no limit, which allowed (a) mailing
+  codes to any address without bound and (b) resetting the per-token attempt counter on every
+  reissue, turning five tries into unlimited guesses. `security.Quota` now enforces a 60s
+  cooldown and 5 requests per 24h, applied to **both** email change and password recovery —
+  the latter was the worse hole because it is unauthenticated.
+  The reporting differs deliberately: email change answers `429` with `Retry-After`, password
+  recovery stays silent with `202` because a 429 would reveal that the account exists.
+  Covered by ten Go tests (including throttling) and the flow tests; k6 coverage for this
+  endpoint is still pending.

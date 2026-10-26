@@ -195,3 +195,28 @@ func (t *resetTx) RevokeAllFamilies(ctx context.Context, userID string) error {
 func (t *resetTx) Commit(ctx context.Context) error { return t.tx.Commit(ctx) }
 
 func (t *resetTx) Rollback(ctx context.Context) error { return t.tx.Rollback(ctx) }
+
+// LastRequestAt returns when the user last asked for a recovery code.
+func (s *PostgresStore) LastRequestAt(ctx context.Context, userID string) (*time.Time, error) {
+	var last *time.Time
+	err := s.Pool.QueryRow(ctx, `
+		SELECT max(dt_created_at) FROM seg.tb_user_token
+		WHERE co_user = $1::uuid AND tx_purpose = 'PASSWORD_RESET'`, userID).Scan(&last)
+	if err != nil {
+		return nil, fmt.Errorf("selecting last request: %w", err)
+	}
+	return last, nil
+}
+
+// CountRequestsSince counts the recovery codes requested after the given instant.
+func (s *PostgresStore) CountRequestsSince(ctx context.Context, userID string, since time.Time) (int, error) {
+	var count int
+	err := s.Pool.QueryRow(ctx, `
+		SELECT count(*) FROM seg.tb_user_token
+		WHERE co_user = $1::uuid AND tx_purpose = 'PASSWORD_RESET' AND dt_created_at >= $2`,
+		userID, since).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("counting requests: %w", err)
+	}
+	return count, nil
+}

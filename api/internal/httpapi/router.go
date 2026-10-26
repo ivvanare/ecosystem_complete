@@ -32,6 +32,7 @@ type Options struct {
 	Identity           IdentityReader
 	Admin              AdminReader
 	Password           PasswordService
+	EmailChange        EmailChangeService
 }
 
 const defaultProbeTimeout = 2 * time.Second
@@ -86,6 +87,14 @@ func New(opts Options) http.Handler {
 			mux.HandleFunc("POST /v1/auth/password/change",
 				RequireAuth(opts.TokenParser, passwordHandler.changePassword))
 		}
+	}
+
+	if opts.EmailChange != nil && opts.TokenParser != nil {
+		emailHandler := &emailChangeHandlers{service: opts.EmailChange}
+		mux.HandleFunc("POST /v1/auth/email/change",
+			RequireAuth(opts.TokenParser, emailHandler.request))
+		mux.HandleFunc("POST /v1/auth/email/change/verify",
+			RequireAuth(opts.TokenParser, emailHandler.verify))
 	}
 
 	if opts.Identity != nil && opts.TokenParser != nil {

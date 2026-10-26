@@ -72,6 +72,10 @@ type Store interface {
 	BeginReset(ctx context.Context, email string) (ResetTx, error)
 	// PasswordHash returns the stored hash for a user.
 	PasswordHash(ctx context.Context, userID string) (string, error)
+	// LastRequestAt returns when the user last asked for a recovery code, or nil.
+	LastRequestAt(ctx context.Context, userID string) (*time.Time, error)
+	// CountRequestsSince counts the recovery requests made after the given instant.
+	CountRequestsSince(ctx context.Context, userID string, since time.Time) (int, error)
 	// ChangePassword sets a new hash and revokes every family, atomically.
 	ChangePassword(ctx context.Context, userID, passwordHash string) error
 }
@@ -92,6 +96,10 @@ type Service struct {
 	GenerateCode   func() (string, error)
 	HashPassword   func(string) (string, error)
 	VerifyPassword func(encoded, plain string) (bool, error)
+
+	// Quota bounds how often a recovery code can be requested. Without it the endpoint is
+	// both a way to flood a mailbox and a way to reset the per-token attempt counter.
+	Quota security.Quota
 }
 
 // New returns a Service with real entropy and hashing.
@@ -105,6 +113,7 @@ func New(store Store, publisher Publisher, auditor audit.Recorder, logger *slog.
 		GenerateCode:   security.GenerateCode,
 		HashPassword:   security.HashPassword,
 		VerifyPassword: security.VerifyPassword,
+		Quota:          security.Quota{},
 	}
 }
 
@@ -125,6 +134,23 @@ func (s *Service) RequestReset(ctx context.Context, email string) error {
 		return fmt.Errorf("password: looking up user: %w", err)
 	}
 
+	now := s.now()
+	lastAt, err := s.Store.LastRequestAt(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("password: reading last request: %w", err)
+	}
+	inWindow, err := s.Store.CountRequestsSince(ctx, userID, now.Add(-s.window()))
+	if err != nil {
+		return fmt.Errorf("password: counting requests: %w", err)
+	}
+	if err := s.Quota.Check(now, lastAt, inWindow); err != nil {
+		// Pretend success. Answering 429 here would reveal that the account exists: an
+		// unknown address never exhausts a quota, because it never stores a token.
+		s.record(ctx, audit.Event{Name: audit.EventPasswordResetRequested, UserID: userID, Email: email,
+			Metadata: map[string]any{"delivered": false, "reason": "quota"}})
+		return nil
+	}
+
 	var code string
 	for attempt := 0; attempt < maxCodeTries; attempt++ {
 		code, err = s.GenerateCode()
@@ -132,7 +158,7 @@ func (s *Service) RequestReset(ctx context.Context, email string) error {
 			return fmt.Errorf("password: generating code: %w", err)
 		}
 
-		err = s.Store.CreateResetToken(ctx, userID, email, security.HashCode(code), s.now().Add(CodeLifetime))
+		err = s.Store.CreateResetToken(ctx, userID, email, security.HashCode(code), now.Add(CodeLifetime))
 		if err == nil {
 			break
 		}
@@ -284,6 +310,14 @@ func (s *Service) now() time.Time {
 		return time.Now()
 	}
 	return s.Now()
+}
+
+// window is the quota window, defaulting when the field is unset.
+func (s *Service) window() time.Duration {
+	if s.Quota.Window > 0 {
+		return s.Quota.Window
+	}
+	return security.DefaultWindow
 }
 
 func normalizeEmail(email string) string {

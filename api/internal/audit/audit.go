@@ -32,6 +32,10 @@ const (
 	EventPasswordResetFailed    = "auth.password.reset_failed"
 	EventPasswordChanged        = "auth.password.changed"
 	EventPasswordChangeFailed   = "auth.password.change_failed"
+
+	EventEmailChangeRequested = "auth.email.change_requested"
+	EventEmailChanged         = "auth.email.changed"
+	EventEmailChangeFailed    = "auth.email.change_failed"
 )
 
 // Event is one row of the log.

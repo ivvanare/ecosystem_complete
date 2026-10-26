@@ -18,6 +18,7 @@ import (
 	"github.com/ivvanare/ecosystem_complete/api/internal/audit"
 	"github.com/ivvanare/ecosystem_complete/api/internal/config"
 	"github.com/ivvanare/ecosystem_complete/api/internal/db"
+	"github.com/ivvanare/ecosystem_complete/api/internal/emailchange"
 	"github.com/ivvanare/ecosystem_complete/api/internal/httpapi"
 	"github.com/ivvanare/ecosystem_complete/api/internal/identity"
 	"github.com/ivvanare/ecosystem_complete/api/internal/login"
@@ -100,6 +101,13 @@ func run() error {
 
 	// Starting a registration needs the broker to deliver the code. Without it the route
 	// stays unregistered rather than accepting a request it cannot fulfil.
+	var emailChangeService httpapi.EmailChangeService
+	if cfg.RabbitMQURL != "" {
+		emailPublisher := queue.NewAMQP(cfg.RabbitMQURL, cfg.MailQueue)
+		defer func() { _ = emailPublisher.Close() }()
+		emailChangeService = emailchange.New(emailchange.NewPostgresStore(pool), emailPublisher, auditor, logger)
+	}
+
 	var passwordService httpapi.PasswordService
 	if cfg.RabbitMQURL != "" {
 		passwordPublisher := queue.NewAMQP(cfg.RabbitMQURL, cfg.MailQueue)
@@ -134,6 +142,7 @@ func run() error {
 			Identity:           identityService,
 			Admin:              identityService,
 			Password:           passwordService,
+			EmailChange:        emailChangeService,
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
