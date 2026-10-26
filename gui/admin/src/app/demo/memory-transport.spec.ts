@@ -23,8 +23,22 @@ function query(overrides: Partial<ListQuery> = {}): ListQuery {
 }
 
 function transport(): MemoryTransport {
-  return new MemoryTransport(seed, { searchFields: ['question'] });
+  return new MemoryTransport({ faqs: seed }, { searchFields: ['question'] });
 }
+
+describe('MemoryTransport: collections', () => {
+  it('keeps endpoints isolated and rejects unknown ones', async () => {
+    const t = new MemoryTransport({
+      faqs: seed,
+      faq_categories: [{ id: 101, name: 'Reactivity', slug: 'reactivity' }],
+    });
+    expect((await t.list('faq_categories', query())).total).toBe(1);
+    await t.remove('faq_categories', 101);
+    expect((await t.list('faq_categories', query())).total).toBe(0);
+    expect((await t.list('faqs', query())).total).toBe(5);
+    await expect(t.list('ghost', query())).rejects.toThrow(/unknown endpoint/);
+  });
+});
 
 describe('MemoryTransport', () => {
   it('lists a page and reports the total', async () => {

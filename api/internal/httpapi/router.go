@@ -31,6 +31,7 @@ type Options struct {
 	Authorizer         Authorizer
 	Identity           IdentityReader
 	Admin              AdminReader
+	Password           PasswordService
 }
 
 const defaultProbeTimeout = 2 * time.Second
@@ -75,6 +76,16 @@ func New(opts Options) http.Handler {
 	if opts.Rotator != nil {
 		mux.HandleFunc("POST /v1/auth/refresh", auth.refreshSession)
 		mux.HandleFunc("POST /v1/auth/logout", auth.logoutSession)
+	}
+
+	if opts.Password != nil {
+		passwordHandler := &passwordHandlers{service: opts.Password}
+		mux.HandleFunc("POST /v1/auth/password/forgot", passwordHandler.forgotPassword)
+		mux.HandleFunc("POST /v1/auth/password/reset", passwordHandler.resetPassword)
+		if opts.TokenParser != nil {
+			mux.HandleFunc("POST /v1/auth/password/change",
+				RequireAuth(opts.TokenParser, passwordHandler.changePassword))
+		}
 	}
 
 	if opts.Identity != nil && opts.TokenParser != nil {

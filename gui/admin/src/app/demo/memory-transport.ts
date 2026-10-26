@@ -4,6 +4,9 @@
  * pagination, search over declared fields) so screens work end-to-end
  * before a real API exists. Swap for `HttpTransport` by changing one
  * constructor argument.
+ *
+ * Collections are keyed by endpoint so several entities (e.g. a resource and
+ * the category list a select points at) share one transport instance.
  */
 import type { CrudTransport, EntityId, ListQuery, ListResult } from 'crud-maker';
 
@@ -14,6 +17,11 @@ export interface MemoryTransportOptions {
   searchFields?: string[];
   /** Simulated latency in ms. Defaults to 120. */
   delayMs?: number;
+}
+
+interface Bucket {
+  rows: Row[];
+  nextId: number;
 }
 
 function delay(ms: number): Promise<void> {
@@ -62,22 +70,23 @@ function compare(a: unknown, b: unknown): number {
 }
 
 export class MemoryTransport implements CrudTransport {
-  private rows: Row[];
-  private nextId: number;
+  private readonly buckets = new Map<string, Bucket>();
   private readonly options: Required<Pick<MemoryTransportOptions, 'searchFields' | 'delayMs'>>;
 
-  constructor(initial: Row[], options: MemoryTransportOptions = {}) {
-    this.rows = initial.map((row) => ({ ...row }));
-    const maxId = this.rows.reduce((max, row) => Math.max(max, Number(row['id']) || 0), 0);
-    this.nextId = maxId + 1;
+  constructor(collections: Record<string, Row[]>, options: MemoryTransportOptions = {}) {
+    for (const [endpoint, rows] of Object.entries(collections)) {
+      const copy = rows.map((row) => ({ ...row }));
+      const maxId = copy.reduce((max, row) => Math.max(max, Number(row['id']) || 0), 0);
+      this.buckets.set(endpoint, { rows: copy, nextId: maxId + 1 });
+    }
     this.options = { searchFields: options.searchFields ?? [], delayMs: options.delayMs ?? 120 };
   }
 
   async list(endpoint: string, query: ListQuery): Promise<ListResult> {
     await delay(this.options.delayMs);
-    void endpoint;
+    const bucket = this.bucket(endpoint);
 
-    let filtered = this.rows.filter((row) =>
+    let filtered = bucket.rows.filter((row) =>
       Object.entries(query.filters).every(([key, expected]) => matches(row, key, expected)),
     );
 
@@ -107,37 +116,42 @@ export class MemoryTransport implements CrudTransport {
 
   async get(endpoint: string, id: EntityId): Promise<Row> {
     await delay(this.options.delayMs);
-    void endpoint;
-    const found = this.rows.find((row) => String(row['id']) === String(id));
+    const found = this.bucket(endpoint).rows.find((row) => String(row['id']) === String(id));
     if (!found) throw new Error(`MemoryTransport: entity ${String(id)} not found`);
     return { ...found };
   }
 
   async create(endpoint: string, payload: Row): Promise<Row> {
     await delay(this.options.delayMs);
-    void endpoint;
+    const bucket = this.bucket(endpoint);
     const created: Row = {
-      id: this.nextId++,
+      id: bucket.nextId++,
       createdAt: new Date().toISOString().slice(0, 19),
       ...payload,
     };
-    this.rows = [...this.rows, created];
+    bucket.rows = [...bucket.rows, created];
     return { ...created };
   }
 
   async update(endpoint: string, id: EntityId, payload: Row): Promise<Row> {
     await delay(this.options.delayMs);
-    void endpoint;
-    const index = this.rows.findIndex((row) => String(row['id']) === String(id));
+    const bucket = this.bucket(endpoint);
+    const index = bucket.rows.findIndex((row) => String(row['id']) === String(id));
     if (index === -1) throw new Error(`MemoryTransport: entity ${String(id)} not found`);
-    const updated: Row = { ...this.rows[index], ...payload, id: this.rows[index]!['id'] };
-    this.rows = this.rows.map((row, i) => (i === index ? updated : row));
+    const updated: Row = { ...bucket.rows[index], ...payload, id: bucket.rows[index]!['id'] };
+    bucket.rows = bucket.rows.map((row, i) => (i === index ? updated : row));
     return { ...updated };
   }
 
   async remove(endpoint: string, id: EntityId): Promise<void> {
     await delay(this.options.delayMs);
-    void endpoint;
-    this.rows = this.rows.filter((row) => String(row['id']) !== String(id));
+    const bucket = this.bucket(endpoint);
+    bucket.rows = bucket.rows.filter((row) => String(row['id']) !== String(id));
+  }
+
+  private bucket(endpoint: string): Bucket {
+    const bucket = this.buckets.get(endpoint);
+    if (!bucket) throw new Error(`MemoryTransport: unknown endpoint "${endpoint}"`);
+    return bucket;
   }
 }

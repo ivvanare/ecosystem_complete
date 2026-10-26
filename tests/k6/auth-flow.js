@@ -357,6 +357,57 @@ export default function () {
     http.cookieJar().clear(BASE_URL);
   });
 
+  group('password: recovery resets and kills every session', () => {
+    // A dedicated account: this group changes its password.
+    const resetEmail = uniqueEmail('reset');
+    const NEW_PASSWORD = 'k6-clave-nueva-456';
+
+    postJSON(http, '/v1/auth/signup', { email: resetEmail, name: 'Reset', password: PASSWORD });
+    const signupCode = waitForCode(http, resetEmail, 12, /registro/i);
+    const verified = postJSON(http, '/v1/auth/signup/verify', { email: resetEmail, code: signupCode });
+    const oldPair = verified.json();
+    check(verified, { 'reset account ready': (r) => r.status === 201 });
+
+    const forgot = postJSON(http, '/v1/auth/password/forgot', { email: resetEmail });
+    check(forgot, { 'forgot is 202': (r) => r.status === 202, 'forgot has no body': (r) => !r.body });
+
+    const resetCode = waitForCode(http, resetEmail, 12, /contrase/i);
+    check(resetCode, { 'recovery code extracted from mail': (c) => c !== null });
+
+    const wrong = postJSON(http, '/v1/auth/password/reset',
+      { email: resetEmail, code: '000000', new_password: NEW_PASSWORD });
+    check(wrong, {
+      'reset with a wrong code is 400': (r) => r.status === 400,
+      'it reports invalid_code': (r) => r.json('error.code') === 'invalid_code',
+    });
+
+    const short = postJSON(http, '/v1/auth/password/reset',
+      { email: resetEmail, code: resetCode, new_password: 'corta' });
+    check(short, { 'short new password is 422': (r) => r.status === 422 });
+
+    const reset = postJSON(http, '/v1/auth/password/reset',
+      { email: resetEmail, code: resetCode, new_password: NEW_PASSWORD });
+    check(reset, { 'reset is 200': (r) => r.status === 200 });
+
+    // The old password must be dead, the new one alive.
+    const oldLogin = postJSON(http, '/v1/auth/login', { email: resetEmail, password: PASSWORD });
+    check(oldLogin, { 'the old password no longer works': (r) => r.status === 401 });
+
+    const newLogin = postJSON(http, '/v1/auth/login', { email: resetEmail, password: NEW_PASSWORD });
+    check(newLogin, { 'the new password works': (r) => r.status === 200 });
+
+    // ... and the session that existed before the reset is gone.
+    const deadSession = postJSON(http, '/v1/auth/refresh', { refresh_token: oldPair.refresh_token });
+    check(deadSession, {
+      'the pre-reset session was revoked': (r) => r.status === 401,
+    });
+
+    // The code is single use.
+    const reused = postJSON(http, '/v1/auth/password/reset',
+      { email: resetEmail, code: resetCode, new_password: NEW_PASSWORD });
+    check(reused, { 'a consumed recovery code is rejected': (r) => r.status === 400 });
+  });
+
   group('errors: unknown path uses the envelope', () => {
     const res = http.get(`${BASE_URL}/v1/does-not-exist`);
     check(res, {

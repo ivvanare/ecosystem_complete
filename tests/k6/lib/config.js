@@ -108,8 +108,16 @@ export function waitForMail(http, email, attempts = 12, matches = () => true) {
 }
 
 // waitForCode returns the 6-digit code mailed to the address, or null.
-export function waitForCode(http, email, attempts = 12) {
-  const message = waitForMail(http, email, attempts);
+//
+// subjectPattern narrows which mail to read: an address accumulates signup, "already
+// registered" and password mails, and the wrong one has a code too.
+export function waitForCode(http, email, attempts = 12, subjectPattern = null) {
+  const message = waitForMail(
+    http,
+    email,
+    attempts,
+    subjectPattern ? (m) => subjectPattern.test(m.Subject || '') : () => true,
+  );
   if (!message) {
     return null;
   }

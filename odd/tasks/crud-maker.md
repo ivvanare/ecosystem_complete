@@ -22,6 +22,8 @@ Test runner: `npx ng test crud-maker` (vitest, inside gui/admin workspace)
 
 - **S5** (verbatim, 2026-10-26): "los inputs aceptan getters para sobre escribir el valos en la tabla? ejemplo para renderizar un tag, o un badget en un campo de estaus" → approved "si dale" after the design answer (no getters — S4.1 holds; declarative hints instead).
   - Acceptance: optional serializable `cell: { render: 'text'|'badge'|'tag'|'dot', variantMap?: { value → variant } }` on FieldConfig; validated at define time; resolved default `{ render: 'text' }`; the library never emits markup — the UI layer interprets the hint. Demo renders `published` as a badge and `category` as a tag.
+- **S6** (verbatim, 2026-10-26): "y los selects se llenan con ldata estatica o se puede colocar un endpoint para que se haga la cosnulta y se llene con es ainfo?" → approved "dale".
+  - Acceptance: `OptionResolver` in the lib consumes the existing `{resource, labelField, valueField?}` metadata via the same `CrudTransport`; returns stable `Signal<FieldOption[]>` per resource; cached (one fetch per resource, shared); per-resource error signal (no silent empty); refresh(resource) re-fetches with stale-response protection; static options and non-select fields work without touching the transport. Demo: `category` switches to endpoint-driven options backed by a new `faq_categories` collection.
 
 ## Tasks
 
@@ -31,6 +33,7 @@ Test runner: `npx ng test crud-maker` (vitest, inside gui/admin workspace)
 | T2 | S3, S4.5 | inline | **done** | bd7efb7 | RED observed (Cannot resolve './crud-list-state') → GREEN: 58/58 tests pass |
 | T3 | S1, S3, S4.3, S4.4 | inline | **done** | a7f0cae | RED observed (Cannot resolve ./params, ./crud-controller, ./http-transport) → GREEN: 72/72; `ng build crud-maker` packages; admin suite 2/2 |
 | T3.5 | S5 | inline | **done** | see `feat(crud-maker)` cell-hint commit | RED observed (TS2339 Property 'cell' does not exist) → GREEN: 76/76 lib tests; app 10/10; demo devserver rebuild success |
+| T3.6 | S6 | inline | pending | — | RED first: option-resolver.spec + multi-endpoint memory transport |
 | T4 | S2 (ng-zorro pages/components + route gen) | inline | blocked-pending-approval | — | requires `ng add ng-zorro-antd` authorization |
 | T5 | consumer docs for the package | inline | **done** | see `docs(crud-maker)` commit | README rewritten + AGENTS.md pointers; `ng build crud-maker` still green |
 

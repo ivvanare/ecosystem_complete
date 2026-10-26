@@ -174,6 +174,26 @@ expire. That is the whole reason the token carries identity only.
 A valid token for an account that was deleted answers `401`, not `404`: the token is real,
 the subject is gone.
 
+## Password recovery and change
+
+| Endpoint | Auth | Behaviour |
+|---|---|---|
+| `POST /v1/auth/password/forgot` | none | always `202`; mails a 6-digit code only if the account exists |
+| `POST /v1/auth/password/reset` | none | `200` on success, `400 invalid_code`, `429 too_many_attempts` |
+| `POST /v1/auth/password/change` | bearer | re-checks the current password, `400 invalid_password` if wrong |
+
+The recovery code lives in `seg.tb_user_token` with purpose `PASSWORD_RESET`: only its
+SHA-256, a 10-minute expiry, at most five attempts and a single use. Because `tx_code_hash`
+is unique across the table, a generated code that already belongs to another account is
+redrawn instead of failing the request.
+
+Both `reset` and `change` revoke **every** refresh family of the user, including the caller's:
+a session stolen before the recovery must not survive it. A successful reset also clears the
+login lockout, so a user who locked themselves out can get back in.
+
+An account created only through a social provider has no password; `change` answers
+`400 invalid_password` for it rather than pretending to succeed.
+
 ## Administration
 
 | Endpoint | What it does |

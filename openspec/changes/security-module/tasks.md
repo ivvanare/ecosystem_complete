@@ -16,6 +16,7 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
 | T6a | Panel cookie + CSRF double submit | C3, C14 | inline | this |
 | T7 | RBAC middleware + `/v1/me` + admin catalogues | C9 | inline | this |
 | T8 | Email change | C7 | — | next |
+| T8b | Password recovery and change, revoking every family | C4 | inline | this |
 | T8a | Admin users list, role assignment, audit read, first-admin bootstrap | C9, C10 | inline | this |
 | T9 | Audit writes on every auth event | C10 | inline (auth events) | this |
 | T10 | Social login with go-oidc | C8 | — | next |
@@ -167,3 +168,17 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
   their own `admin.access` and locking themselves out. A guard would be a product decision
   (409? refuse only self-demotion? require a second admin?), so it is recorded here instead
   of being guessed.
+- L16 — Password recovery and change.
+  `forgot` always answers `202` and only mails when the account exists; the code lives in
+  `seg.tb_user_token` with purpose `PASSWORD_RESET`, hashed, 10-minute expiry, five attempts,
+  single use. `tx_code_hash` is unique across the table, so a colliding code is redrawn (up to
+  three times) instead of returning a 500 — a real possibility with six digits and a shared
+  namespace.
+  `reset` and `change` both revoke **every** refresh family in the same transaction, and a
+  successful reset clears the login lockout. A social-only account has no password, so
+  `change` answers `400 invalid_password` instead of pretending.
+  Audit: `auth.password.reset_requested`, `auth.password.reset`, `auth.password.reset_failed`,
+  `auth.password.changed`, `auth.password.change_failed`.
+  Covered by eleven Go tests and eleven k6 checks: forgot → code from Mailpit → wrong code →
+  short password → reset → old password dead → new password works → pre-reset session revoked
+  → consumed code rejected.

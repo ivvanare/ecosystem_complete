@@ -2,6 +2,7 @@ export * from './lib/config/crud-config.types';
 export * from './lib/config/registry';
 export * from './lib/config/define-config';
 export * from './lib/state/crud-list-state';
+export * from './lib/options/option-resolver';
 export * from './lib/engine/transport';
 export * from './lib/engine/params';
 export * from './lib/engine/crud-controller';

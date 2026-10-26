@@ -21,6 +21,7 @@ import (
 	"github.com/ivvanare/ecosystem_complete/api/internal/httpapi"
 	"github.com/ivvanare/ecosystem_complete/api/internal/identity"
 	"github.com/ivvanare/ecosystem_complete/api/internal/login"
+	"github.com/ivvanare/ecosystem_complete/api/internal/password"
 	"github.com/ivvanare/ecosystem_complete/api/internal/probe"
 	"github.com/ivvanare/ecosystem_complete/api/internal/queue"
 	"github.com/ivvanare/ecosystem_complete/api/internal/session"
@@ -99,6 +100,15 @@ func run() error {
 
 	// Starting a registration needs the broker to deliver the code. Without it the route
 	// stays unregistered rather than accepting a request it cannot fulfil.
+	var passwordService httpapi.PasswordService
+	if cfg.RabbitMQURL != "" {
+		passwordPublisher := queue.NewAMQP(cfg.RabbitMQURL, cfg.MailQueue)
+		defer func() { _ = passwordPublisher.Close() }()
+		passwordService = password.New(password.NewPostgresStore(pool), passwordPublisher, auditor, logger)
+	} else {
+		logger.Warn("RABBITMQ_URL is empty: password recovery is disabled because codes cannot be delivered")
+	}
+
 	var signupRequester httpapi.SignupRequester
 	if cfg.RabbitMQURL == "" {
 		logger.Warn("RABBITMQ_URL is empty: signup is disabled because codes cannot be delivered")
@@ -123,6 +133,7 @@ func run() error {
 			Authorizer:         identityService,
 			Identity:           identityService,
 			Admin:              identityService,
+			Password:           passwordService,
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}

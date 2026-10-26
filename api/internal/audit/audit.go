@@ -26,6 +26,12 @@ const (
 	EventLoginFailed        = "auth.login.failed"
 	EventLoginLocked        = "auth.login.locked"
 	EventRolesChanged       = "rbac.roles.changed"
+
+	EventPasswordResetRequested = "auth.password.reset_requested"
+	EventPasswordReset          = "auth.password.reset"
+	EventPasswordResetFailed    = "auth.password.reset_failed"
+	EventPasswordChanged        = "auth.password.changed"
+	EventPasswordChangeFailed   = "auth.password.change_failed"
 )
 
 // Event is one row of the log.
