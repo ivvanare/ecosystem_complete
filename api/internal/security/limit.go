@@ -31,10 +31,15 @@ type Quota struct {
 }
 
 // Defaults shared by the flows that mail a code.
+//
+// One request per day is deliberate and strict: with six-digit codes the only thing that
+// bounds the guess space is how often a fresh counter can be obtained. The cost is real —
+// a code lives 10 minutes, so a delayed mail or a typo in the target address costs a full
+// day — which is why the limit is a field: a flow that needs more room sets its own.
 const (
 	DefaultCooldown = 60 * time.Second
 	DefaultWindow   = 24 * time.Hour
-	DefaultLimit    = 5
+	DefaultLimit    = 1
 )
 
 // Check reports whether a new request is allowed, given the last request time and how many

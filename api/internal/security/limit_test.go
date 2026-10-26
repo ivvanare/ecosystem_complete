@@ -31,8 +31,25 @@ func TestQuotaEnforcesTheCooldown(t *testing.T) {
 func TestQuotaAllowsAfterTheCooldown(t *testing.T) {
 	last := quotaNow.Add(-2 * time.Minute)
 
-	if err := (Quota{Cooldown: time.Minute}).Check(quotaNow, &last, 1); err != nil {
+	// Nothing else in the window, so only the cooldown is under test.
+	if err := (Quota{Cooldown: time.Minute}).Check(quotaNow, &last, 0); err != nil {
 		t.Fatalf("request after the cooldown rejected: %v", err)
+	}
+}
+
+func TestQuotaAllowsOneRequestPerWindowByDefault(t *testing.T) {
+	old := quotaNow.Add(-2 * time.Hour)
+
+	// One already happened: the default is one per window, so the second is refused even
+	// though the cooldown has long passed.
+	err := (Quota{}).Check(quotaNow, &old, 1)
+
+	var tooMany *TooManyRequestsError
+	if !errors.As(err, &tooMany) {
+		t.Fatalf("error = %v, want *TooManyRequestsError", err)
+	}
+	if tooMany.RetryAfter != DefaultWindow {
+		t.Errorf("RetryAfter = %v, want the window", tooMany.RetryAfter)
 	}
 }
 

@@ -196,3 +196,11 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
   recovery stays silent with `202` because a 429 would reveal that the account exists.
   Covered by ten Go tests (including throttling) and the flow tests; k6 coverage for this
   endpoint is still pending.
+- L18 — Quota tightened to **one code request per 24 hours** per user (user decision),
+  down from five. The cooldown stays as a second gate. `security.Quota` remains a field on
+  both services, so a flow can set its own limit without loosening the default.
+  Consequence recorded, not hidden: with a 10-minute code lifetime, a delayed mail, an
+  expired code or a typo in the new address locks that flow for a full day. If that turns
+  into a support burden, the options are to raise the limit for password recovery only (it
+  is the flow users genuinely need) or to lengthen the code lifetime — not to relax the
+  default.

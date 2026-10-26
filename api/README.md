@@ -210,11 +210,16 @@ be consumed — that is what makes a stale code unable to move the account later
 
 ### Quotas on code requests
 
-Both flows that mail a code enforce a per-user quota: a **60-second cooldown** between
-requests and **5 requests per 24 hours**. A per-token attempt counter is not enough on its
-own — if the code can be reissued at will, every reissue resets the counter and a 6-digit code
-becomes brute-forceable again. The quota is also what stops the endpoint from being used to
-flood somebody else's inbox.
+Both flows that mail a code enforce a per-user quota: **one request per 24 hours**, with a
+60-second cooldown as a second gate. A per-token attempt counter is not enough on its own — if
+the code can be reissued at will, every reissue resets the counter and a 6-digit code becomes
+brute-forceable again. The quota is also what stops the endpoint from being used to flood
+somebody else's inbox.
+
+The cost of `DefaultLimit = 1` is deliberate and worth knowing: a code lives 10 minutes, so a
+delayed mail, an expired code or a typo in the new address costs a full day. `security.Quota`
+is a struct on both services, so a flow that needs more room sets its own limit instead of
+loosening this one.
 
 The two endpoints report exhaustion differently, on purpose:
 
