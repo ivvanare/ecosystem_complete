@@ -135,7 +135,7 @@
     <div class="field">
       <label for="category">Category</label>
       <select id="category" [formField]="profile.category">
-        @for (option of categories; track option.value) {
+        @for (option of categoryOptions(); track option.value) {
           <option [value]="option.value">{{ option.label }}</option>
         }
       </select>

@@ -4,10 +4,11 @@ import {
   CrudController,
   defineCrudConfig,
   formatValue,
+  OptionResolver,
   type ResolvedCrudConfig,
   type ResolvedField,
 } from 'crud-maker';
-import { FAQS_CONFIG, FAQS_SEED } from './faqs.config';
+import { FAQ_CATEGORIES_CONFIG, FAQ_CATEGORY_SEED, FAQS_CONFIG, FAQS_SEED } from './faqs.config';
 import { MemoryTransport } from './memory-transport';
 
 interface FaqForm {
@@ -26,17 +27,12 @@ const EMPTY_FORM: FaqForm = {
   published: false,
 };
 
-const CATEGORIES = [
-  { label: 'General', value: 'general' },
-  { label: 'Reactivity', value: 'reactivity' },
-  { label: 'Forms', value: 'forms' },
-  { label: 'HTTP', value: 'http' },
-];
-
 /**
  * Demo vertical proving the crud-maker base logic end-to-end without a
  * backend or any UI-library dependency: JSON config → validated schema →
- * signal state → in-memory transport → plain HTML screen.
+ * signal state → in-memory transport → plain HTML screen. The category
+ * select is filled from a referenced endpoint (`faq_categories`) through
+ * the OptionResolver — the JSON only names the resource.
  */
 @Component({
   selector: 'app-faqs-demo',
@@ -46,12 +42,19 @@ const CATEGORIES = [
 })
 export class FaqsDemo {
   protected readonly config: ResolvedCrudConfig = defineCrudConfig(FAQS_CONFIG);
-  protected readonly crud = new CrudController(
-    this.config,
-    new MemoryTransport(FAQS_SEED, { searchFields: ['question'] }),
+  protected readonly categoriesConfig: ResolvedCrudConfig = defineCrudConfig(FAQ_CATEGORIES_CONFIG);
+  protected readonly transport = new MemoryTransport(
+    { [this.config.endpoint]: FAQS_SEED, [this.categoriesConfig.endpoint]: FAQ_CATEGORY_SEED },
+    { searchFields: ['question'] },
   );
+  protected readonly crud = new CrudController(this.config, this.transport);
   protected readonly listFields: readonly ResolvedField[] = this.config.listFields;
-  protected readonly categories = CATEGORIES;
+
+  /** Select options fetched from the resource referenced in the JSON config. */
+  protected readonly options = new OptionResolver(this.transport, {
+    faqCategories: this.categoriesConfig,
+  });
+  protected readonly categoryOptions = this.options.forField(this.config.fieldMap.get('category')!);
 
   protected readonly model = signal<FaqForm>({ ...EMPTY_FORM });
   protected readonly profile = form(this.model, (schema) => {

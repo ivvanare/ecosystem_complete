@@ -33,12 +33,7 @@ export const FAQS_CONFIG = {
       label: 'Category',
       type: 'select',
       filters: ['in'],
-      options: [
-        { label: 'General', value: 'general' },
-        { label: 'Reactivity', value: 'reactivity' },
-        { label: 'Forms', value: 'forms' },
-        { label: 'HTTP', value: 'http' },
-      ],
+      options: { resource: 'faqCategories', labelField: 'name', valueField: 'slug' },
       required: true,
       cell: {
         render: 'tag',
@@ -137,4 +132,28 @@ export const FAQS_SEED = [
     published: true,
     createdAt: '2026-10-18T10:05:00',
   },
+];
+
+/**
+ * The entity a select points at: FAQS_CONFIG's `category` field references
+ * it by resource key (`faqCategories`); the OptionResolver fetches it through
+ * the same transport. The seed is intentionally unsorted — the referenced
+ * config's `defaultSort` orders the options.
+ */
+export const FAQ_CATEGORIES_CONFIG = {
+  key: 'faqCategories',
+  endpoint: 'faq_categories',
+  primaryKey: 'id',
+  fields: [
+    { name: 'id', in: { form: false, detail: false } },
+    { name: 'name', label: 'Name', required: true, defaultSort: 'asc' },
+    { name: 'slug', label: 'Slug', required: true },
+  ],
+} as const;
+
+export const FAQ_CATEGORY_SEED = [
+  { id: 1, name: 'HTTP', slug: 'http' },
+  { id: 2, name: 'Reactivity', slug: 'reactivity' },
+  { id: 3, name: 'Forms', slug: 'forms' },
+  { id: 4, name: 'General', slug: 'general' },
 ];

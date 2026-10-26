@@ -138,7 +138,37 @@ try {
 
 Issue codes you will see: `notAnObject`, `required`, `fieldsEmpty`, `duplicateField`, `invalidFieldType`, `invalidType`, `invalidFilterKind`, `invalidWidth`, `invalidPageSize`, `invalidSortDirection`, `sortOnUnsortableField`, `multipleDefaultSort`, `unknownField`, `optionsRequired`, `invalidOptions`, `invalidBehaviorRef`, `unknownFormatter`, `unknownValidator`, `invalidValidatorParams`, `invalidCellRender`, `invalidCellVariantMap`.
 
-> Option `{resource: …}` is metadata only: the library does **not** fetch it. Resolve it in the consumer (typically with a second `CrudController` over that resource).
+> Option `{resource: …}` is resolved by the `OptionResolver` (see below): the JSON names the resource, the resolver fetches it through the transport you already gave the engine.
+
+## Select options from an endpoint — `OptionResolver`
+
+A select can declare its options as a reference instead of a static list:
+
+```jsonc
+{ "name": "category", "type": "select",
+  "options": { "resource": "faqCategories", "labelField": "name", "valueField": "slug" } }
+```
+
+```ts
+import { OptionResolver } from 'crud-maker';
+
+// Register the referenced entities by resource key, sharing the transport.
+const options = new OptionResolver(transport, { faqCategories: categoriesConfig });
+
+// In the component — a Signal<FieldOption[]> that fills itself in.
+const categoryOptions = options.forField(config.fieldMap.get('category')!);
+```
+
+Contract:
+
+| Behavior | Detail |
+|----------|--------|
+| Fetch | `transport.list()` on the referenced config's endpoint, `page=1`, `pageSize=1000` (configurable), ordered by that config's `defaultSort`. |
+| Mapping | `{ label: String(row[labelField]), value: row[valueField ?? primaryKey] }`. |
+| Caching | One fetch per resource key, shared across every field/controller using this resolver; static options and non-select fields never touch the transport. |
+| Errors | Never silent: `options.error('faqCategories')()` exposes the last failure (unknown resource, transport error) while the list stays `[]`. |
+| Updates | `options.refresh('faqCategories')` after editing the referenced entity; in-flight stale responses are discarded (latest-wins). |
+
 
 ## Named behaviors — the registry
 
