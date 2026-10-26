@@ -20,6 +20,11 @@ import {
   waitForMail,
 } from './lib/config.js';
 
+// The journey requests 400, 401, 404, 422 and 423 on purpose. Declaring them expected keeps
+// http_req_failed meaningful instead of reporting half the run as failures; the per-case
+// checks still assert the exact status each step must return.
+http.setResponseCallback(http.expectedStatuses({ min: 200, max: 299 }, 400, 401, 404, 422, 423));
+
 export const options = {
   vus: 1,
   iterations: 1,
@@ -117,10 +122,11 @@ export default function () {
       'repeat signup has no body': (r) => !r.body,
     });
 
-    const message = waitForMail(http, email);
+    // Wait for the specific mail: this address already received the code, so a plain
+    // "newest message" lookup would return that older one and fail without waiting.
+    const message = waitForMail(http, email, 12, (m) => /cuenta/i.test(m.Subject || ''));
     check(message, {
-      'repeat signup mails the owner instead of a code': (m) =>
-        m !== null && /cuenta/i.test(m.Subject || ''),
+      'repeat signup mails the owner instead of a code': (m) => m !== null,
     });
   });
 

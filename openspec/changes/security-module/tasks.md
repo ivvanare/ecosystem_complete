@@ -100,3 +100,11 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
   (Vite), but the panel is an Angular SPA whose `ng serve` listens on 4200. With the wrong
   origin every browser call would fail the preflight, and nothing in the API logs would say
   why.
+- L10 — First full run of `auth-flow.js` against the rebuilt stack: 52/53. The single failure
+  was the suite's own defect: `waitForMail` returned the first message for the address, and
+  that address already held the signup code, so the "account already exists" check read the
+  stale mail and never waited. `waitForMail` now takes a predicate. That also means the
+  anti-enumeration mail was previously unverified; after the fix it is proven to arrive.
+  `http_req_failed` reported 51% because the journey requests 400/401/404/422/423 on
+  purpose; those are now declared expected, leaving the metric meaningful.
+  Final: 53/53 checks, 0% failed requests, p(95) 27ms.

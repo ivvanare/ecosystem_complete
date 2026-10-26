@@ -80,13 +80,23 @@ export function mailText(http, id) {
   return res.json('Text') || '';
 }
 
-// waitForMail polls until a message for the address shows up, because delivery goes through
-// RabbitMQ and the worker: the API answers 202 before the mail exists.
-export function waitForMail(http, email, attempts = 12) {
+// waitForMail polls until a message for the address satisfies the predicate, because
+// delivery goes through RabbitMQ and the worker: the API answers 202 before the mail exists.
+//
+// The predicate matters: an address that already received a code will have an older message
+// sitting in Mailpit, and returning "the newest match for this address" would hand back that
+// stale one without waiting. The first version of this helper did exactly that and reported
+// a false failure for the "account already exists" mail.
+export function waitForMail(http, email, attempts = 12, matches = () => true) {
   for (let i = 0; i < attempts; i++) {
-    const message = latestMailTo(http, email);
-    if (message) {
-      return message;
+    const res = http.get(`${MAILPIT_URL}/api/v1/messages?limit=50`);
+    if (res.status === 200) {
+      for (const message of res.json('messages') || []) {
+        const recipients = (message.To || []).map((t) => t.Address);
+        if (recipients.includes(email) && matches(message)) {
+          return message;
+        }
+      }
     }
     sleep(0.5);
   }
