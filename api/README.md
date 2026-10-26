@@ -49,6 +49,9 @@ Both non-`ok` states return `503`.
 | `HTTP_ADDR` | no | `:8080` | listen address |
 | `RABBITMQ_URL` | no | empty | when empty, the rabbitmq probe is omitted |
 | `CORS_ALLOWED_ORIGINS` | no | empty | comma-separated browser origins; empty disables CORS |
+| `JWT_SECRET` | yes | — | HS256 signing key, at least 32 characters |
+| `ACCESS_TOKEN_TTL` | no | `15m` | access token lifetime |
+| `REFRESH_TOKEN_TTL` | no | `720h` | refresh token lifetime |
 | `MAIL_QUEUE` | no | `melia.mail` | durable queue the API publishes mail to |
 | `SMTP_ADDR` | no | `mailpit:1025` | SMTP target used by the worker |
 | `MAIL_FROM` | no | `no-reply@melia.test` | envelope sender |
@@ -104,6 +107,12 @@ and shows it at <http://localhost:8025>. Nothing leaves the machine.
 The code is never stored in clear: the row keeps `tx_code_hash` (SHA-256) and the mail
 carries the only copy of the digits. If the queue is unreachable the request fails with
 `500` rather than pretending a code was sent.
+
+`POST /v1/auth/signup/verify` consumes the code under a row lock, promotes the pending
+registration into `seg.tb_user` with `dt_email_verified_at` set, and returns the first token
+pair. Five wrong attempts kill the registration. The access JWT carries only
+`sub`/`iat`/`exp`/`jti`: roles and permissions are resolved per request, so revoking one
+takes effect immediately instead of waiting for a token to expire.
 
 ## Tests
 

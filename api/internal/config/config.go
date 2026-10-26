@@ -19,6 +19,10 @@ const (
 	DefaultMailQueue       = "melia.mail"
 	DefaultSMTPAddr        = "mailpit:1025"
 	DefaultMailFrom        = "no-reply@melia.test"
+	DefaultAccessTokenTTL  = 15 * time.Minute
+	DefaultRefreshTokenTTL = 720 * time.Hour
+	// MinJWTSecretLength keeps HS256 out of reach of a guessable key.
+	MinJWTSecretLength = 32
 )
 
 // Config is the fully resolved runtime configuration.
@@ -32,6 +36,9 @@ type Config struct {
 	MailQueue       string
 	SMTPAddr        string
 	MailFrom        string
+	JWTSecret       string
+	AccessTokenTTL  time.Duration
+	RefreshTokenTTL time.Duration
 	AutoMigrate     bool
 	LogLevel        slog.Level
 	ShutdownTimeout time.Duration
@@ -50,6 +57,9 @@ func Load(getenv func(string) string) (Config, error) {
 		MailQueue:       valueOr(getenv, "MAIL_QUEUE", DefaultMailQueue),
 		SMTPAddr:        valueOr(getenv, "SMTP_ADDR", DefaultSMTPAddr),
 		MailFrom:        valueOr(getenv, "MAIL_FROM", DefaultMailFrom),
+		JWTSecret:       lookup(getenv, "JWT_SECRET"),
+		AccessTokenTTL:  DefaultAccessTokenTTL,
+		RefreshTokenTTL: DefaultRefreshTokenTTL,
 		AutoMigrate:     true,
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: DefaultShutdownTimeout,
@@ -60,6 +70,28 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if cfg.RedisAddr == "" {
 		return Config{}, fmt.Errorf("missing required environment variable: REDIS_ADDR")
+	}
+
+	if cfg.JWTSecret == "" {
+		return Config{}, fmt.Errorf("missing required environment variable: JWT_SECRET")
+	}
+	if len(cfg.JWTSecret) < MinJWTSecretLength {
+		return Config{}, fmt.Errorf("invalid JWT_SECRET: must be at least %d characters", MinJWTSecretLength)
+	}
+
+	for key, target := range map[string]*time.Duration{
+		"ACCESS_TOKEN_TTL":  &cfg.AccessTokenTTL,
+		"REFRESH_TOKEN_TTL": &cfg.RefreshTokenTTL,
+	} {
+		raw := lookup(getenv, key)
+		if raw == "" {
+			continue
+		}
+		parsed, err := time.ParseDuration(raw)
+		if err != nil || parsed <= 0 {
+			return Config{}, fmt.Errorf("invalid %s %q: must be a positive duration such as 15m", key, raw)
+		}
+		*target = parsed
 	}
 
 	if raw := lookup(getenv, "DB_AUTO_MIGRATE"); raw != "" {

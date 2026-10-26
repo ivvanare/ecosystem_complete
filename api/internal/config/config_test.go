@@ -16,6 +16,7 @@ func validEnv() map[string]string {
 	return map[string]string{
 		"DATABASE_URL": "postgres://admin:pass@database:5432/melia?sslmode=disable",
 		"REDIS_ADDR":   "redis:6379",
+		"JWT_SECRET":   "un-secreto-de-pruebas-suficientemente-largo",
 	}
 }
 
@@ -146,5 +147,54 @@ func TestLoadHasNoCORSOriginsByDefault(t *testing.T) {
 	}
 	if len(cfg.CORSOrigins) != 0 {
 		t.Errorf("CORSOrigins = %v, want none: a server must not invent an allowed origin", cfg.CORSOrigins)
+	}
+}
+
+func TestLoadRequiresAStrongJWTSecret(t *testing.T) {
+	values := validEnv()
+	delete(values, "JWT_SECRET")
+
+	if _, err := Load(env(values)); err == nil || !strings.Contains(err.Error(), "JWT_SECRET") {
+		t.Fatalf("error = %v, want it to name JWT_SECRET", err)
+	}
+
+	values["JWT_SECRET"] = "corto"
+	if _, err := Load(env(values)); err == nil || !strings.Contains(err.Error(), "JWT_SECRET") {
+		t.Fatalf("error = %v, want a length complaint naming JWT_SECRET", err)
+	}
+}
+
+func TestLoadParsesTokenTTLs(t *testing.T) {
+	values := validEnv()
+	values["ACCESS_TOKEN_TTL"] = "5m"
+	values["REFRESH_TOKEN_TTL"] = "48h"
+
+	cfg, err := Load(env(values))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.AccessTokenTTL != 5*time.Minute {
+		t.Errorf("AccessTokenTTL = %v, want 5m", cfg.AccessTokenTTL)
+	}
+	if cfg.RefreshTokenTTL != 48*time.Hour {
+		t.Errorf("RefreshTokenTTL = %v, want 48h", cfg.RefreshTokenTTL)
+	}
+
+	values["ACCESS_TOKEN_TTL"] = "cinco minutos"
+	if _, err := Load(env(values)); err == nil || !strings.Contains(err.Error(), "ACCESS_TOKEN_TTL") {
+		t.Fatalf("error = %v, want it to name ACCESS_TOKEN_TTL", err)
+	}
+}
+
+func TestLoadDefaultsTokenTTLs(t *testing.T) {
+	cfg, err := Load(env(validEnv()))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.AccessTokenTTL != 15*time.Minute {
+		t.Errorf("AccessTokenTTL = %v, want 15m", cfg.AccessTokenTTL)
+	}
+	if cfg.RefreshTokenTTL != 720*time.Hour {
+		t.Errorf("RefreshTokenTTL = %v, want 720h", cfg.RefreshTokenTTL)
 	}
 }

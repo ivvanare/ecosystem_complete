@@ -22,6 +22,8 @@ services:
       MAIL_QUEUE: melia.mail
       SMTP_ADDR: mailpit:1025
       MAIL_FROM: no-reply@melia.test
+      # Secreto de desarrollo. En producción viene del gestor de secretos.
+      JWT_SECRET: dev-only-secreto-de-al-menos-32-caracteres
       LOG_LEVEL: info
     depends_on:
       database:

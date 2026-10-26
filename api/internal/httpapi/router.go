@@ -23,6 +23,7 @@ type Options struct {
 	Logger             *slog.Logger
 	CORSAllowedOrigins []string
 	Signup             SignupRequester
+	SignupVerifier     SignupVerifier
 }
 
 const defaultProbeTimeout = 2 * time.Second
@@ -45,9 +46,18 @@ func New(opts Options) http.Handler {
 	mux.HandleFunc("GET /health/live", h.live)
 	mux.HandleFunc("GET /health/ready", h.ready)
 
+	auth := &authHandlers{
+		signup:   opts.Signup,
+		verifier: opts.SignupVerifier,
+		logger:   logger,
+	}
 	if opts.Signup != nil {
-		auth := &authHandlers{signup: opts.Signup, logger: logger}
 		mux.HandleFunc("POST /v1/auth/signup", auth.startSignup)
+	}
+	// Independent of Signup: with the broker down a new registration cannot start, but a
+	// user who already holds a code must still be able to finish.
+	if opts.SignupVerifier != nil {
+		mux.HandleFunc("POST /v1/auth/signup/verify", auth.verifySignup)
 	}
 
 	mux.HandleFunc("/", notFound)

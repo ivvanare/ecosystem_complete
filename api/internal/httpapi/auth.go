@@ -3,10 +3,16 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/mail"
+	"regexp"
 	"strings"
+
+	"github.com/ivvanare/ecosystem_complete/api/internal/session"
+	"github.com/ivvanare/ecosystem_complete/api/internal/signup"
 )
 
 // SignupRequester starts a registration. The handler owns transport-level validation; the
@@ -19,9 +25,15 @@ type SignupRequester interface {
 // rules: length beats symbol soup, and the policy is easy to explain to a user.
 const MinPasswordLength = 12
 
+// SignupVerifier finishes a registration and opens the first session.
+type SignupVerifier interface {
+	Verify(ctx context.Context, email, code string, meta session.Meta) (session.Tokens, error)
+}
+
 type authHandlers struct {
-	signup SignupRequester
-	logger *slog.Logger
+	signup   SignupRequester
+	verifier SignupVerifier
+	logger   *slog.Logger
 }
 
 type signupRequest struct {
@@ -93,4 +105,80 @@ func writeValidationError(w http.ResponseWriter, fields []fieldError) {
 			Details: map[string]any{"fields": fields},
 		},
 	})
+}
+
+var codePattern = regexp.MustCompile(`^[0-9]{6}$`)
+
+type verifyRequest struct {
+	Email string `json:"email"`
+	Code  string `json:"code"`
+}
+
+type tokenPairResponse struct {
+	AccessToken      string `json:"access_token"`
+	TokenType        string `json:"token_type"`
+	ExpiresIn        int    `json:"expires_in"`
+	RefreshToken     string `json:"refresh_token"`
+	RefreshExpiresIn int    `json:"refresh_expires_in"`
+}
+
+// verifySignup consumes the emailed code. Every failure that depends on the code itself
+// answers the same 400: distinguishing "no such registration" from "wrong code" would
+// confirm which addresses are mid-registration.
+func (h *authHandlers) verifySignup(w http.ResponseWriter, r *http.Request) {
+	var body verifyRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+		return
+	}
+
+	var fields []fieldError
+	if _, err := mail.ParseAddress(strings.TrimSpace(body.Email)); err != nil {
+		fields = append(fields, fieldError{Field: "email", Code: "invalid"})
+	}
+	if !codePattern.MatchString(body.Code) {
+		fields = append(fields, fieldError{Field: "code", Code: "invalid"})
+	}
+	if len(fields) > 0 {
+		writeValidationError(w, fields)
+		return
+	}
+
+	// The contract's verify request has no device label; the user agent is what we know.
+	meta := session.Meta{
+		UserAgent: r.UserAgent(),
+		IP:        clientIP(r),
+	}
+
+	tokens, err := h.verifier.Verify(r.Context(), body.Email, body.Code, meta)
+	switch {
+	case errors.Is(err, signup.ErrInvalidCode):
+		writeError(w, http.StatusBadRequest, "invalid_code", "The code is incorrect or has expired.")
+		return
+	case errors.Is(err, signup.ErrTooManyAttempts):
+		writeError(w, http.StatusTooManyRequests, "too_many_attempts", "Too many attempts. Request a new code.")
+		return
+	case err != nil:
+		h.logger.Error("signup verification failed", slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, "internal_error", "The request could not be completed.")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, tokenPairResponse{
+		AccessToken:      tokens.AccessToken,
+		TokenType:        "Bearer",
+		ExpiresIn:        tokens.ExpiresIn,
+		RefreshToken:     tokens.RefreshToken,
+		RefreshExpiresIn: tokens.RefreshExpiresIn,
+	})
+}
+
+// clientIP is the peer address. There is no proxy in front of the API, so RemoteAddr is
+// the client; when an edge appears it must be trusted explicitly, never blindly.
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }

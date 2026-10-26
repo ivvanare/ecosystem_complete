@@ -20,6 +20,7 @@ import (
 	"github.com/ivvanare/ecosystem_complete/api/internal/httpapi"
 	"github.com/ivvanare/ecosystem_complete/api/internal/probe"
 	"github.com/ivvanare/ecosystem_complete/api/internal/queue"
+	"github.com/ivvanare/ecosystem_complete/api/internal/session"
 	"github.com/ivvanare/ecosystem_complete/api/internal/signup"
 )
 
@@ -66,15 +67,26 @@ func run() error {
 		probes = append(probes, probe.RabbitMQ{URL: cfg.RabbitMQURL})
 	}
 
-	// Signup needs the broker to deliver codes. Without it the route stays unregistered
-	// rather than accepting a request it cannot fulfil.
-	var signupService httpapi.SignupRequester
+	issuer := session.New(session.Config{
+		Secret:     []byte(cfg.JWTSecret),
+		AccessTTL:  cfg.AccessTokenTTL,
+		RefreshTTL: cfg.RefreshTokenTTL,
+		Issuer:     "melia-api",
+	}, session.NewPostgresRefreshStore(pool))
+
+	// Verification is available even when the broker is down: a user who already holds a
+	// code must still be able to finish registering.
+	signupVerifier := signup.NewVerifier(signup.NewPostgresVerifier(pool), issuer)
+
+	// Starting a registration needs the broker to deliver the code. Without it the route
+	// stays unregistered rather than accepting a request it cannot fulfil.
+	var signupRequester httpapi.SignupRequester
 	if cfg.RabbitMQURL == "" {
 		logger.Warn("RABBITMQ_URL is empty: signup is disabled because codes cannot be delivered")
 	} else {
 		publisher := queue.NewAMQP(cfg.RabbitMQURL, cfg.MailQueue)
 		defer func() { _ = publisher.Close() }()
-		signupService = signup.New(signup.NewPostgresStore(pool), publisher, logger)
+		signupRequester = signup.New(signup.NewPostgresStore(pool), publisher, logger)
 	}
 
 	server := &http.Server{
@@ -83,7 +95,8 @@ func run() error {
 			Probes:             probes,
 			Logger:             logger,
 			CORSAllowedOrigins: cfg.CORSOrigins,
-			Signup:             signupService,
+			Signup:             signupRequester,
+			SignupVerifier:     signupVerifier,
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}

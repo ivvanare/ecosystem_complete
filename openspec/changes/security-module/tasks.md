@@ -8,8 +8,9 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
 |----|-------|----------|-------|--------|
 | T1 | CORS middleware: credentials on, exact origin echo, auth-free preflight, `Vary: Origin` | C13 | inline | pending |
 | T2 | Seed catalogue: 10 permissions, 3 roles, role→permission links, idempotent on the model's partial uniques | C9 | inline | pending |
-| T3 | Signup + verify (`tb_signup_request`), first RabbitMQ publisher + mail worker | C5 | — | next |
+| T3 | Signup + verify (`tb_signup_request`), first RabbitMQ publisher + mail worker | C5 | inline | 35948ad + this |
 | T4 | Login with lockout + access JWT | C6, C3 | — | next |
+| T4a | Session core: HS256 access token, rotating refresh family | C3 | inline | this |
 | T5 | Refresh rotation with family revocation | C3 | — | next |
 | T6 | Password reset/change revoking all families | C4 | — | next |
 | T7 | RBAC middleware + `/v1/me` | C9 | — | next |
@@ -59,3 +60,19 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
   The same run exposed a design flaw in the suite: `sleep(1)` per iteration with 5 VUs
   measures ~4 req/s, which is a smoke test, not load. `SLEEP` is now an env var and the
   README says plainly that `SLEEP=0` is the throughput measurement.
+- L7 — Session core and `POST /v1/auth/signup/verify`.
+  Decision recorded: the access JWT carries `sub`/`iat`/`exp`/`jti` and nothing else.
+  Embedding roles would keep a revoked role alive for up to 15 minutes, and the model
+  requires capability to come from live RBAC; `/v1/me` resolves permissions per request.
+  Verification holds the pending row with `FOR UPDATE`, so two concurrent attempts cannot
+  consume one code. A wrong code commits the incremented counter (otherwise the attempt is
+  free) and answers the same `400 invalid_code` as "no pending registration" and "expired":
+  distinguishing them would confirm which addresses are mid-registration.
+  `JWT_SECRET` is now required at startup with a 32-character floor; `ACCESS_TOKEN_TTL` and
+  `REFRESH_TOKEN_TTL` default to 15m and 720h.
+  Two defects found while wiring: `Parse` validated against the wall clock instead of the
+  issuer's, which made expiry untestable; and the verify route was registered inside the
+  `Signup != nil` branch, so a broker outage would have removed verification too — the
+  opposite of the intent, since a user holding a code must still be able to finish.
+  Not done yet: the panel's httpOnly refresh cookie (C3/C14). It belongs with refresh and
+  logout, where CSRF applies; today the pair is returned in the body for every client.

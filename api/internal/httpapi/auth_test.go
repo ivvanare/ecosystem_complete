@@ -9,6 +9,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/ivvanare/ecosystem_complete/api/internal/session"
+	"github.com/ivvanare/ecosystem_complete/api/internal/signup"
 )
 
 type fakeSignup struct {
@@ -127,5 +130,95 @@ func TestSignupHidesServiceFailuresBehindAGenericError(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "broker") {
 		t.Errorf("response leaks the internal error: %s", rec.Body.String())
+	}
+}
+
+type fakeVerifier struct {
+	tokens session.Tokens
+	err    error
+	email  string
+	code   string
+	calls  int
+}
+
+func (f *fakeVerifier) Verify(_ context.Context, email, code string, _ session.Meta) (session.Tokens, error) {
+	f.calls++
+	f.email, f.code = email, code
+	return f.tokens, f.err
+}
+
+func postVerify(t *testing.T, handler http.Handler, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/signup/verify", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestVerifySignupReturnsTheTokenPair(t *testing.T) {
+	verifier := &fakeVerifier{tokens: session.Tokens{
+		AccessToken: "access", ExpiresIn: 900, RefreshToken: "refresh", RefreshExpiresIn: 2592000,
+	}}
+	// Signup is nil on purpose: verification must work while the broker is down.
+	handler := New(Options{SignupVerifier: verifier, Logger: slog.New(slog.DiscardHandler)})
+
+	rec := postVerify(t, handler, `{"email":"ana@melia.test","code":"042317"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+
+	var body tokenPairResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body is not JSON: %v", err)
+	}
+	if body.AccessToken != "access" || body.RefreshToken != "refresh" || body.TokenType != "Bearer" {
+		t.Errorf("unexpected pair: %+v", body)
+	}
+	if verifier.email != "ana@melia.test" || verifier.code != "042317" {
+		t.Errorf("verifier received %q/%q", verifier.email, verifier.code)
+	}
+}
+
+func TestVerifySignupMapsContractErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		code int
+		body string
+	}{
+		{"wrong or expired code", signup.ErrInvalidCode, http.StatusBadRequest, "invalid_code"},
+		{"counter spent", signup.ErrTooManyAttempts, http.StatusTooManyRequests, "too_many_attempts"},
+		{"internal", errors.New("db down"), http.StatusInternalServerError, "internal_error"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := New(Options{
+				SignupVerifier: &fakeVerifier{err: tc.err},
+				Logger:         slog.New(slog.DiscardHandler),
+			})
+			rec := postVerify(t, handler, `{"email":"ana@melia.test","code":"042317"}`)
+
+			if rec.Code != tc.code {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.code)
+			}
+			if !strings.Contains(rec.Body.String(), tc.body) {
+				t.Errorf("body %s does not carry %q", rec.Body.String(), tc.body)
+			}
+		})
+	}
+}
+
+func TestVerifySignupRejectsAMalformedCodeBeforeCallingTheService(t *testing.T) {
+	verifier := &fakeVerifier{}
+	handler := New(Options{SignupVerifier: verifier, Logger: slog.New(slog.DiscardHandler)})
+
+	rec := postVerify(t, handler, `{"email":"ana@melia.test","code":"12ab"}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rec.Code)
+	}
+	if verifier.calls != 0 {
+		t.Error("the service was called with a malformed code")
 	}
 }
