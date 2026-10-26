@@ -28,6 +28,7 @@ Test runner: `npx ng test crud-maker` (vitest, inside gui/admin workspace)
 | T2 | S3, S4.5 | inline | **done** | bd7efb7 | RED observed (Cannot resolve './crud-list-state') → GREEN: 58/58 tests pass |
 | T3 | S1, S3, S4.3, S4.4 | inline | **done** | a7f0cae | RED observed (Cannot resolve ./params, ./crud-controller, ./http-transport) → GREEN: 72/72; `ng build crud-maker` packages; admin suite 2/2 |
 | T4 | S2 (ng-zorro pages/components + route gen) | inline | blocked-pending-approval | — | requires `ng add ng-zorro-antd` authorization |
+| T5 | consumer docs for the package | inline | **done** | see `docs(crud-maker)` commit | README rewritten + AGENTS.md pointers; `ng build crud-maker` still green |
 
 Writer trigger check: T2/T3 depend on T1 types (not independent units) → no parallel-writer reason; parent implements inline following this logbook. Output budget: lib tests via ng test; app suite at seam check.
 

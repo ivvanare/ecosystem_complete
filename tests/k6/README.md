@@ -9,8 +9,32 @@ what unit tests cannot see: a handler that passes `go test` can still melt under
 |---|---|---|
 | `smoke.js` | `/health/live`, `/health/ready` every 5th iteration, and the 404 envelope. 2 VUs, 10s. | No |
 | `signup.js` | `POST /v1/auth/signup` under a ramping load, plus validation checks. 5 VUs peak. | **Yes** — one `tb_signup_request` row and one queued email per iteration |
+| `auth-flow.js` | One full journey through every auth case, reading the 6-digit code from Mailpit like a human would. 1 iteration. | **Yes** — two accounts per run, one of them deliberately locked |
 
-`smoke.js` is safe against any environment, including production. `signup.js` is not.
+`smoke.js` is safe against any environment, including production. The other two are not.
+
+`auth-flow.js` is an integration suite, not a load test: one iteration walks the flow so a
+regression in any step fails loudly. It needs Mailpit reachable at `MAILPIT_URL`; that is
+what makes a real end-to-end run possible in a load-testing tool.
+
+### Cases covered by `auth-flow.js`
+
+| Group | Checks |
+|---|---|
+| health | liveness 200, readiness 200 |
+| signup validation | bad email, empty name, short password → 422 with the offending field |
+| signup start | 202, empty body, mail actually arrives |
+| verify: malformed code | `12ab` → 422 before any work |
+| verify: wrong code | `000000` → 400 `invalid_code`, counter kept |
+| verify: unknown address | same 400 as a wrong code, so it cannot enumerate |
+| verify: real code | 201, access + refresh tokens, `Bearer`, `expires_in` 900 |
+| repeat signup | 202 and the owner gets "you already have an account" instead of a code |
+| consumed code | the registration is gone, so the code is now just wrong |
+| login | 200 with a pair |
+| login failures | wrong password 401, unknown account 401, malformed body 422 |
+| lockout | 4×401 then 423 with `Retry-After`, and the correct password is refused while locked |
+| errors | unknown path → 404 `not_found` |
+| CORS | preflight 204 with the exact origin and credentials; a foreign origin gets no header |
 
 ## Running
 
@@ -41,7 +65,8 @@ docker run --rm -i -v "$PWD/tests/k6:/scripts" -e BASE_URL=http://host.docker.in
 | Variable | Default | Meaning |
 |---|---|---|
 | `BASE_URL` | `http://localhost:9000` | API under test |
-| `ORIGIN` | unset | when set, sends `Origin` so the CORS path is exercised as a browser would |
+| `MAILPIT_URL` | `http://localhost:8025` | where `auth-flow.js` reads codes from |
+| `ORIGIN` | `http://localhost:4200` | origin used for the CORS checks; must match `CORS_ALLOWED_ORIGINS` |
 | `SLEEP` | `1` | seconds between signup iterations. `0` measures throughput instead of smoke |
 
 ## Thresholds, and why they are loose
@@ -72,6 +97,6 @@ requests: the first run reported 45% failures with every check passing.
 
 ## What is not covered yet
 
-`login`, `refresh` and the authenticated routes have no load script because they do not
-exist. They arrive with the session core; `lib/config.js` already centralises what they
-will need.
+`refresh`, `logout`, `/v1/me`, password reset/change and the social login do not exist yet,
+so no script touches them. The journey grows with them: each new endpoint adds a group here
+before it gets its own load script.

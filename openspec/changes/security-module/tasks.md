@@ -88,3 +88,15 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
   logged without failing the request.
   Lockout knobs are configurable: `LOGIN_MAX_ATTEMPTS` (5) and `LOGIN_LOCK_DURATION` (15m).
   Still open: the panel's httpOnly cookie (C3/C14) belongs with refresh/logout.
+- L9 — `auth-flow.js`: the whole auth surface as one k6 journey, with the 6-digit code read
+  from Mailpit's API instead of hard-coded — the only way to exercise verify end to end from
+  a load-testing tool. 53 checks across health, signup validation, verify (malformed, wrong,
+  unknown, real), repeat signup, consumed code, login success/failure, lockout, the 404
+  envelope and CORS.
+  Validated against the running stack: 19 checks passed up to and including "code extracted
+  from mail"; everything from `verify` on returned 404 because the container predates those
+  commits. The script is correct to the edge of the deployed image.
+  Also corrected a real mismatch: `CORS_ALLOWED_ORIGINS` allowed `http://localhost:5173`
+  (Vite), but the panel is an Angular SPA whose `ng serve` listens on 4200. With the wrong
+  origin every browser call would fail the preflight, and nothing in the API logs would say
+  why.

@@ -1,6 +1,16 @@
+import { sleep } from 'k6';
+
 // Shared settings for the k6 suites. Every script reads BASE_URL so the same file works
 // against compose (http://localhost:9000), a staging host, or a container network name.
 export const BASE_URL = __ENV.BASE_URL || 'http://localhost:9000';
+
+// Mailpit is where development mail lands. The auth journey reads the 6-digit code from it,
+// which is what makes an end-to-end flow possible in a load-test tool.
+export const MAILPIT_URL = __ENV.MAILPIT_URL || 'http://localhost:8025';
+
+// The admin panel is an Angular SPA; `ng serve` defaults to 4200. This must match
+// CORS_ALLOWED_ORIGINS on the server or every browser call fails the preflight.
+export const ORIGIN_HEADER = __ENV.ORIGIN || 'http://localhost:4200';
 
 export const JSON_HEADERS = {
   'Content-Type': 'application/json',
@@ -32,3 +42,63 @@ export const SIGNUP_THRESHOLDS = {
   http_req_failed: ['rate<0.01'],
   checks: ['rate>0.99'],
 };
+
+// ---- helpers shared by the journey -----------------------------------------
+
+export function postJSON(http, path, body, extraHeaders) {
+  return http.post(`${BASE_URL}${path}`, JSON.stringify(body), {
+    headers: { ...JSON_HEADERS, ...(extraHeaders || {}) },
+  });
+}
+
+export function getJSON(http, path) {
+  return http.get(`${BASE_URL}${path}`, { headers: JSON_HEADERS });
+}
+
+// latestMailTo returns the newest Mailpit message addressed to the given address, or null.
+export function latestMailTo(http, email) {
+  const res = http.get(`${MAILPIT_URL}/api/v1/messages?limit=50`);
+  if (res.status !== 200) {
+    return null;
+  }
+  const messages = res.json('messages') || [];
+  for (const message of messages) {
+    const recipients = (message.To || []).map((t) => t.Address);
+    if (recipients.includes(email)) {
+      return message;
+    }
+  }
+  return null;
+}
+
+// mailText returns the plain-text body of a Mailpit message.
+export function mailText(http, id) {
+  const res = http.get(`${MAILPIT_URL}/api/v1/message/${id}`);
+  if (res.status !== 200) {
+    return '';
+  }
+  return res.json('Text') || '';
+}
+
+// waitForMail polls until a message for the address shows up, because delivery goes through
+// RabbitMQ and the worker: the API answers 202 before the mail exists.
+export function waitForMail(http, email, attempts = 12) {
+  for (let i = 0; i < attempts; i++) {
+    const message = latestMailTo(http, email);
+    if (message) {
+      return message;
+    }
+    sleep(0.5);
+  }
+  return null;
+}
+
+// waitForCode returns the 6-digit code mailed to the address, or null.
+export function waitForCode(http, email, attempts = 12) {
+  const message = waitForMail(http, email, attempts);
+  if (!message) {
+    return null;
+  }
+  const match = mailText(http, message.ID).match(/\b(\d{6})\b/);
+  return match ? match[1] : null;
+}

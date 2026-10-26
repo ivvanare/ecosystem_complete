@@ -22,6 +22,8 @@ melZone/
 │   ├── cmd/worker/    # queue consumer: delivers mail over SMTP
 │   ├── internal/      # config · httpapi · db · probe
 │   └── Dockerfile
+├── gui/admin/         # Angular 22 admin SPA (pnpm, vitest via `ng test`)
+│   └── projects/crud-maker/  # local library: JSON-config CRUD engine (README inside)
 ├── database/          # PostgreSQL init scripts + canonical DBML
 ├── tests/k6/          # Load tests (k6)
 ├── openspec/          # Change proposals, specs, task logs
@@ -117,3 +119,8 @@ add a silent fallback.
 - `database/init` runs only when the PostgreSQL volume is empty; reset with
   `docker compose down -v`
 - Session tables are intentionally absent: auth uses JWT plus refresh tokens
+- New CRUD entities in `gui/admin` are driven by a JSON-shaped config through the
+  local library `crud-maker` (import only from `crud-maker`; read
+  `gui/admin/projects/crud-maker/README.md` first). The workspace resolves it from
+  `dist/`, so run `ng build crud-maker` inside `gui/admin/` after touching the
+  library. A working vertical: `gui/admin/src/app/demo/` (FAQs over MemoryTransport).
