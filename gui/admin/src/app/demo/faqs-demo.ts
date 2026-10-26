@@ -79,6 +79,11 @@ export class FaqsDemo {
     return formatValue(field.formatter, row[field.name]);
   }
 
+  /** Interprets the declarative cell hint: raw value → presentation variant. */
+  protected cellVariant(field: ResolvedField, row: Record<string, unknown>): string {
+    return field.cell.variantMap[String(row[field.name])] ?? 'default';
+  }
+
   protected sortGlyph(field: string): string {
     const sort = this.crud.state.sort();
     if (!sort || sort.field !== field) return '';

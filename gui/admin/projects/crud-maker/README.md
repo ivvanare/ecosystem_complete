@@ -98,6 +98,24 @@ A complete working screen lives at `src/app/demo/` (FAQ vertical). It uses an in
 | `validators` | `[]` | Named validators, `'min'` or `{name, params}`. |
 | `options` | required for `select` | Static `[{label, value}]` or `{resource, labelField, valueField?}`. |
 | `width` / `readonly` | `'default'` / `false` | UI hints; serializable. |
+| `cell` | `{ render: 'text' }` | Cell-rendering hint for the UI layer (see below). Data, never functions. |
+
+**Cell hints — badges/tags without getters.** A `cell` block is declarative metadata the UI interprets; the library validates it and renders nothing itself:
+
+```jsonc
+{
+  "name": "published",
+  "type": "boolean",
+  "cell": { "render": "badge", "variantMap": { "true": "success", "false": "muted" } }
+}
+```
+
+| Key | Notes |
+|-----|-------|
+| `render` | `'text'` (default), `'badge'`, `'tag'`, `'dot'` — presentation vocabulary owned by the UI layer. |
+| `variantMap` | Raw cell value **stringified** (`String(value)`, so booleans use `"true"`/`"false"`) → variant name (`'success'`, `'danger'`, …). Unmatched values fall back to your `'default'` variant. |
+
+The demo table resolves variants with `field.cell.variantMap[String(row[name])]` and styles them via `[attr.data-variant]` CSS. A backend-driven UI can send this JSON verbatim — that is exactly why closures/getters are rejected: the config must survive serialization.
 
 **View defaults by type** (explicit `in` overrides):
 
@@ -118,7 +136,7 @@ try {
 }
 ```
 
-Issue codes you will see: `notAnObject`, `required`, `fieldsEmpty`, `duplicateField`, `invalidFieldType`, `invalidType`, `invalidFilterKind`, `invalidWidth`, `invalidPageSize`, `invalidSortDirection`, `sortOnUnsortableField`, `multipleDefaultSort`, `unknownField`, `optionsRequired`, `invalidOptions`, `invalidBehaviorRef`, `unknownFormatter`, `unknownValidator`, `invalidValidatorParams`.
+Issue codes you will see: `notAnObject`, `required`, `fieldsEmpty`, `duplicateField`, `invalidFieldType`, `invalidType`, `invalidFilterKind`, `invalidWidth`, `invalidPageSize`, `invalidSortDirection`, `sortOnUnsortableField`, `multipleDefaultSort`, `unknownField`, `optionsRequired`, `invalidOptions`, `invalidBehaviorRef`, `unknownFormatter`, `unknownValidator`, `invalidValidatorParams`, `invalidCellRender`, `invalidCellVariantMap`.
 
 > Option `{resource: …}` is metadata only: the library does **not** fetch it. Resolve it in the consumer (typically with a second `CrudController` over that resource).
 

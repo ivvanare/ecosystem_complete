@@ -65,6 +65,10 @@ export const FAQS_CONFIG = {
       type: 'boolean',
       formatter: 'boolean',
       filters: ['eq'],
+      cell: {
+        render: 'badge',
+        variantMap: { true: 'success', false: 'muted' },
+      },
     },
     {
       name: 'createdAt',

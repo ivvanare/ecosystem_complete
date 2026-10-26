@@ -51,7 +51,24 @@
       @for (row of crud.rows(); track row['id']) {
         <tr>
           @for (field of listFields; track field.name) {
-            <td>{{ display(field, row) }}</td>
+            <td>
+              @switch (field.cell.render) {
+                @case ('badge') {
+                  <span class="chip chip-badge" [attr.data-variant]="cellVariant(field, row)">
+                    {{ display(field, row) }}
+                  </span>
+                }
+                @case ('tag') {
+                  <span class="chip chip-tag" [attr.data-variant]="cellVariant(field, row)">
+                    {{ display(field, row) }}
+                  </span>
+                }
+                @case ('dot') {
+                  <span class="chip-dot" [attr.data-variant]="cellVariant(field, row)" [title]="display(field, row)"></span>
+                }
+                @default { {{ display(field, row) }} }
+              }
+            </td>
           }
           <td class="actions-col">
             <button type="button" [disabled]="!crud.can('update')" (click)="openEdit(row)">
