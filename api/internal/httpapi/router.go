@@ -26,6 +26,7 @@ type Options struct {
 	SignupVerifier     SignupVerifier
 	Login              LoginAuthenticator
 	Rotator            SessionRotator
+	CookieSecure       bool
 }
 
 const defaultProbeTimeout = 2 * time.Second
@@ -53,6 +54,7 @@ func New(opts Options) http.Handler {
 		verifier: opts.SignupVerifier,
 		login:    opts.Login,
 		rotator:  opts.Rotator,
+		cookies:  cookieSettings{allowedOrigins: opts.CORSAllowedOrigins, secure: opts.CookieSecure},
 		logger:   logger,
 	}
 	if opts.Signup != nil {

@@ -15,6 +15,7 @@ import {
   ORIGIN_HEADER,
   PASSWORD,
   postJSON,
+  refreshCookieName,
   uniqueEmail,
   waitForCode,
   waitForMail,
@@ -262,6 +263,58 @@ export default function () {
 
     const again = postJSON(http, '/v1/auth/logout', { refresh_token: 'inventado' });
     check(again, { 'logout of an unknown token is still 204': (r) => r.status === 204 });
+  });
+
+  group('browser session: cookie plus CSRF', () => {
+    // A browser client is recognised by an allowed Origin. It gets the refresh token as an
+    // httpOnly cookie and never in the body, and every cookie call must carry the
+    // double-submit token.
+    http.cookieJar().clear(BASE_URL);
+
+    const login = postJSON(
+      http,
+      '/v1/auth/login',
+      { email: email, password: PASSWORD },
+      { Origin: ORIGIN_HEADER },
+    );
+    check(login, {
+      'browser login is 200': (r) => r.status === 200,
+      'browser login hides the refresh token from the body': (r) => r.json('refresh_token') === undefined,
+      'browser login still returns an access token': (r) => !!r.json('access_token'),
+    });
+
+    const jar = http.cookieJar().cookiesForURL(BASE_URL);
+    check(jar, {
+      'refresh cookie is set': (j) => Array.isArray(j[refreshCookieName]) && j[refreshCookieName].length > 0,
+      'csrf cookie is set': (j) => Array.isArray(j[csrfCookieName]) && j[csrfCookieName].length > 0,
+    });
+
+    const csrf = (jar[csrfCookieName] || [])[0];
+
+    // No header: the cookie alone must not be enough.
+    const noCsrf = http.post(`${BASE_URL}/v1/auth/refresh`, '{}', {
+      headers: { 'Content-Type': 'application/json', Origin: ORIGIN_HEADER },
+    });
+    check(noCsrf, {
+      'cookie refresh without CSRF is 403': (r) => r.status === 403,
+      'it reports csrf_invalid': (r) => r.json('error.code') === 'csrf_invalid',
+    });
+
+    const withCsrf = http.post(`${BASE_URL}/v1/auth/refresh`, '{}', {
+      headers: { 'Content-Type': 'application/json', Origin: ORIGIN_HEADER, 'X-CSRF-Token': csrf },
+    });
+    check(withCsrf, {
+      'cookie refresh with CSRF is 200': (r) => r.status === 200,
+      'cookie refresh hides the rotated token too': (r) => r.json('refresh_token') === undefined,
+    });
+
+    const freshCsrf = (http.cookieJar().cookiesForURL(BASE_URL)[csrfCookieName] || [])[0];
+    const logout = http.post(`${BASE_URL}/v1/auth/logout`, '{}', {
+      headers: { 'Content-Type': 'application/json', Origin: ORIGIN_HEADER, 'X-CSRF-Token': freshCsrf },
+    });
+    check(logout, { 'browser logout is 204': (r) => r.status === 204 });
+
+    http.cookieJar().clear(BASE_URL);
   });
 
   group('errors: unknown path uses the envelope', () => {

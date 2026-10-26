@@ -20,6 +20,9 @@ Test runner: `npx ng test crud-maker` (vitest, inside gui/admin workspace)
   - A4.4 no hard dependency on UI libs, auth, i18n or toast services in the core (interfaces/hooks).
   - A4.5 all list state (page, sort, filters, search, loading, error) is signal-backed and derived via computed; no NaN on unset pagination params.
 
+- **S5** (verbatim, 2026-10-26): "los inputs aceptan getters para sobre escribir el valos en la tabla? ejemplo para renderizar un tag, o un badget en un campo de estaus" → approved "si dale" after the design answer (no getters — S4.1 holds; declarative hints instead).
+  - Acceptance: optional serializable `cell: { render: 'text'|'badge'|'tag'|'dot', variantMap?: { value → variant } }` on FieldConfig; validated at define time; resolved default `{ render: 'text' }`; the library never emits markup — the UI layer interprets the hint. Demo renders `published` as a badge and `category` as a tag.
+
 ## Tasks
 
 | ID | Spec | Route | Status | Commit | Evidence |
@@ -27,6 +30,7 @@ Test runner: `npx ng test crud-maker` (vitest, inside gui/admin workspace)
 | T1 | S1, S4.1, S4.2 | inline | **done** | 1e5dfdf (+0452437 swept types/registry/specs) | RED observed (TS7006/missing modules) → GREEN: 36/36 tests pass, 490ms |
 | T2 | S3, S4.5 | inline | **done** | bd7efb7 | RED observed (Cannot resolve './crud-list-state') → GREEN: 58/58 tests pass |
 | T3 | S1, S3, S4.3, S4.4 | inline | **done** | a7f0cae | RED observed (Cannot resolve ./params, ./crud-controller, ./http-transport) → GREEN: 72/72; `ng build crud-maker` packages; admin suite 2/2 |
+| T3.5 | S5 | inline | pending | — | RED first for cell validation |
 | T4 | S2 (ng-zorro pages/components + route gen) | inline | blocked-pending-approval | — | requires `ng add ng-zorro-antd` authorization |
 | T5 | consumer docs for the package | inline | **done** | see `docs(crud-maker)` commit | README rewritten + AGENTS.md pointers; `ng build crud-maker` still green |
 

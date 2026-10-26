@@ -120,6 +120,58 @@ describe('defineCrudConfig: normalization', () => {
   });
 });
 
+describe('defineCrudConfig: cell rendering hints (S5)', () => {
+  beforeEach(() => resetRegistry());
+
+  it('defaults to text rendering with an empty variant map', () => {
+    const resolved = defineCrudConfig({ key: 'x', endpoint: 'x', fields: [{ name: 'a' }] });
+    expect(resolved.fieldMap.get('a')!.cell).toEqual({ render: 'text', variantMap: {} });
+  });
+
+  it('resolves a badge hint with a variant map', () => {
+    const resolved = defineCrudConfig({
+      key: 'x',
+      endpoint: 'x',
+      fields: [
+        { name: 'status', cell: { render: 'badge', variantMap: { active: 'success' } } },
+      ],
+    });
+    expect(resolved.fieldMap.get('status')!.cell).toEqual({
+      render: 'badge',
+      variantMap: { active: 'success' },
+    });
+  });
+
+  it('rejects unknown render kinds, non-object cells and non-string variants', () => {
+    expectIssues({ key: 'x', endpoint: 'x', fields: [{ name: 'a', cell: { render: 'sparkle' } }] }, [
+      'invalidCellRender',
+    ]);
+    expectIssues({ key: 'x', endpoint: 'x', fields: [{ name: 'a', cell: 'badge' }] }, [
+      'invalidType',
+    ]);
+    expectIssues(
+      {
+        key: 'x',
+        endpoint: 'x',
+        fields: [{ name: 'a', cell: { variantMap: { active: 3 } } }],
+      },
+      ['invalidCellVariantMap'],
+    );
+  });
+
+  it('accepts every documented render kind', () => {
+    for (const render of ['text', 'badge', 'tag', 'dot'] as const) {
+      expect(() =>
+        defineCrudConfig({
+          key: 'x',
+          endpoint: 'x',
+          fields: [{ name: 'a', cell: { render } }],
+        }),
+      ).not.toThrow();
+    }
+  });
+});
+
 describe('defineCrudConfig: validation', () => {
   beforeEach(() => resetRegistry());
 

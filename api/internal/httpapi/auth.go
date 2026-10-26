@@ -48,7 +48,32 @@ type authHandlers struct {
 	verifier SignupVerifier
 	login    LoginAuthenticator
 	rotator  SessionRotator
+	cookies  cookieSettings
 	logger   *slog.Logger
+}
+
+// writeTokenPair sends the pair the way the calling client can hold it: a browser gets the
+// refresh token as an httpOnly cookie and never sees it in the body, so a script injected
+// into the page cannot steal a long-lived credential.
+func (h *authHandlers) writeTokenPair(w http.ResponseWriter, r *http.Request, status int, tokens session.Tokens) {
+	response := tokenPairResponse{
+		AccessToken:      tokens.AccessToken,
+		TokenType:        "Bearer",
+		ExpiresIn:        tokens.ExpiresIn,
+		RefreshToken:     tokens.RefreshToken,
+		RefreshExpiresIn: tokens.RefreshExpiresIn,
+	}
+
+	if h.cookies.isBrowser(r) {
+		if err := h.cookies.setSession(w, tokens); err != nil {
+			h.logger.Error("writing session cookies", slog.String("error", err.Error()))
+			writeError(w, http.StatusInternalServerError, "internal_error", "The request could not be completed.")
+			return
+		}
+		response.RefreshToken = ""
+	}
+
+	writeJSON(w, status, response)
 }
 
 type signupRequest struct {
@@ -133,7 +158,7 @@ type tokenPairResponse struct {
 	AccessToken      string `json:"access_token"`
 	TokenType        string `json:"token_type"`
 	ExpiresIn        int    `json:"expires_in"`
-	RefreshToken     string `json:"refresh_token"`
+	RefreshToken     string `json:"refresh_token,omitempty"`
 	RefreshExpiresIn int    `json:"refresh_expires_in"`
 }
 
@@ -179,13 +204,7 @@ func (h *authHandlers) verifySignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, tokenPairResponse{
-		AccessToken:      tokens.AccessToken,
-		TokenType:        "Bearer",
-		ExpiresIn:        tokens.ExpiresIn,
-		RefreshToken:     tokens.RefreshToken,
-		RefreshExpiresIn: tokens.RefreshExpiresIn,
-	})
+	h.writeTokenPair(w, r, http.StatusCreated, tokens)
 }
 
 // clientIP is the peer address. There is no proxy in front of the API, so RemoteAddr is
@@ -254,13 +273,7 @@ func (h *authHandlers) loginUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, tokenPairResponse{
-		AccessToken:      tokens.AccessToken,
-		TokenType:        "Bearer",
-		ExpiresIn:        tokens.ExpiresIn,
-		RefreshToken:     tokens.RefreshToken,
-		RefreshExpiresIn: tokens.RefreshExpiresIn,
-	})
+	h.writeTokenPair(w, r, http.StatusOK, tokens)
 }
 
 type refreshRequest struct {
@@ -276,9 +289,15 @@ func (h *authHandlers) refreshSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	presented, fromCookie, csrfErr := h.cookies.presented(r, body.RefreshToken)
+	if csrfErr != nil {
+		writeError(w, http.StatusForbidden, "csrf_invalid", "The CSRF token is missing or does not match.")
+		return
+	}
+
 	meta := session.Meta{UserAgent: r.UserAgent(), IP: clientIP(r)}
 
-	tokens, err := h.rotator.Refresh(r.Context(), strings.TrimSpace(body.RefreshToken), meta)
+	tokens, err := h.rotator.Refresh(r.Context(), presented, meta)
 	if err != nil {
 		switch {
 		case errors.Is(err, session.ErrRefreshReused):
@@ -294,13 +313,9 @@ func (h *authHandlers) refreshSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, tokenPairResponse{
-		AccessToken:      tokens.AccessToken,
-		TokenType:        "Bearer",
-		ExpiresIn:        tokens.ExpiresIn,
-		RefreshToken:     tokens.RefreshToken,
-		RefreshExpiresIn: tokens.RefreshExpiresIn,
-	})
+	// A browser keeps the rotated token in the cookie; the body never carries it.
+	_ = fromCookie
+	h.writeTokenPair(w, r, http.StatusOK, tokens)
 }
 
 // logoutSession revokes the presented family and answers 204 even when the token is unknown:
@@ -311,10 +326,20 @@ func (h *authHandlers) logoutSession(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body)
 	}
 
-	if err := h.rotator.Logout(r.Context(), strings.TrimSpace(body.RefreshToken)); err != nil {
+	presented, fromCookie, csrfErr := h.cookies.presented(r, body.RefreshToken)
+	if csrfErr != nil {
+		writeError(w, http.StatusForbidden, "csrf_invalid", "The CSRF token is missing or does not match.")
+		return
+	}
+
+	if err := h.rotator.Logout(r.Context(), presented); err != nil {
 		h.logger.Error("logout failed", slog.String("error", err.Error()))
 		writeError(w, http.StatusInternalServerError, "internal_error", "The request could not be completed.")
 		return
+	}
+
+	if fromCookie {
+		h.cookies.clearSession(w)
 	}
 
 	w.WriteHeader(http.StatusNoContent)

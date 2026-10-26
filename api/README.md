@@ -139,6 +139,28 @@ touches nothing.
 `POST /v1/auth/logout` revokes the family and answers `204` even for an unknown token: the
 desired state is reached either way, and an error would confirm whether the token existed.
 
+## Two clients, two transports
+
+The mobile app and the Angular panel are not equivalent, so the token pair is not delivered
+the same way.
+
+| Client | Recognised by | Refresh token | CSRF |
+|---|---|---|---|
+| Mobile | no `Origin` (or an untrusted one) | JSON body, stored in secure storage | not needed |
+| Panel (SPA) | `Origin` in `CORS_ALLOWED_ORIGINS` | `Set-Cookie: refresh_token=...; HttpOnly; Secure; SameSite=Lax; Path=/v1/auth` | `X-CSRF-Token` must match the readable `csrf_token` cookie |
+
+A browser never receives the refresh token in the body, so a script injected into the page
+cannot read a long-lived credential. The cookie is httpOnly and scoped to `/v1/auth`.
+
+Because the browser attaches the cookie automatically, `/v1/auth/refresh` and
+`/v1/auth/logout` require the double-submit token when the cookie is the source: a
+cross-site caller can send the cookie but cannot read it to echo the header. A mismatch
+answers `403 csrf_invalid`. A token sent in the body needs no CSRF, since nothing attaches
+it automatically.
+
+`COOKIE_SECURE` defaults to `true`. Compose sets it to `false` for local http; leaving it
+false anywhere else is a silent downgrade.
+
 ## Tests
 
 ```bash

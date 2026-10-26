@@ -24,6 +24,8 @@ services:
       MAIL_FROM: no-reply@melia.test
       # Secreto de desarrollo. En producción viene del gestor de secretos.
       JWT_SECRET: dev-only-secreto-de-al-menos-32-caracteres
+      # Dev sirve por http en localhost; en producción esto va en true.
+      COOKIE_SECURE: "false"
       LOG_LEVEL: info
     depends_on:
       database:

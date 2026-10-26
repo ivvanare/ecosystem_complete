@@ -40,6 +40,15 @@ export const FAQS_CONFIG = {
         { label: 'HTTP', value: 'http' },
       ],
       required: true,
+      cell: {
+        render: 'tag',
+        variantMap: {
+          general: 'slate',
+          reactivity: 'indigo',
+          forms: 'emerald',
+          http: 'amber',
+        },
+      },
     },
     {
       name: 'views',

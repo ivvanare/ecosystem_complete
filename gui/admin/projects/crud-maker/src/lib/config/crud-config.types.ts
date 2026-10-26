@@ -27,6 +27,9 @@ export type FilterKind = (typeof FILTER_KINDS)[number];
 export const SORT_DIRECTIONS = ['asc', 'desc'] as const;
 export type SortDirection = (typeof SORT_DIRECTIONS)[number];
 
+export const CELL_RENDER_KINDS = ['text', 'badge', 'tag', 'dot'] as const;
+export type CellRenderKind = (typeof CELL_RENDER_KINDS)[number];
+
 export type FieldWidth = 'narrow' | 'default' | 'wide';
 
 /** Reference to a registered formatter/validator with optional params. */
@@ -55,6 +58,18 @@ export interface ViewFlags {
   detail?: boolean;
 }
 
+/**
+ * Declarative cell-rendering hint (S5). The library stores and validates it
+ * but never emits markup: the UI layer (screen today, generic table in T4)
+ * interprets `render` and maps the raw value through `variantMap`.
+ * Everything stays JSON-serializable — no getters, no closures.
+ */
+export interface CellHint {
+  render?: CellRenderKind;
+  /** Raw stringified value → presentation variant (badge class, color, etc.). */
+  variantMap?: Record<string, string>;
+}
+
 export interface FieldConfig {
   /** Entity property name (flat; unique within the config). */
   name: string;
@@ -80,6 +95,8 @@ export interface FieldConfig {
   options?: FieldOption[] | OptionResource;
   width?: FieldWidth;
   readonly?: boolean;
+  /** Declarative cell hint for the UI layer. See `CellHint`. */
+  cell?: CellHint;
 }
 
 export interface CrudActionsConfig {
@@ -121,6 +138,8 @@ export interface ResolvedField {
   options: FieldOption[] | OptionResource | null;
   width: FieldWidth;
   readonly: boolean;
+  /** Fully resolved cell hint; never undefined. */
+  cell: { render: CellRenderKind; variantMap: Readonly<Record<string, string>> };
 }
 
 /** Fully defaulted, validated config produced by `defineCrudConfig`. */

@@ -10,6 +10,10 @@ export const MAILPIT_URL = __ENV.MAILPIT_URL || 'http://localhost:8025';
 
 // The admin panel is an Angular SPA; `ng serve` defaults to 4200. This must match
 // CORS_ALLOWED_ORIGINS on the server or every browser call fails the preflight.
+// Must match the API's cookie names (api/internal/httpapi/cookies.go).
+export const refreshCookieName = 'refresh_token';
+export const csrfCookieName = 'csrf_token';
+
 export const ORIGIN_HEADER = __ENV.ORIGIN || 'http://localhost:4200';
 
 export const JSON_HEADERS = {

@@ -111,6 +111,7 @@ func run() error {
 			SignupVerifier:     signupVerifier,
 			Login:              loginService,
 			Rotator:            rotator,
+			CookieSecure:       cfg.CookieSecure,
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}

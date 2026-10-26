@@ -220,3 +220,23 @@ func TestLoadParsesLockoutKnobs(t *testing.T) {
 		t.Fatalf("error = %v, want it to name LOGIN_MAX_ATTEMPTS", err)
 	}
 }
+
+func TestLoadDefaultsCookiesToSecure(t *testing.T) {
+	cfg, err := Load(env(validEnv()))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if !cfg.CookieSecure {
+		t.Error("CookieSecure = false by default: a cookie without Secure is a silent downgrade")
+	}
+
+	values := validEnv()
+	values["COOKIE_SECURE"] = "false"
+	cfg, err = Load(env(values))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.CookieSecure {
+		t.Error("COOKIE_SECURE=false was ignored")
+	}
+}

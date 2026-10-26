@@ -13,6 +13,7 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
 | T4a | Session core: HS256 access token, rotating refresh family | C3 | inline | this |
 | T5 | Refresh rotation with family revocation + logout | C3 | inline | this |
 | T6 | Password reset/change revoking all families | C4 | — | next |
+| T6a | Panel cookie + CSRF double submit | C3, C14 | inline | this |
 | T7 | RBAC middleware + `/v1/me` | C9 | — | next |
 | T8 | Email change | C7 | — | next |
 | T9 | Audit writes on every auth event | C10 | inline (auth events) | this |
@@ -121,3 +122,15 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
   and missing tokens, and logout followed by a refresh that must fail.
   Still open: the panel's httpOnly cookie and CSRF. The handlers accept the token in the body
   only, which is right for mobile and wrong for the SPA — it is the last piece of C3/C14.
+- L12 — The panel's httpOnly cookie and CSRF, closing C3/C14.
+  A client is treated as a browser when it sends an `Origin` that `CORS_ALLOWED_ORIGINS`
+  already trusts — the same list that decides whether the browser may call at all, so there
+  is one source of truth. Such a client receives `refresh_token` as an httpOnly cookie scoped
+  to `/v1/auth` and **never** in the body; the mobile app keeps receiving it in the body.
+  Cookie-sourced refresh and logout require `X-CSRF-Token` matching the readable
+  `csrf_token` cookie, and answer `403 csrf_invalid` otherwise; body tokens need no CSRF
+  because nothing attaches them automatically. Logout expires both cookies.
+  `COOKIE_SECURE` defaults to true and compose sets false for local http.
+  The k6 journey gained ten checks for this path, using k6's cookie jar.
+  One defect caught by the tests: the login handler still used the old body writer, so the
+  first browser login returned the refresh token in the body despite the new helper existing.

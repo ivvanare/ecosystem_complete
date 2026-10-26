@@ -8,10 +8,12 @@
  * trusted until checked.
  */
 import {
+  CELL_RENDER_KINDS,
   FIELD_TYPES,
   FILTER_KINDS,
   SORT_DIRECTIONS,
   type BehaviorRef,
+  type CellRenderKind,
   type FieldType,
   type FieldOption,
   type FieldWidth,
@@ -67,6 +69,12 @@ interface RawField {
   options?: unknown;
   width?: unknown;
   readonly?: unknown;
+  cell?: unknown;
+}
+
+interface RawCellHint {
+  render?: unknown;
+  variantMap?: unknown;
 }
 
 interface RawViewFlags {
@@ -328,6 +336,35 @@ function resolveField(
 
   const readonly = c.optionalBool(dyn, 'readonly', path, false);
 
+  let cell: { render: CellRenderKind; variantMap: Record<string, string> } = {
+    render: 'text',
+    variantMap: {},
+  };
+  if (f.cell !== undefined) {
+    if (isRecord(f.cell)) {
+      const hint = f.cell as RawCellHint;
+      if (hint.render !== undefined) {
+        if (
+          typeof hint.render === 'string' &&
+          (CELL_RENDER_KINDS as readonly string[]).includes(hint.render)
+        ) {
+          cell = { ...cell, render: hint.render as CellRenderKind };
+        } else {
+          c.add(`${path}.cell.render`, 'invalidCellRender', `unknown cell render "${String(hint.render)}"`);
+        }
+      }
+      if (hint.variantMap !== undefined) {
+        if (isRecord(hint.variantMap) && Object.values(hint.variantMap).every((v) => typeof v === 'string')) {
+          cell = { ...cell, variantMap: { ...hint.variantMap } as Record<string, string> };
+        } else {
+          c.add(`${path}.cell.variantMap`, 'invalidCellVariantMap', 'variantMap must map value → variant strings');
+        }
+      }
+    } else {
+      c.add(`${path}.cell`, 'invalidType', 'cell must be an object of rendering hints');
+    }
+  }
+
   return {
     name: name ?? '',
     label,
@@ -341,6 +378,7 @@ function resolveField(
     options,
     width,
     readonly,
+    cell,
   };
 }
 

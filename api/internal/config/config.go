@@ -44,6 +44,7 @@ type Config struct {
 	RefreshTokenTTL   time.Duration
 	LoginMaxAttempts  int
 	LoginLockDuration time.Duration
+	CookieSecure      bool
 	AutoMigrate       bool
 	LogLevel          slog.Level
 	ShutdownTimeout   time.Duration
@@ -67,9 +68,12 @@ func Load(getenv func(string) string) (Config, error) {
 		RefreshTokenTTL:   DefaultRefreshTokenTTL,
 		LoginMaxAttempts:  DefaultLoginMaxAttempts,
 		LoginLockDuration: DefaultLoginLockDuration,
-		AutoMigrate:       true,
-		LogLevel:          slog.LevelInfo,
-		ShutdownTimeout:   DefaultShutdownTimeout,
+		// Secure by default: a cookie without Secure over http would be a downgrade nobody
+		// notices until production.
+		CookieSecure:    true,
+		AutoMigrate:     true,
+		LogLevel:        slog.LevelInfo,
+		ShutdownTimeout: DefaultShutdownTimeout,
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -100,6 +104,14 @@ func Load(getenv func(string) string) (Config, error) {
 			return Config{}, fmt.Errorf("invalid %s %q: must be a positive duration such as 15m", key, raw)
 		}
 		*target = parsed
+	}
+
+	if raw := lookup(getenv, "COOKIE_SECURE"); raw != "" {
+		parsed, err := parseBool(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid COOKIE_SECURE %q: must be true or false", raw)
+		}
+		cfg.CookieSecure = parsed
 	}
 
 	if raw := lookup(getenv, "LOGIN_MAX_ATTEMPTS"); raw != "" {
