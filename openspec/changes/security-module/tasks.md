@@ -16,6 +16,7 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
 | T6a | Panel cookie + CSRF double submit | C3, C14 | inline | this |
 | T7 | RBAC middleware + `/v1/me` + admin catalogues | C9 | inline | this |
 | T8 | Email change | C7 | — | next |
+| T8a | Admin users list, role assignment, audit read, first-admin bootstrap | C9, C10 | inline | this |
 | T9 | Audit writes on every auth event | C10 | inline (auth events) | this |
 | T10 | Social login with go-oidc | C8 | — | next |
 
@@ -152,3 +153,17 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
   Covered by Go tests (allow, deny, lookup failure, missing user, deleted account) and by nine
   k6 checks. The **allowed** admin path is only covered by Go tests: it needs a role
   assignment and no endpoint exposes one yet.
+- L15 — Administration surface: `GET /v1/admin/users`, `PATCH /v1/admin/users/{id}/roles`,
+  `GET /v1/admin/audit-events`, plus `cmd/bootstrap` for the first administrator.
+  Role assignment is a **replace** inside one transaction: the bridge table is rewritten, so
+  a role removed in the request is really gone, and an unknown or inactive name aborts the
+  whole change with `422` instead of half-applying capability. Every change is audited as
+  `rbac.roles.changed` naming both actor and subject; a rejected change writes nothing.
+  Pagination follows the contract (1-based, default 20, cap 100) and the response carries
+  `page`, `limit` and `total`.
+  The bootstrap command exists because roles cannot be granted before someone holds
+  `admin.access`. It replaces the role set of an existing, verified user.
+  Open risk, not invented into the contract: nothing stops an administrator from removing
+  their own `admin.access` and locking themselves out. A guard would be a product decision
+  (409? refuse only self-demotion? require a second admin?), so it is recorded here instead
+  of being guessed.

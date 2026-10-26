@@ -89,6 +89,9 @@ func run() error {
 
 	identityStore := identity.NewPostgresStore(pool)
 	identityService := identity.New(identityStore, identityStore)
+	identityService.Admin = identityStore
+	identityService.Auditor = auditor
+	identityService.Logger = logger
 
 	loginService := login.New(login.NewPostgresStore(pool), issuer, auditor, logger)
 	loginService.MaxAttempts = cfg.LoginMaxAttempts
@@ -119,6 +122,7 @@ func run() error {
 			TokenParser:        issuer,
 			Authorizer:         identityService,
 			Identity:           identityService,
+			Admin:              identityService,
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}

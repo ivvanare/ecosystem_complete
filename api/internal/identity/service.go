@@ -9,7 +9,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
+
+	"github.com/ivvanare/ecosystem_complete/api/internal/audit"
 )
 
 // ErrNotFound means the user does not exist or was deleted.
@@ -53,6 +56,12 @@ type CatalogueStore interface {
 type Service struct {
 	Store     Store
 	Catalogue CatalogueStore
+
+	// Admin is optional: without it the administration methods are unavailable.
+	Admin AdminStore
+	// Auditor records capability changes. Best effort, like every other audit write.
+	Auditor audit.Recorder
+	Logger  *slog.Logger
 }
 
 // New returns a Service.
@@ -95,4 +104,25 @@ func (s *Service) Can(ctx context.Context, userID, permission string) (bool, err
 		}
 	}
 	return false, nil
+}
+
+// User returns one user as a list row.
+func (s *Service) User(ctx context.Context, userID string) (UserSummary, error) {
+	profile, err := s.Store.Profile(ctx, userID)
+	if err != nil {
+		return UserSummary{}, err
+	}
+	access, err := s.Store.Access(ctx, userID)
+	if err != nil {
+		return UserSummary{}, fmt.Errorf("identity: reading access: %w", err)
+	}
+	return UserSummary{
+		ID:              profile.ID,
+		Name:            profile.Name,
+		Email:           profile.Email,
+		Status:          profile.Status,
+		EmailVerifiedAt: profile.EmailVerifiedAt,
+		CreatedAt:       profile.CreatedAt,
+		Roles:           access.Roles,
+	}, nil
 }

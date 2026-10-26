@@ -174,6 +174,35 @@ expire. That is the whole reason the token carries identity only.
 A valid token for an account that was deleted answers `401`, not `404`: the token is real,
 the subject is gone.
 
+## Administration
+
+| Endpoint | What it does |
+|---|---|
+| `GET /v1/admin/users` | paginated list, filtered by `q` (name or email) and `status` |
+| `PATCH /v1/admin/users/{id}/roles` | **replaces** the role set of a user |
+| `GET /v1/admin/audit-events` | reads the security log, filtered by `event`, `userId`, `from`, `to` |
+
+All three require `admin.access`. Pagination follows the contract: `page` is 1-based, `limit`
+defaults to 20 and is capped at 100, and the response carries `page`, `limit` and `total`.
+
+Assigning roles is the only endpoint that grants capability, so every change is audited as
+`rbac.roles.changed` with **both** the actor (the administrator) and the subject (the user
+whose roles changed). An unknown or inactive role name rejects the whole request with `422`:
+a capability change never half-applies.
+
+### The first administrator
+
+There is a chicken-and-egg problem: assigning roles needs `admin.access`, and nobody holds it
+until someone is granted a role. `cmd/bootstrap` breaks it, once:
+
+```bash
+docker compose run --rm --entrypoint /usr/local/bin/bootstrap \
+  -e EMAIL=ana@melia.test -e ROLE=SUPERADMIN api
+```
+
+It replaces that user's role set, exactly like the PATCH endpoint does. Register the account
+first: it needs a verified user to attach the role to.
+
 ## Tests
 
 ```bash
