@@ -42,12 +42,12 @@ All commands run inside `api/`:
 | `go build -o /tmp/api ./cmd/api` | Build a binary without polluting the tree |
 | `k6 run tests/k6/smoke.js` | Contract smoke against a running API (writes nothing) |
 | `k6 run tests/k6/signup.js` | Signup load; writes rows and queues mail |
+| `docker compose run --rm --entrypoint /usr/local/bin/bootstrap -e EMAIL=... -e ROLE=SUPERADMIN api` | Grant the first administrator |
 | `gh pr create --fill` | Open a PR; `master` rejects direct pushes |
 
 `master` is protected by a ruleset: work on a branch, open a PR and merge once `test` and
 `image` are green. A direct `git push origin master` is rejected. The required checks are
 matched by name, so renaming a CI job also means updating the ruleset.
-| `docker compose run --rm --entrypoint /usr/local/bin/bootstrap -e EMAIL=... -e ROLE=SUPERADMIN api` | Grant the first administrator |
 
 ## Docker Services
 
