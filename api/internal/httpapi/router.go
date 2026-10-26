@@ -24,6 +24,7 @@ type Options struct {
 	CORSAllowedOrigins []string
 	Signup             SignupRequester
 	SignupVerifier     SignupVerifier
+	Login              LoginAuthenticator
 }
 
 const defaultProbeTimeout = 2 * time.Second
@@ -49,6 +50,7 @@ func New(opts Options) http.Handler {
 	auth := &authHandlers{
 		signup:   opts.Signup,
 		verifier: opts.SignupVerifier,
+		login:    opts.Login,
 		logger:   logger,
 	}
 	if opts.Signup != nil {
@@ -58,6 +60,9 @@ func New(opts Options) http.Handler {
 	// user who already holds a code must still be able to finish.
 	if opts.SignupVerifier != nil {
 		mux.HandleFunc("POST /v1/auth/signup/verify", auth.verifySignup)
+	}
+	if opts.Login != nil {
+		mux.HandleFunc("POST /v1/auth/login", auth.loginUser)
 	}
 
 	mux.HandleFunc("/", notFound)

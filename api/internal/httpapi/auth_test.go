@@ -9,7 +9,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/ivvanare/ecosystem_complete/api/internal/login"
 	"github.com/ivvanare/ecosystem_complete/api/internal/session"
 	"github.com/ivvanare/ecosystem_complete/api/internal/signup"
 )
@@ -221,4 +223,88 @@ func TestVerifySignupRejectsAMalformedCodeBeforeCallingTheService(t *testing.T) 
 	if verifier.calls != 0 {
 		t.Error("the service was called with a malformed code")
 	}
+}
+
+type fakeLogin struct {
+	tokens session.Tokens
+	err    error
+	email  string
+	device string
+	calls  int
+}
+
+func (f *fakeLogin) Login(_ context.Context, email, _ string, meta session.Meta) (session.Tokens, error) {
+	f.calls++
+	f.email, f.device = email, meta.Device
+	return f.tokens, f.err
+}
+
+func postLogin(t *testing.T, handler http.Handler, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestLoginReturnsTheTokenPair(t *testing.T) {
+	auth := &fakeLogin{tokens: session.Tokens{AccessToken: "a", ExpiresIn: 900, RefreshToken: "r", RefreshExpiresIn: 100}}
+	handler := New(Options{Login: auth, Logger: slog.New(slog.DiscardHandler)})
+
+	rec := postLogin(t, handler, `{"email":"ana@melia.test","password":"una-clave-larga-123","device":"iPhone"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"token_type":"Bearer"`) {
+		t.Errorf("body = %s", rec.Body.String())
+	}
+	if auth.email != "ana@melia.test" || auth.device != "iPhone" {
+		t.Errorf("service received %q/%q", auth.email, auth.device)
+	}
+}
+
+func TestLoginMapsFailures(t *testing.T) {
+	t.Run("invalid credentials", func(t *testing.T) {
+		handler := New(Options{Login: &fakeLogin{err: login.ErrInvalidCredentials}, Logger: slog.New(slog.DiscardHandler)})
+		rec := postLogin(t, handler, `{"email":"ana@melia.test","password":"x"}`)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401", rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "invalid_credentials") {
+			t.Errorf("body = %s", rec.Body.String())
+		}
+	})
+
+	t.Run("locked account", func(t *testing.T) {
+		handler := New(Options{
+			Login:  &fakeLogin{err: &login.LockedError{RetryAfter: 90 * time.Second}},
+			Logger: slog.New(slog.DiscardHandler),
+		})
+		rec := postLogin(t, handler, `{"email":"ana@melia.test","password":"x"}`)
+
+		if rec.Code != http.StatusLocked {
+			t.Fatalf("status = %d, want 423", rec.Code)
+		}
+		if got := rec.Header().Get("Retry-After"); got != "90" {
+			t.Errorf("Retry-After = %q, want 90", got)
+		}
+		if !strings.Contains(rec.Body.String(), "retry_after_seconds") {
+			t.Errorf("body = %s", rec.Body.String())
+		}
+	})
+
+	t.Run("validation", func(t *testing.T) {
+		auth := &fakeLogin{}
+		handler := New(Options{Login: auth, Logger: slog.New(slog.DiscardHandler)})
+		rec := postLogin(t, handler, `{"email":"no-es-email","password":""}`)
+
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d, want 422", rec.Code)
+		}
+		if auth.calls != 0 {
+			t.Error("the service was called with invalid input")
+		}
+	})
 }

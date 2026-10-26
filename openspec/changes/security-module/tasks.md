@@ -9,13 +9,13 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
 | T1 | CORS middleware: credentials on, exact origin echo, auth-free preflight, `Vary: Origin` | C13 | inline | pending |
 | T2 | Seed catalogue: 10 permissions, 3 roles, role→permission links, idempotent on the model's partial uniques | C9 | inline | pending |
 | T3 | Signup + verify (`tb_signup_request`), first RabbitMQ publisher + mail worker | C5 | inline | 35948ad + this |
-| T4 | Login with lockout + access JWT | C6, C3 | — | next |
+| T4 | Login with lockout + audit | C6, C10 | inline | this |
 | T4a | Session core: HS256 access token, rotating refresh family | C3 | inline | this |
 | T5 | Refresh rotation with family revocation | C3 | — | next |
 | T6 | Password reset/change revoking all families | C4 | — | next |
 | T7 | RBAC middleware + `/v1/me` | C9 | — | next |
 | T8 | Email change | C7 | — | next |
-| T9 | Audit writes on every auth event | C10 | — | next |
+| T9 | Audit writes on every auth event | C10 | inline (auth events) | this |
 | T10 | Social login with go-oidc | C8 | — | next |
 
 ## Log
@@ -76,3 +76,15 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
   opposite of the intent, since a user holding a code must still be able to finish.
   Not done yet: the panel's httpOnly refresh cookie (C3/C14). It belongs with refresh and
   logout, where CSRF applies; today the pair is returned in the body for every client.
+- L8 — Login with lockout, plus the audit trace the user asked for on auto-login.
+  `POST /v1/auth/login`: an unknown address, a wrong password and an inactive account all
+  answer `401 invalid_credentials`; a miss still runs an Argon2id verification against a
+  dummy hash so timing cannot enumerate accounts. At the threshold the account locks and
+  answers `423` with `Retry-After`; success resets the counter.
+  Audit: `seg.tb_security_event` now receives `auth.signup.verified`,
+  `auth.session.created`, `auth.login.succeeded`, `auth.login.failed`,
+  `auth.login.locked` and `auth.signup.code_rejected`. The email is stored as an HMAC with a
+  subkey derived from `JWT_SECRET` (never the signing key itself), and an audit failure is
+  logged without failing the request.
+  Lockout knobs are configurable: `LOGIN_MAX_ATTEMPTS` (5) and `LOGIN_LOCK_DURATION` (15m).
+  Still open: the panel's httpOnly cookie (C3/C14) belongs with refresh/logout.

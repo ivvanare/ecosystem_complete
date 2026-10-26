@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
+	"github.com/ivvanare/ecosystem_complete/api/internal/audit"
 	"github.com/ivvanare/ecosystem_complete/api/internal/security"
 	"github.com/ivvanare/ecosystem_complete/api/internal/session"
 )
@@ -67,9 +69,11 @@ type TokenIssuer interface {
 
 // Verifier consumes a signup code.
 type Verifier struct {
-	Store  VerifierStore
-	Issuer TokenIssuer
-	Now    func() time.Time
+	Store   VerifierStore
+	Issuer  TokenIssuer
+	Auditor audit.Recorder
+	Logger  *slog.Logger
+	Now     func() time.Time
 }
 
 // NewVerifier returns a Verifier with the real clock.
@@ -100,12 +104,26 @@ func (v *Verifier) Verify(ctx context.Context, email, code string, meta session.
 	pending, err := tx.Pending(ctx)
 	if err != nil {
 		if errors.Is(err, ErrNoPending) {
+			v.record(ctx, audit.Event{
+				Name:      audit.EventSignupCodeRejected,
+				Email:     email,
+				IP:        meta.IP,
+				UserAgent: meta.UserAgent,
+				Metadata:  map[string]any{"reason": "no_pending_registration"},
+			})
 			return session.Tokens{}, ErrInvalidCode
 		}
 		return session.Tokens{}, fmt.Errorf("signup: reading pending registration: %w", err)
 	}
 
 	if !pending.ExpiresAt.After(v.now()) {
+		v.record(ctx, audit.Event{
+			Name:      audit.EventSignupCodeRejected,
+			Email:     email,
+			IP:        meta.IP,
+			UserAgent: meta.UserAgent,
+			Metadata:  map[string]any{"reason": "expired"},
+		})
 		return session.Tokens{}, ErrInvalidCode
 	}
 	if pending.Attempts >= MaxAttempts {
@@ -120,6 +138,13 @@ func (v *Verifier) Verify(ctx context.Context, email, code string, meta session.
 			return session.Tokens{}, fmt.Errorf("signup: committing failed attempt: %w", err)
 		}
 		settled = true
+		v.record(ctx, audit.Event{
+			Name:      audit.EventSignupCodeRejected,
+			Email:     email,
+			IP:        meta.IP,
+			UserAgent: meta.UserAgent,
+			Metadata:  map[string]any{"reason": "wrong_code", "attempts": pending.Attempts + 1},
+		})
 		return session.Tokens{}, ErrInvalidCode
 	}
 
@@ -149,6 +174,22 @@ func (v *Verifier) Verify(ctx context.Context, email, code string, meta session.
 		return session.Tokens{}, err
 	}
 
+	// Auto-login is the contract, so the registration and the session it opened both land
+	// in the audit log, exactly like a login would.
+	v.record(ctx, audit.Event{
+		Name:      audit.EventSignupVerified,
+		UserID:    userID,
+		Email:     email,
+		IP:        meta.IP,
+		UserAgent: meta.UserAgent,
+	})
+	v.record(ctx, audit.Event{
+		Name:      audit.EventSessionCreated,
+		UserID:    userID,
+		IP:        meta.IP,
+		UserAgent: meta.UserAgent,
+	})
+
 	return tokens, nil
 }
 
@@ -157,4 +198,19 @@ func (v *Verifier) now() time.Time {
 		return time.Now()
 	}
 	return v.Now()
+}
+
+// record is best effort: an audit write must never fail a successful registration.
+func (v *Verifier) record(ctx context.Context, event audit.Event) {
+	if v.Auditor == nil {
+		return
+	}
+	if err := v.Auditor.Record(ctx, event); err != nil {
+		if v.Logger != nil {
+			v.Logger.Warn("audit write failed",
+				slog.String("event", event.Name),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
 }

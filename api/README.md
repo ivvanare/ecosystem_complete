@@ -52,6 +52,8 @@ Both non-`ok` states return `503`.
 | `JWT_SECRET` | yes | — | HS256 signing key, at least 32 characters |
 | `ACCESS_TOKEN_TTL` | no | `15m` | access token lifetime |
 | `REFRESH_TOKEN_TTL` | no | `720h` | refresh token lifetime |
+| `LOGIN_MAX_ATTEMPTS` | no | `5` | consecutive failures before the account locks |
+| `LOGIN_LOCK_DURATION` | no | `15m` | how long the lock lasts |
 | `MAIL_QUEUE` | no | `melia.mail` | durable queue the API publishes mail to |
 | `SMTP_ADDR` | no | `mailpit:1025` | SMTP target used by the worker |
 | `MAIL_FROM` | no | `no-reply@melia.test` | envelope sender |
@@ -113,6 +115,18 @@ registration into `seg.tb_user` with `dt_email_verified_at` set, and returns the
 pair. Five wrong attempts kill the registration. The access JWT carries only
 `sub`/`iat`/`exp`/`jti`: roles and permissions are resolved per request, so revoking one
 takes effect immediately instead of waiting for a token to expire.
+
+## Login and lockout
+
+`POST /v1/auth/login` answers `401 invalid_credentials` for an unknown address, a wrong
+password and an inactive account alike; an unknown address still pays for an Argon2id
+verification, so timing cannot enumerate accounts. Past `LOGIN_MAX_ATTEMPTS` the account
+answers `423 account_locked` with `Retry-After` and `details.retry_after_seconds`, and a
+successful login resets the counter.
+
+Every attempt is written to `seg.tb_security_event` with an HMAC of the email, the client IP
+and the user agent. The log never receives a password, a code or a clear address, and an
+audit failure is logged but never fails the request.
 
 ## Tests
 

@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"net/mail"
 	"regexp"
+	"strconv"
 	"strings"
 
+	"github.com/ivvanare/ecosystem_complete/api/internal/login"
 	"github.com/ivvanare/ecosystem_complete/api/internal/session"
 	"github.com/ivvanare/ecosystem_complete/api/internal/signup"
 )
@@ -30,9 +32,15 @@ type SignupVerifier interface {
 	Verify(ctx context.Context, email, code string, meta session.Meta) (session.Tokens, error)
 }
 
+// LoginAuthenticator exchanges credentials for a session.
+type LoginAuthenticator interface {
+	Login(ctx context.Context, email, password string, meta session.Meta) (session.Tokens, error)
+}
+
 type authHandlers struct {
 	signup   SignupRequester
 	verifier SignupVerifier
+	login    LoginAuthenticator
 	logger   *slog.Logger
 }
 
@@ -181,4 +189,69 @@ func clientIP(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+type loginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	Device   string `json:"device"`
+}
+
+// login answers 401 for an unknown address, a wrong password and an inactive account
+// alike, and 423 only when the account is genuinely locked.
+func (h *authHandlers) loginUser(w http.ResponseWriter, r *http.Request) {
+	var body loginRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+		return
+	}
+
+	var fields []fieldError
+	if _, err := mail.ParseAddress(strings.TrimSpace(body.Email)); err != nil {
+		fields = append(fields, fieldError{Field: "email", Code: "invalid"})
+	}
+	if body.Password == "" {
+		fields = append(fields, fieldError{Field: "password", Code: "required"})
+	}
+	if len(fields) > 0 {
+		writeValidationError(w, fields)
+		return
+	}
+
+	meta := session.Meta{
+		Device:    strings.TrimSpace(body.Device),
+		UserAgent: r.UserAgent(),
+		IP:        clientIP(r),
+	}
+
+	tokens, err := h.login.Login(r.Context(), body.Email, body.Password, meta)
+	if err != nil {
+		var locked *login.LockedError
+		switch {
+		case errors.As(err, &locked):
+			retry := int(locked.RetryAfter.Seconds())
+			w.Header().Set("Retry-After", strconv.Itoa(retry))
+			writeJSON(w, http.StatusLocked, errorEnvelope{Error: errorBody{
+				Code:    "account_locked",
+				Message: "Too many failed attempts. Try again later.",
+				Details: map[string]any{"retry_after_seconds": retry},
+			}})
+			return
+		case errors.Is(err, login.ErrInvalidCredentials):
+			writeError(w, http.StatusUnauthorized, "invalid_credentials", "Email or password is incorrect.")
+			return
+		default:
+			h.logger.Error("login failed", slog.String("error", err.Error()))
+			writeError(w, http.StatusInternalServerError, "internal_error", "The request could not be completed.")
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, tokenPairResponse{
+		AccessToken:      tokens.AccessToken,
+		TokenType:        "Bearer",
+		ExpiresIn:        tokens.ExpiresIn,
+		RefreshToken:     tokens.RefreshToken,
+		RefreshExpiresIn: tokens.RefreshExpiresIn,
+	})
 }

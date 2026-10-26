@@ -198,3 +198,25 @@ func TestLoadDefaultsTokenTTLs(t *testing.T) {
 		t.Errorf("RefreshTokenTTL = %v, want 720h", cfg.RefreshTokenTTL)
 	}
 }
+
+func TestLoadParsesLockoutKnobs(t *testing.T) {
+	values := validEnv()
+	values["LOGIN_MAX_ATTEMPTS"] = "3"
+	values["LOGIN_LOCK_DURATION"] = "30m"
+
+	cfg, err := Load(env(values))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.LoginMaxAttempts != 3 {
+		t.Errorf("LoginMaxAttempts = %d, want 3", cfg.LoginMaxAttempts)
+	}
+	if cfg.LoginLockDuration != 30*time.Minute {
+		t.Errorf("LoginLockDuration = %v, want 30m", cfg.LoginLockDuration)
+	}
+
+	values["LOGIN_MAX_ATTEMPTS"] = "0"
+	if _, err := Load(env(values)); err == nil || !strings.Contains(err.Error(), "LOGIN_MAX_ATTEMPTS") {
+		t.Fatalf("error = %v, want it to name LOGIN_MAX_ATTEMPTS", err)
+	}
+}

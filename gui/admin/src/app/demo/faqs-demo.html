@@ -1,0 +1,144 @@
+<header class="page-header">
+  <h1>FAQs <span class="subtitle">crud-maker demo</span></h1>
+  <span class="status" [attr.data-state]="crud.status()">{{ crud.status() }}</span>
+</header>
+
+<section class="toolbar" aria-label="Filters and actions">
+  <input
+    type="search"
+    placeholder="Search question…"
+    [value]="questionFilter()"
+    (input)="onQuestionFilter($event)"
+    (keyup.Enter)="applyFilters()"
+  />
+  <input
+    type="number"
+    placeholder="Min views"
+    [value]="viewsFrom()"
+    (input)="onViewsFilter($event)"
+  />
+  <button type="button" (click)="applyFilters()">Apply</button>
+  <button type="button" (click)="clearFilters()">Clear</button>
+  <span class="spacer"></span>
+  <button type="button" class="primary" [disabled]="!crud.can('create')" (click)="openCreate()">
+    + New FAQ
+  </button>
+</section>
+
+@if (crud.error(); as err) {
+  <p class="error" role="alert">{{ err }}</p>
+}
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        @for (field of listFields; track field.name) {
+          <th>
+            @if (field.sortable) {
+              <button type="button" class="sort" (click)="toggleSort(field.name)">
+                {{ field.label }}{{ sortGlyph(field.name) }}
+              </button>
+            } @else {
+              {{ field.label }}
+            }
+          </th>
+        }
+        <th class="actions-col">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      @for (row of crud.rows(); track row['id']) {
+        <tr>
+          @for (field of listFields; track field.name) {
+            <td>{{ display(field, row) }}</td>
+          }
+          <td class="actions-col">
+            <button type="button" [disabled]="!crud.can('update')" (click)="openEdit(row)">
+              Edit
+            </button>
+            <button
+              type="button"
+              class="danger"
+              [disabled]="!crud.can('delete')"
+              (click)="remove(row)"
+            >
+              Delete
+            </button>
+          </td>
+        </tr>
+      } @empty {
+        <tr>
+          <td [attr.colspan]="listFields.length + 1" class="empty">No records found</td>
+        </tr>
+      }
+    </tbody>
+  </table>
+</div>
+
+<footer class="pager">
+  <span>{{ crud.total() }} records · page {{ crud.state.page() }} of {{ totalPages() }}</span>
+  <span class="spacer"></span>
+  <button type="button" [disabled]="crud.state.page() <= 1" (click)="goToPage(crud.state.page() - 1)">
+    ← Prev
+  </button>
+  <button
+    type="button"
+    [disabled]="crud.state.page() >= totalPages()"
+    (click)="goToPage(crud.state.page() + 1)"
+  >
+    Next →
+  </button>
+</footer>
+
+@if (showForm()) {
+  <form class="entity-form" (submit)="save($event)">
+    <h2>{{ editingId() === null ? 'New FAQ' : 'Edit FAQ #' + editingId() }}</h2>
+
+    <div class="field">
+      <label for="question">Question</label>
+      <input
+        id="question"
+        [formField]="profile.question"
+        #qf="formField"
+      />
+      @if (qf.state().touched() && qf.errors().length > 0) {
+        <small class="err">{{ qf.errors()[0]!.message }}</small>
+      }
+    </div>
+
+    <div class="field">
+      <label for="answer">Answer</label>
+      <textarea id="answer" rows="4" [formField]="profile.answer" #af="formField"></textarea>
+      @if (af.state().touched() && af.errors().length > 0) {
+        <small class="err">{{ af.errors()[0]!.message }}</small>
+      }
+    </div>
+
+    <div class="field">
+      <label for="category">Category</label>
+      <select id="category" [formField]="profile.category">
+        @for (option of categories; track option.value) {
+          <option [value]="option.value">{{ option.label }}</option>
+        }
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="views">Views</label>
+      <input id="views" type="number" [formField]="profile.views" />
+    </div>
+
+    <div class="field inline">
+      <label for="published">Published</label>
+      <input id="published" type="checkbox" [formField]="profile.published" />
+    </div>
+
+    <div class="form-actions">
+      <button type="submit" class="primary">
+        {{ editingId() === null ? 'Create' : 'Save changes' }}
+      </button>
+      <button type="button" (click)="closeForm()">Cancel</button>
+    </div>
+  </form>
+}

@@ -7,62 +7,69 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 )
 
 // Defaults applied when an optional variable is unset.
 const (
-	DefaultHTTPAddr        = ":8080"
-	DefaultDBInitDir       = "/app/database/init"
-	DefaultShutdownTimeout = 10 * time.Second
-	DefaultMailQueue       = "melia.mail"
-	DefaultSMTPAddr        = "mailpit:1025"
-	DefaultMailFrom        = "no-reply@melia.test"
-	DefaultAccessTokenTTL  = 15 * time.Minute
-	DefaultRefreshTokenTTL = 720 * time.Hour
+	DefaultHTTPAddr          = ":8080"
+	DefaultDBInitDir         = "/app/database/init"
+	DefaultShutdownTimeout   = 10 * time.Second
+	DefaultMailQueue         = "melia.mail"
+	DefaultSMTPAddr          = "mailpit:1025"
+	DefaultMailFrom          = "no-reply@melia.test"
+	DefaultAccessTokenTTL    = 15 * time.Minute
+	DefaultRefreshTokenTTL   = 720 * time.Hour
+	DefaultLoginMaxAttempts  = 5
+	DefaultLoginLockDuration = 15 * time.Minute
 	// MinJWTSecretLength keeps HS256 out of reach of a guessable key.
 	MinJWTSecretLength = 32
 )
 
 // Config is the fully resolved runtime configuration.
 type Config struct {
-	HTTPAddr        string
-	DatabaseURL     string
-	RedisAddr       string
-	RabbitMQURL     string
-	DBInitDir       string
-	CORSOrigins     []string
-	MailQueue       string
-	SMTPAddr        string
-	MailFrom        string
-	JWTSecret       string
-	AccessTokenTTL  time.Duration
-	RefreshTokenTTL time.Duration
-	AutoMigrate     bool
-	LogLevel        slog.Level
-	ShutdownTimeout time.Duration
+	HTTPAddr          string
+	DatabaseURL       string
+	RedisAddr         string
+	RabbitMQURL       string
+	DBInitDir         string
+	CORSOrigins       []string
+	MailQueue         string
+	SMTPAddr          string
+	MailFrom          string
+	JWTSecret         string
+	AccessTokenTTL    time.Duration
+	RefreshTokenTTL   time.Duration
+	LoginMaxAttempts  int
+	LoginLockDuration time.Duration
+	AutoMigrate       bool
+	LogLevel          slog.Level
+	ShutdownTimeout   time.Duration
 }
 
 // Load reads and validates the configuration. It returns an error naming the offending
 // variable instead of falling back to a default for anything that matters.
 func Load(getenv func(string) string) (Config, error) {
 	cfg := Config{
-		HTTPAddr:        valueOr(getenv, "HTTP_ADDR", DefaultHTTPAddr),
-		DatabaseURL:     lookup(getenv, "DATABASE_URL"),
-		RedisAddr:       lookup(getenv, "REDIS_ADDR"),
-		RabbitMQURL:     lookup(getenv, "RABBITMQ_URL"),
-		DBInitDir:       valueOr(getenv, "DB_INIT_DIR", DefaultDBInitDir),
-		CORSOrigins:     splitList(lookup(getenv, "CORS_ALLOWED_ORIGINS")),
-		MailQueue:       valueOr(getenv, "MAIL_QUEUE", DefaultMailQueue),
-		SMTPAddr:        valueOr(getenv, "SMTP_ADDR", DefaultSMTPAddr),
-		MailFrom:        valueOr(getenv, "MAIL_FROM", DefaultMailFrom),
-		JWTSecret:       lookup(getenv, "JWT_SECRET"),
-		AccessTokenTTL:  DefaultAccessTokenTTL,
-		RefreshTokenTTL: DefaultRefreshTokenTTL,
-		AutoMigrate:     true,
-		LogLevel:        slog.LevelInfo,
-		ShutdownTimeout: DefaultShutdownTimeout,
+		HTTPAddr:          valueOr(getenv, "HTTP_ADDR", DefaultHTTPAddr),
+		DatabaseURL:       lookup(getenv, "DATABASE_URL"),
+		RedisAddr:         lookup(getenv, "REDIS_ADDR"),
+		RabbitMQURL:       lookup(getenv, "RABBITMQ_URL"),
+		DBInitDir:         valueOr(getenv, "DB_INIT_DIR", DefaultDBInitDir),
+		CORSOrigins:       splitList(lookup(getenv, "CORS_ALLOWED_ORIGINS")),
+		MailQueue:         valueOr(getenv, "MAIL_QUEUE", DefaultMailQueue),
+		SMTPAddr:          valueOr(getenv, "SMTP_ADDR", DefaultSMTPAddr),
+		MailFrom:          valueOr(getenv, "MAIL_FROM", DefaultMailFrom),
+		JWTSecret:         lookup(getenv, "JWT_SECRET"),
+		AccessTokenTTL:    DefaultAccessTokenTTL,
+		RefreshTokenTTL:   DefaultRefreshTokenTTL,
+		LoginMaxAttempts:  DefaultLoginMaxAttempts,
+		LoginLockDuration: DefaultLoginLockDuration,
+		AutoMigrate:       true,
+		LogLevel:          slog.LevelInfo,
+		ShutdownTimeout:   DefaultShutdownTimeout,
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -80,8 +87,9 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 
 	for key, target := range map[string]*time.Duration{
-		"ACCESS_TOKEN_TTL":  &cfg.AccessTokenTTL,
-		"REFRESH_TOKEN_TTL": &cfg.RefreshTokenTTL,
+		"ACCESS_TOKEN_TTL":    &cfg.AccessTokenTTL,
+		"REFRESH_TOKEN_TTL":   &cfg.RefreshTokenTTL,
+		"LOGIN_LOCK_DURATION": &cfg.LoginLockDuration,
 	} {
 		raw := lookup(getenv, key)
 		if raw == "" {
@@ -92,6 +100,14 @@ func Load(getenv func(string) string) (Config, error) {
 			return Config{}, fmt.Errorf("invalid %s %q: must be a positive duration such as 15m", key, raw)
 		}
 		*target = parsed
+	}
+
+	if raw := lookup(getenv, "LOGIN_MAX_ATTEMPTS"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 {
+			return Config{}, fmt.Errorf("invalid LOGIN_MAX_ATTEMPTS %q: must be a positive integer", raw)
+		}
+		cfg.LoginMaxAttempts = parsed
 	}
 
 	if raw := lookup(getenv, "DB_AUTO_MIGRATE"); raw != "" {

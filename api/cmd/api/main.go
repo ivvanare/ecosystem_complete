@@ -15,9 +15,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/ivvanare/ecosystem_complete/api/internal/audit"
 	"github.com/ivvanare/ecosystem_complete/api/internal/config"
 	"github.com/ivvanare/ecosystem_complete/api/internal/db"
 	"github.com/ivvanare/ecosystem_complete/api/internal/httpapi"
+	"github.com/ivvanare/ecosystem_complete/api/internal/login"
 	"github.com/ivvanare/ecosystem_complete/api/internal/probe"
 	"github.com/ivvanare/ecosystem_complete/api/internal/queue"
 	"github.com/ivvanare/ecosystem_complete/api/internal/session"
@@ -74,9 +76,17 @@ func run() error {
 		Issuer:     "melia-api",
 	}, session.NewPostgresRefreshStore(pool))
 
+	auditor := audit.NewPostgres(pool, []byte(cfg.JWTSecret))
+
 	// Verification is available even when the broker is down: a user who already holds a
 	// code must still be able to finish registering.
 	signupVerifier := signup.NewVerifier(signup.NewPostgresVerifier(pool), issuer)
+	signupVerifier.Auditor = auditor
+	signupVerifier.Logger = logger
+
+	loginService := login.New(login.NewPostgresStore(pool), issuer, auditor, logger)
+	loginService.MaxAttempts = cfg.LoginMaxAttempts
+	loginService.LockDuration = cfg.LoginLockDuration
 
 	// Starting a registration needs the broker to deliver the code. Without it the route
 	// stays unregistered rather than accepting a request it cannot fulfil.
@@ -97,6 +107,7 @@ func run() error {
 			CORSAllowedOrigins: cfg.CORSOrigins,
 			Signup:             signupRequester,
 			SignupVerifier:     signupVerifier,
+			Login:              loginService,
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
