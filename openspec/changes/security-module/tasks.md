@@ -19,7 +19,7 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
 | T8b | Password recovery and change, revoking every family | C4 | inline | this |
 | T8a | Admin users list, role assignment, audit read, first-admin bootstrap | C9, C10 | inline | this |
 | T9 | Audit writes on every auth event | C10 | inline (auth events) | done |
-| T10 | Social login with go-oidc | C8 | — | next |
+| T10 | Social login with go-oidc | C8 | inline | this |
 
 ## Log
 
@@ -221,3 +221,15 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
   the refusal is silent) and the throttled one still answers 202 while sending nothing —
   which is the property that keeps the endpoint from becoming an account oracle.
   `countMailsTo` was added to the shared lib for that assertion.
+- L21 — Social login, closing the module.
+  `POST /v1/auth/social` validates the provider ID token against its JWKS (go-oidc, audience
+  checked against the configured client id) and exchanges it for this API's own JWT. Identity
+  resolves by `(provider, sub)`; email is informational, an unverified address is never
+  stored, and a verified address owned by another account does not link them — the federated
+  account is created without the email, because linking by email would allow a takeover.
+  A provider without a client id answers `422`; with none configured the route is absent.
+  The OIDC verifier caches the discovered verifier behind a mutex: concurrent first logins
+  would otherwise write the map from two goroutines and crash the process.
+  Audit: `auth.social.login`, `auth.social.login_failed`, `auth.social.account_created`.
+  Not covered by k6: it needs a real provider token. The Go tests use a fake verifier and
+  cover known identity, first sight, invalid token, unconfigured provider and issuer failure.

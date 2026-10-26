@@ -36,6 +36,10 @@ const (
 	EventEmailChangeRequested = "auth.email.change_requested"
 	EventEmailChanged         = "auth.email.changed"
 	EventEmailChangeFailed    = "auth.email.change_failed"
+
+	EventSocialLogin          = "auth.social.login"
+	EventSocialLoginFailed    = "auth.social.login_failed"
+	EventSocialAccountCreated = "auth.social.account_created"
 )
 
 // Event is one row of the log.

@@ -33,6 +33,7 @@ type Options struct {
 	Admin              AdminReader
 	Password           PasswordService
 	EmailChange        EmailChangeService
+	Social             SocialAuthenticator
 }
 
 const defaultProbeTimeout = 2 * time.Second
@@ -87,6 +88,15 @@ func New(opts Options) http.Handler {
 			mux.HandleFunc("POST /v1/auth/password/change",
 				RequireAuth(opts.TokenParser, passwordHandler.changePassword))
 		}
+	}
+
+	if opts.Social != nil {
+		socialHandler := &socialHandlers{
+			service: opts.Social,
+			cookies: cookieSettings{allowedOrigins: opts.CORSAllowedOrigins, secure: opts.CookieSecure},
+			logger:  logger,
+		}
+		mux.HandleFunc("POST /v1/auth/social", socialHandler.login)
 	}
 
 	if opts.EmailChange != nil && opts.TokenParser != nil {

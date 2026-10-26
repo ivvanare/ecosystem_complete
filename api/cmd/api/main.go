@@ -27,6 +27,7 @@ import (
 	"github.com/ivvanare/ecosystem_complete/api/internal/queue"
 	"github.com/ivvanare/ecosystem_complete/api/internal/session"
 	"github.com/ivvanare/ecosystem_complete/api/internal/signup"
+	"github.com/ivvanare/ecosystem_complete/api/internal/social"
 )
 
 // readHeaderTimeout bounds slow-header connections without capping request bodies.
@@ -101,6 +102,14 @@ func run() error {
 
 	// Starting a registration needs the broker to deliver the code. Without it the route
 	// stays unregistered rather than accepting a request it cannot fulfil.
+	socialVerifier := social.NewOIDCVerifier(cfg.GoogleClientID, cfg.AppleClientID)
+	var socialService httpapi.SocialAuthenticator
+	if socialVerifier.Configured(social.ProviderGoogle) || socialVerifier.Configured(social.ProviderApple) {
+		socialService = social.New(socialVerifier, social.NewPostgresStore(pool), issuer, auditor, logger)
+	} else {
+		logger.Warn("GOOGLE_CLIENT_ID and APPLE_CLIENT_ID are empty: social login is disabled")
+	}
+
 	var emailChangeService httpapi.EmailChangeService
 	if cfg.RabbitMQURL != "" {
 		emailPublisher := queue.NewAMQP(cfg.RabbitMQURL, cfg.MailQueue)
@@ -143,6 +152,7 @@ func run() error {
 			Admin:              identityService,
 			Password:           passwordService,
 			EmailChange:        emailChangeService,
+			Social:             socialService,
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}

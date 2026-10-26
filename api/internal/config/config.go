@@ -45,6 +45,8 @@ type Config struct {
 	LoginMaxAttempts  int
 	LoginLockDuration time.Duration
 	CookieSecure      bool
+	GoogleClientID    string
+	AppleClientID     string
 	AutoMigrate       bool
 	LogLevel          slog.Level
 	ShutdownTimeout   time.Duration
@@ -71,6 +73,8 @@ func Load(getenv func(string) string) (Config, error) {
 		// Secure by default: a cookie without Secure over http would be a downgrade nobody
 		// notices until production.
 		CookieSecure:    true,
+		GoogleClientID:  valueOr(getenv, "GOOGLE_CLIENT_ID", ""),
+		AppleClientID:   valueOr(getenv, "APPLE_CLIENT_ID", ""),
 		AutoMigrate:     true,
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: DefaultShutdownTimeout,

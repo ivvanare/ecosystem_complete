@@ -56,6 +56,12 @@ type authHandlers struct {
 // refresh token as an httpOnly cookie and never sees it in the body, so a script injected
 // into the page cannot steal a long-lived credential.
 func (h *authHandlers) writeTokenPair(w http.ResponseWriter, r *http.Request, status int, tokens session.Tokens) {
+	writeTokenPair(w, r, status, tokens, h.cookies, h.logger)
+}
+
+// writeTokenPair is shared by every endpoint that opens a session, so the browser/mobile
+// split is decided in exactly one place.
+func writeTokenPair(w http.ResponseWriter, r *http.Request, status int, tokens session.Tokens, cookies cookieSettings, logger *slog.Logger) {
 	response := tokenPairResponse{
 		AccessToken:      tokens.AccessToken,
 		TokenType:        "Bearer",
@@ -64,9 +70,9 @@ func (h *authHandlers) writeTokenPair(w http.ResponseWriter, r *http.Request, st
 		RefreshExpiresIn: tokens.RefreshExpiresIn,
 	}
 
-	if h.cookies.isBrowser(r) {
-		if err := h.cookies.setSession(w, tokens); err != nil {
-			h.logger.Error("writing session cookies", slog.String("error", err.Error()))
+	if cookies.isBrowser(r) {
+		if err := cookies.setSession(w, tokens); err != nil {
+			logger.Error("writing session cookies", slog.String("error", err.Error()))
 			writeError(w, http.StatusInternalServerError, "internal_error", "The request could not be completed.")
 			return
 		}

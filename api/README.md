@@ -235,6 +235,26 @@ The two endpoints report exhaustion differently, on purpose:
   reveal that the account exists, because an unknown address never exhausts a quota — it
   never stores a token.
 
+## Social login
+
+`POST /v1/auth/social` takes the ID token the mobile app obtained with the provider's native
+SDK, validates it against the provider's JWKS and issues this API's own JWT. There is no
+redirect and no client secret: `golang.org/x/oauth2` is not involved on this path.
+
+- **Identity is resolved by `(provider, sub)`**, never by email. Apple invents relay addresses
+  and may withhold the address entirely, so email is informational.
+- The audience is checked against the configured client id, so a token minted for another
+  application cannot be replayed here.
+- An **unverified** provider address is never stored: keeping it out of `tx_email` means it
+  cannot occupy the unique index and block the person who really owns it.
+- A verified address that already belongs to another account does **not** link the accounts.
+  The federated account is created without the email instead. Linking by email would let a
+  provider take over an existing account.
+- The provider token is validated and discarded; it is never a credential for this API.
+
+A provider with an empty client id (`GOOGLE_CLIENT_ID`, `APPLE_CLIENT_ID`) is disabled and
+answers `422` naming `provider`; with both empty the route is not registered at all.
+
 ## Administration
 
 | Endpoint | What it does |
