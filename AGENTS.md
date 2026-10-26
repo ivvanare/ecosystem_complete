@@ -93,6 +93,9 @@ add a silent fallback.
 - The admin panel is a SPA on another origin: CORS is driven by `CORS_ALLOWED_ORIGINS`
   and enables credentials (the refresh token is an httpOnly cookie), so a wildcard origin
   is never valid and a preflight must never require authentication.
+- Consumer-facing docs live in `api/API.md` (flows, error catalogue, both session transports);
+  `api/openapi.yaml` is the machine-readable contract. Keep both true in the same commit as
+  the endpoint change.
 - The HTTP contract is `api/openapi.yaml`. Every new endpoint updates it in the same
   commit, and every error uses `{"error":{"code","message"}}` — clients parse `code`,
   never `message`.

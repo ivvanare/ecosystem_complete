@@ -76,7 +76,12 @@ melZone/
 
 ## API
 
-Only the runtime exists today; domain and security endpoints are the next change.
+The security module is implemented: registration, login, rotating sessions, password recovery,
+email change, social login, RBAC and the administration surface.
+
+- **Consumer guide**: [api/API.md](api/API.md) — endpoints, error codes, both session
+  transports and the limits.
+- **Machine-readable contract**: [api/openapi.yaml](api/openapi.yaml).
 
 | Method | Path | Purpose |
 |---|---|---|
