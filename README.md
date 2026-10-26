@@ -55,17 +55,23 @@ curl http://localhost:9000/health/ready   # per-dependency report
 
 ```
 melZone/
+├── .github/workflows/ # CI: test gate + image build
 ├── api/               # Go service (the only application)
 │   ├── cmd/api/       # HTTP entrypoint: config, wiring, signals, shutdown
 │   ├── cmd/worker/    # queue consumer: mail delivery over SMTP
-│   ├── internal/      # config, httpapi, db, probe
+│   ├── cmd/bootstrap/ # grants the first administrator
+│   ├── internal/      # config, httpapi, session, identity, audit, ...
 │   ├── Dockerfile
+│   ├── API.md         # consumer guide: flows, error codes, transports
+│   ├── openapi.yaml   # machine-readable contract
 │   └── README.md      # service documentation
 ├── database/          # PostgreSQL schema: canonical DBML + init scripts
 │   ├── diagram_base.txt
-│   ├── init/          # 01..05 SQL, applied by the container and by the service
+│   ├── init/          # 02..06 SQL, applied by the service
+│   ├── provision/     # 01: manual database bootstrap, never applied automatically
 │   └── verify_base_model.sql
-├── tests/k6/          # Load tests (k6)
+├── gui/admin/         # Angular admin SPA
+├── tests/k6/          # Contract and load tests (k6)
 ├── openspec/          # Change proposals, specs and task logs
 ├── docker-compose.yml # Multi-service orchestration
 ├── AGENTS.md          # Guidelines for AI agents
@@ -140,6 +146,48 @@ cd api && go test ./...
 Load tests live in `tests/k6/` (k6): `smoke.js` checks the contract without writing
 anything, `signup.js` measures the write path and the Argon2id cost. See
 [tests/k6/README.md](tests/k6/README.md).
+
+---
+
+## CI and branch protection
+
+`master` is protected: **no direct pushes**. Every change goes through a branch and a pull
+request, and the merge stays blocked until both CI jobs pass.
+
+| Job | What it verifies | Warm run |
+|---|---|---|
+| `test` | `gofmt`, a tidy `go.mod`, `go vet`, `go test -race ./...` | ~25 s |
+| `image` | that `api/Dockerfile` still builds | ~15 s |
+
+The test job includes `api/internal/contract`, which fails when a route, an error code or an
+environment variable exists in code but not in `api/openapi.yaml`, `api/API.md`,
+`api/README.md` or `api/.env.example` — and when an emitted error code has no test asserting
+it. Adding an endpoint is a three-file change by design.
+
+`-race` is not decoration: it catches the class of bug a plain run misses, like the
+unsynchronised map that once lived in the OIDC verifier cache.
+
+**What CI does not cover.** The problems this project actually hit — a double DDL applier, bind
+mount permissions, `42P06` on an empty database, the cookie path in the test suite — only appear
+with the stack running. That is still verified by hand:
+
+```bash
+docker compose up -d --build
+k6 run tests/k6/auth-flow.js
+```
+
+### Working in this repository
+
+```bash
+git switch -c feat/my-change
+# ... commits ...
+git push -u origin feat/my-change
+gh pr create --fill
+gh pr merge --squash --delete-branch   # once the checks are green
+```
+
+The required checks are matched by name (`test`, `image`). Renaming a job means updating the
+ruleset, otherwise every merge stays blocked.
 
 ---
 
