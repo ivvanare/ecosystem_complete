@@ -70,6 +70,10 @@ add a silent fallback.
 
 ## Testing
 
+- `go test ./...` includes `internal/contract`, which fails when a route, an error code or an
+  environment variable exists in code but not in `api/openapi.yaml`, `api/API.md`,
+  `api/README.md` or `api/.env.example` — and when an emitted error code has no test asserting
+  it. Adding an endpoint is a three-file change by design.
 - Framework: standard `go test` (no testify requirement in new tests)
 - Tests must not need PostgreSQL, Redis or RabbitMQ: probes and the migration ledger are
   interfaces, so tests pass fakes

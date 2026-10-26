@@ -68,7 +68,7 @@ func TestEmailChangeMapsItsErrors(t *testing.T) {
 		body string
 	}{
 		{"quota", &security.TooManyRequestsError{RetryAfter: 30 * time.Second}, http.StatusTooManyRequests, "rate_limited"},
-		{"same email", emailchange.ErrSameEmail, http.StatusUnprocessableEntity, "validation_failed"},
+		{"same email", emailchange.ErrSameEmail, http.StatusUnprocessableEntity, "unchanged"},
 		{"taken", emailchange.ErrEmailTaken, http.StatusConflict, "email_unavailable"},
 		{"wrong password", emailchange.ErrInvalidPassword, http.StatusBadRequest, "invalid_password"},
 	}

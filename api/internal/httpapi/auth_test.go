@@ -74,6 +74,7 @@ func TestSignupRejectsInvalidFieldsWithTheEnvelope(t *testing.T) {
 		{"bad email", `{"email":"no-es-email","name":"Ana","password":"una-clave-larga-123"}`, "email", "invalid"},
 		{"empty name", `{"email":"ana@melia.test","name":"  ","password":"una-clave-larga-123"}`, "name", "required"},
 		{"short password", `{"email":"ana@melia.test","name":"Ana","password":"corta"}`, "password", "too_short"},
+		{"name too long", `{"email":"ana@melia.test","name":"` + strings.Repeat("a", 121) + `","password":"una-clave-larga-123"}`, "name", "too_long"},
 	}
 
 	for _, tc := range cases {
@@ -120,6 +121,9 @@ func TestSignupRejectsMalformedJSON(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "invalid_json") {
+		t.Errorf("body = %s, want the invalid_json code", rec.Body.String())
 	}
 }
 
@@ -291,6 +295,9 @@ func TestLoginMapsFailures(t *testing.T) {
 		if got := rec.Header().Get("Retry-After"); got != "90" {
 			t.Errorf("Retry-After = %q, want 90", got)
 		}
+		if !strings.Contains(rec.Body.String(), "account_locked") {
+			t.Errorf("body = %s, want the account_locked code", rec.Body.String())
+		}
 		if !strings.Contains(rec.Body.String(), "retry_after_seconds") {
 			t.Errorf("body = %s", rec.Body.String())
 		}
@@ -457,6 +464,9 @@ func TestMeRequiresAToken(t *testing.T) {
 	rec := meHandler(t, &fakeIdentity{}, "")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "unauthorized") {
+		t.Errorf("body = %s, want the unauthorized code", rec.Body.String())
 	}
 }
 

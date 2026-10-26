@@ -233,3 +233,14 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
   Audit: `auth.social.login`, `auth.social.login_failed`, `auth.social.account_created`.
   Not covered by k6: it needs a real provider token. The Go tests use a fake verifier and
   cover known identity, first sight, invalid token, unconfigured provider and issuer failure.
+- L22 — Contract harness (`api/internal/contract`). It is a test, not a hook: `go test ./...`
+  is the gate everyone runs, so documentation drift fails where a broken handler would.
+  It reads the handler sources and asserts five things: every registered route exists in
+  `openapi.yaml` and in `API.md` (and no ghost entries in either), every emitted error code is
+  in the catalogue, every emitted error code is asserted by at least one test, and every
+  environment variable read by `config` appears in the README table and `.env.example`.
+  Its first run failed with six real findings — `account_locked`, `invalid_json`,
+  `not_configured`, `too_long`, `unauthorized` and `unchanged` were emitted but never asserted
+  in a test — so the tests were tightened instead of the check loosened.
+  Limit recorded: it cannot tell whether new behaviour is well tested beyond its error codes;
+  that stays a review responsibility.

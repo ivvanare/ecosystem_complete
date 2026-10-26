@@ -86,6 +86,28 @@ go vet ./...
 gofmt -l .
 ```
 
+### El arnés de contrato
+
+`internal/contract` no prueba comportamiento: prueba que **la API y su documentación no se
+separen**. Corre con el resto de la suite, así que un cambio que agrega algo sin documentarlo
+falla donde todos miran.
+
+Verifica, leyendo el código fuente de los handlers:
+
+| Chequeo | Qué detecta |
+|---|---|
+| Rutas registradas ↔ `openapi.yaml` | una ruta nueva sin contrato, o un contrato fantasma |
+| Rutas registradas ↔ `API.md` | un endpoint que el cliente nunca va a encontrar documentado |
+| Códigos de error emitidos ↔ catálogo de `API.md` | un `code` nuevo que nadie documentó |
+| Códigos de error ↔ tests | una rama de error nueva sin ningún test que la afirme |
+| Variables de entorno ↔ `README.md` y `.env.example` | configuración que existe solo en el código |
+
+Agregar un endpoint, un `code` o una variable es, por diseño, un cambio de tres archivos. El
+arnés lo hace explícito en vez de confiar en la memoria.
+
+Lo que **no** puede chequear es si el comportamiento nuevo está bien probado más allá de sus
+códigos de error; eso sigue siendo responsabilidad del review.
+
 Las pruebas de carga viven en [`../tests/k6/`](../tests/k6/README.md): `smoke.js` no escribe
 nada, `signup.js` y `auth-flow.js` sí. El viaje de `auth-flow.js` recorre registro, login,
 lockout, refresh, reuso, logout, CSRF, identidad, RBAC, recuperación de contraseña y cambio de

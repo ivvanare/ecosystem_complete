@@ -53,7 +53,7 @@ func TestSocialLoginMapsFailures(t *testing.T) {
 		body string
 	}{
 		{"invalid token", social.ErrInvalidToken, http.StatusUnauthorized, "invalid_token"},
-		{"unconfigured provider", social.ErrUnknownProvider, http.StatusUnprocessableEntity, "validation_failed"},
+		{"unconfigured provider", social.ErrUnknownProvider, http.StatusUnprocessableEntity, "not_configured"},
 	}
 
 	for _, tc := range cases {
