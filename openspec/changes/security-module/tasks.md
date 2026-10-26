@@ -134,3 +134,9 @@ Specs: `openspec/changes/security-api-contract/spec.md` (C1–C14) · Contract: 
   The k6 journey gained ten checks for this path, using k6's cookie jar.
   One defect caught by the tests: the login handler still used the old body writer, so the
   first browser login returned the refresh token in the body despite the new helper existing.
+- L13 — Two defects in the k6 journey, both mine, found on the first run of the cookie group:
+  `csrfCookieName` was used but not imported (ReferenceError), and
+  `http.cookieJar().cookiesForURL(BASE_URL)` queries with path `/`, while the session cookies
+  are scoped to `/v1/auth` — the jar returns nothing and the check reads as "cookie not set"
+  even when it is. Fixed by importing the constant and querying a URL inside the cookie path.
+  Result: 77/77 checks, 0% failed requests, p(95) 25ms.

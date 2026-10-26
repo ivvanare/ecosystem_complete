@@ -15,6 +15,7 @@ import {
   ORIGIN_HEADER,
   PASSWORD,
   postJSON,
+  csrfCookieName,
   refreshCookieName,
   uniqueEmail,
   waitForCode,
@@ -283,7 +284,11 @@ export default function () {
       'browser login still returns an access token': (r) => !!r.json('access_token'),
     });
 
-    const jar = http.cookieJar().cookiesForURL(BASE_URL);
+    // The cookies are scoped to /v1/auth, so the jar must be queried with a URL inside that
+    // path: asking for BASE_URL ("/") returns nothing and looks like the cookies were never
+    // set.
+    const sessionURL = `${BASE_URL}/v1/auth/refresh`;
+    const jar = http.cookieJar().cookiesForURL(sessionURL);
     check(jar, {
       'refresh cookie is set': (j) => Array.isArray(j[refreshCookieName]) && j[refreshCookieName].length > 0,
       'csrf cookie is set': (j) => Array.isArray(j[csrfCookieName]) && j[csrfCookieName].length > 0,
@@ -308,7 +313,7 @@ export default function () {
       'cookie refresh hides the rotated token too': (r) => r.json('refresh_token') === undefined,
     });
 
-    const freshCsrf = (http.cookieJar().cookiesForURL(BASE_URL)[csrfCookieName] || [])[0];
+    const freshCsrf = (http.cookieJar().cookiesForURL(sessionURL)[csrfCookieName] || [])[0];
     const logout = http.post(`${BASE_URL}/v1/auth/logout`, '{}', {
       headers: { 'Content-Type': 'application/json', Origin: ORIGIN_HEADER, 'X-CSRF-Token': freshCsrf },
     });
