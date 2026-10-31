@@ -1,8 +1,22 @@
 # crud-maker
 
-CRUD screens from one JSON-shaped config. You declare an entity — fields, views, filters, sorting, validation, actions — and `crud-maker` gives you a validated schema, a signal-based list state, and a CRUD engine that talks to any backend through a small transport interface. No UI library is coupled to it: today's demo screens are plain HTML, ng-zorro components come later.
+CRUD screens from one JSON-shaped config. You declare an entity — fields, views, filters, sorting, validation, actions — and `crud-maker` gives you a validated schema, a signal-based list state, and a CRUD engine that talks to any backend through a small transport interface. No UI library is coupled to it: this package is logic only, and every UI library is a separate adapter you install or ignore.
 
 Audience: developers adding an entity to the melia admin panel. One config object + one screen is the whole cost.
+
+## Packages and UI adapters
+
+`crud-maker` is a family, and **the install is the choice**:
+
+| What you install | What you get |
+|------------------|--------------|
+| `crud-maker` | the whole engine — config, state, controller, transport, cell views. You render with your own components. |
+| `crud-maker` + `crud-maker-zorro` + `ng-zorro-antd` | the same engine plus table, form and detail screens built on ng-zorro. |
+| `crud-maker` + a future `crud-maker-primeng` | the same engine plus PrimeNG screens. |
+
+The direction is one-way: an adapter depends on the core, never the reverse. `crud-maker` declares no UI
+dependency and its bundle imports none, so adding a third adapter touches no core source file. A "manual"
+UI is not a package — it is core alone, with the cell hints and validators still doing their job as data.
 
 ## Quick path
 
@@ -63,7 +77,7 @@ A complete working screen lives at `src/app/demo/` (FAQ vertical). It uses an in
 ## Consume from the admin app
 
 - Import **only from `crud-maker`** (the public API is `src/public-api.ts`; deep imports are not supported).
-- The workspace maps `crud-maker` → `dist/crud-maker`: after editing the library, run `ng build crud-maker` before app tests or `ng serve`.
+- The workspace maps `crud-maker` → `dist/crud-maker`: after editing the library, run `ng build crud-maker` before anything that imports it. An adapter goes further: `ng build crud-maker` → `ng build crud-maker-zorro` → `ng test admin` / `ng build`.
 - Tests: `ng test crud-maker` (vitest). The library has no runtime dependency beyond `@angular/core` and `@angular/common`.
 
 ## Config reference — `defineCrudConfig(raw): ResolvedCrudConfig`
@@ -265,8 +279,9 @@ The demo's `MemoryTransport` (`src/app/demo/memory-transport.ts`) is the canonic
 
 ## Out of scope (by design)
 
-- **UI**: no components ship with the library. Generic ng-zorro screens are planned as T4 in `odd/tasks/crud-maker.md`.
+- **UI**: no components ship in this package. Screens live in an adapter — `crud-maker-zorro` today, and a PrimeNG adapter only when the contract is proven.
 - **Auth / i18n / notifications**: injected via `hooks`/registry, never imported.
+- **Runtime adapter selection**: the choice is made at install time, so there is no adapter registry to configure.
 - **Option resource fetching** (see Config reference).
 
 ## Consumer checklist

@@ -7,3 +7,4 @@ export * from './lib/engine/transport';
 export * from './lib/engine/params';
 export * from './lib/engine/crud-controller';
 export * from './lib/engine/http-transport';
+export * from './lib/adapter/cell-view';
