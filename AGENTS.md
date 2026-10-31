@@ -32,7 +32,7 @@ melZone/
 
 ## Developer Commands
 
-All commands run inside `api/`:
+Backend commands run inside `api/`:
 
 | Command | Purpose |
 |---------|---------|
@@ -45,9 +45,24 @@ All commands run inside `api/`:
 | `docker compose run --rm --entrypoint /usr/local/bin/bootstrap -e EMAIL=... -e ROLE=SUPERADMIN api` | Grant the first administrator |
 | `gh pr create --fill` | Open a PR; `master` rejects direct pushes |
 
-`master` is protected by a ruleset: work on a branch, open a PR and merge once `test` and
-`image` are green. A direct `git push origin master` is rejected. The required checks are
-matched by name, so renaming a CI job also means updating the ruleset.
+Frontend commands run inside `gui/admin/` (its own pnpm workspace root):
+
+| Command | Purpose |
+|---------|---------|
+| `pnpm install --frozen-lockfile` | Install exactly what the lockfile pins (what CI runs) |
+| `npx ng build crud-maker` | Build the local library — required before the app typechecks |
+| `npx ng test crud-maker --watch=false` | Library suite (vitest) |
+| `npx ng test admin --watch=false` | SPA suite (vitest) |
+| `npx ng build` | Production build, with the budgets |
+| `npx ng serve` | Dev server on `:4200` |
+
+`crud-maker` is resolved through `tsconfig.json` paths to `./dist/crud-maker`, and `dist/`
+is not versioned, so a clean checkout has to build the library before the app can typecheck
+or test. The `admin` CI job does exactly that, in that order.
+
+`master` is protected by a ruleset: work on a branch, open a PR and merge once `test`,
+`admin` and `image` are green. A direct `git push origin master` is rejected. The required
+checks are matched by name, so renaming a CI job also means updating the ruleset.
 
 ## Docker Services
 
@@ -83,6 +98,9 @@ add a silent fallback.
 - Tests must not need PostgreSQL, Redis or RabbitMQ: probes and the migration ledger are
   interfaces, so tests pass fakes
 - `api/internal/...` is a closed surface — keep it that way so packages stay free to move
+- Frontend suites are the two `@angular/build:unit-test` targets (`crud-maker`, `admin`) on
+  vitest/jsdom: no browser and no API needed. The `admin` CI job runs them in the order the
+  workspace requires (library build first); keep that order when adding a step there.
 
 ## Key Architecture Notes
 
@@ -123,6 +141,49 @@ add a silent fallback.
 - `gofmt` / `go vet` clean; no formatter config needed
 - Errors wrapped with `%w` and context; never discarded silently
 - Logging with `log/slog`; the logger is injected, not a package global
+
+## Commit Scope
+
+One repository, two independent sides. A commit stays on one side; a branch belongs to one
+side. This is what keeps a backend push from carrying frontend work in progress.
+
+| Paths | Side |
+|-------|------|
+| `api/`, `database/`, `tests/` | backend |
+| `gui/` | frontend |
+| `odd/`, `openspec/`, `.github/`, `scripts/`, root docs, `docker-compose.yml` | whichever side it describes |
+
+`scripts/check-commit-scope.sh` rejects a commit that stages both sides, reading the index so
+unrelated dirty files do not matter. Install it once per clone (git shares `hooks/` across
+linked worktrees, so one install covers them all):
+
+```bash
+cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+bash scripts/check-commit-scope.test.sh   # the guardrail's own tests
+```
+
+Stage by path. Never `git add -A` or `git commit -a` while the other side is dirty:
+
+```bash
+git commit -m "feat(api): ..." -- api database tests
+git commit -m "feat(admin): ..." -- gui
+```
+
+A change that genuinely belongs to both sides opts out explicitly, and the hook says so:
+
+```bash
+MELIA_ALLOW_MIXED=1 git commit -m "chore(contract): ..."
+```
+
+Prefix branches by side (`feat/api-*`, `feat/admin-*`, same for `fix/`). Before opening a PR,
+prove the branch kept its side — a backend branch must print nothing here:
+
+```bash
+git diff --name-only origin/master...HEAD | grep -E '^(api|database|tests)/'
+```
+
+`gofmt` and `go vet` stay in CI instead of in the hook: they need a toolchain, and a commit
+should not fail because Go is not on `PATH`.
 
 ## Gotchas
 
