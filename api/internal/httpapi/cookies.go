@@ -42,11 +42,12 @@ func (c cookieSettings) isBrowser(r *http.Request) bool {
 }
 
 // setSession writes both cookies: the httpOnly refresh token and the readable CSRF token the
-// SPA echoes back in a header.
-func (c cookieSettings) setSession(w http.ResponseWriter, tokens session.Tokens) error {
+// SPA echoes back in a header. The cookie is scoped to /v1/auth, so a document served from
+// the SPA root cannot read it — the generated value is also returned for the response body.
+func (c cookieSettings) setSession(w http.ResponseWriter, tokens session.Tokens) (string, error) {
 	csrf, err := newCSRFToken()
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	http.SetCookie(w, &http.Cookie{
@@ -69,7 +70,7 @@ func (c cookieSettings) setSession(w http.ResponseWriter, tokens session.Tokens)
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	return nil
+	return csrf, nil
 }
 
 // clearSession expires both cookies.

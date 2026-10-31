@@ -244,9 +244,13 @@ paths:
       tags: [Auth]
       operationId: logout
       summary: End the current session
-      description: Revokes the refresh family of the presented refresh token.
-      security:
-        - bearerAuth: []
+      description: |
+        Revokes the refresh family of the presented refresh token.
+
+        Deliberately unauthenticated: the caller proves possession with the refresh token
+        itself (body or cookie), and an expired access token must not stop it from ending a
+        session. Always answers `204`, even for an unknown token, because the desired state
+        is reached either way and an error would confirm whether the token existed.
       parameters:
         - name: refresh_token
           in: cookie
@@ -255,6 +259,7 @@ paths:
         - name: X-CSRF-Token
           in: header
           required: false
+          description: Required when the refresh token comes from the cookie (double submit).
           schema: { type: string }
       requestBody:
         required: false
@@ -266,9 +271,15 @@ paths:
                 refresh_token: { type: string }
       responses:
         "204":
-          description: Session revoked. Idempotent.
-        "401":
-          $ref: "#/components/responses/Unauthorized"
+          description: |
+            Family revoked. When the refresh token came from the cookie, both cookies are
+            expired in the same response. Idempotent.
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+              description: '`refresh_token` and `csrf_token` emptied with `Max-Age=0`. Sent only for the cookie transport.'
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /v1/auth/password/forgot:
     post:
@@ -777,6 +788,15 @@ components:
         refresh_expires_in:
           type: integer
           example: 2592000
+        csrf_token:
+          type: string
+          description: |
+            Browser only. Same value as the readable `csrf_token` cookie, repeated in the
+            body because that cookie is scoped to `Path=/v1/auth` and a document served
+            from the SPA root (or any other host) cannot read it. The client must echo it
+            as the `X-CSRF-Token` header on `/v1/auth/refresh` and `/v1/auth/logout`
+            (double submit). Absent for non-browser clients: they hold the refresh token
+            in the body and pass no CSRF check.
 
     Readiness:
       type: object

@@ -71,12 +71,16 @@ func writeTokenPair(w http.ResponseWriter, r *http.Request, status int, tokens s
 	}
 
 	if cookies.isBrowser(r) {
-		if err := cookies.setSession(w, tokens); err != nil {
+		csrf, err := cookies.setSession(w, tokens)
+		if err != nil {
 			logger.Error("writing session cookies", slog.String("error", err.Error()))
 			writeError(w, http.StatusInternalServerError, "internal_error", "The request could not be completed.")
 			return
 		}
 		response.RefreshToken = ""
+		// The CSRF cookie is scoped to /v1/auth, so the panel cannot read it from the SPA
+		// root — it takes the value from here and echoes it as X-CSRF-Token.
+		response.CSRFToken = csrf
 	}
 
 	writeJSON(w, status, response)
@@ -166,6 +170,9 @@ type tokenPairResponse struct {
 	ExpiresIn        int    `json:"expires_in"`
 	RefreshToken     string `json:"refresh_token,omitempty"`
 	RefreshExpiresIn int    `json:"refresh_expires_in"`
+	// Browser only: a non-browser client holds the refresh token in the body and has no
+	// double-submit to pass, so omitempty keeps its body byte-identical.
+	CSRFToken string `json:"csrf_token,omitempty"`
 }
 
 // verifySignup consumes the emailed code. Every failure that depends on the code itself
