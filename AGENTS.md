@@ -124,6 +124,49 @@ add a silent fallback.
 - Errors wrapped with `%w` and context; never discarded silently
 - Logging with `log/slog`; the logger is injected, not a package global
 
+## Commit Scope
+
+One repository, two independent sides. A commit stays on one side; a branch belongs to one
+side. This is what keeps a backend push from carrying frontend work in progress.
+
+| Paths | Side |
+|-------|------|
+| `api/`, `database/`, `tests/` | backend |
+| `gui/` | frontend |
+| `odd/`, `openspec/`, `.github/`, `scripts/`, root docs, `docker-compose.yml` | whichever side it describes |
+
+`scripts/check-commit-scope.sh` rejects a commit that stages both sides, reading the index so
+unrelated dirty files do not matter. Install it once per clone (git shares `hooks/` across
+linked worktrees, so one install covers them all):
+
+```bash
+cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+bash scripts/check-commit-scope.test.sh   # the guardrail's own tests
+```
+
+Stage by path. Never `git add -A` or `git commit -a` while the other side is dirty:
+
+```bash
+git commit -m "feat(api): ..." -- api database tests
+git commit -m "feat(admin): ..." -- gui
+```
+
+A change that genuinely belongs to both sides opts out explicitly, and the hook says so:
+
+```bash
+MELIA_ALLOW_MIXED=1 git commit -m "chore(contract): ..."
+```
+
+Prefix branches by side (`feat/api-*`, `feat/admin-*`, same for `fix/`). Before opening a PR,
+prove the branch kept its side — a backend branch must print nothing here:
+
+```bash
+git diff --name-only origin/master...HEAD | grep -E '^(api|database|tests)/'
+```
+
+`gofmt` and `go vet` stay in CI instead of in the hook: they need a toolchain, and a commit
+should not fail because Go is not on `PATH`.
+
 ## Gotchas
 
 - Go may be installed at `/usr/local/go/bin` and not on `PATH`

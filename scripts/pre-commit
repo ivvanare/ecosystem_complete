@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Git pre-commit entry point, tracked so a fresh clone installs the exact reviewed bytes.
+#
+# Install once per clone (the hooks directory is shared by every linked worktree):
+#   cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+#
+# The wrapper only locates the check, which lives beside it so both are versioned together.
+# It resolves the script from the current worktree root, so a worktree on an older branch
+# (before this file existed) commits normally instead of failing.
+
+root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+script="$root/scripts/check-commit-scope.sh"
+[ -f "$script" ] || exit 0
+exec bash "$script"
