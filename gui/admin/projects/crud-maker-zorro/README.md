@@ -31,7 +31,21 @@ instead of pushing a free-form string into a typed API.
 Nothing here formats values: `resolveCellView` in `crud-maker` already returned
 `{ kind, text, variant }`, so every adapter shows the same text for the same config.
 
+## Components
+
+### `crud-table`
+
+```html
+<crud-table [config]="config" [controller]="controller" (edit)="openForm($event)" (remove)="confirmDelete($event)" />
+```
+
+Columns come from `config.listFields`; each cell is a `crud-cell`, so cell hints and formatters behave
+exactly as configured. Sorting and paging are translated into `CrudListState` and the table refetches
+itself on every change — call `controller.load()` once yourself for the first page. The actions column
+appears only when the config (or `ControllerHooks.can`) allows update/delete, and it never mutates: it
+emits the row so the consumer decides the dialog, the route and the confirmation.
+
 ## Status
 
-Early. `crud-cell` is implemented and tested; the table, form and detail screens are the
+Early. `crud-cell` and `crud-table` are implemented and tested; the form and detail screens are the
 next deliverables.
