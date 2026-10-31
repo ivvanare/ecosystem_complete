@@ -32,10 +32,20 @@ export interface Me {
 export type AuthStatus = 'unknown' | 'authenticated' | 'anonymous';
 
 /**
+ * The one value web storage may hold: the CSRF double-submit token (L9). It is
+ * not a credential — it only defeats requests a browser builds by itself — so
+ * persisting it does not weaken L4, which rules out storage for the access
+ * token. The refresh token never leaves its httpOnly cookie.
+ */
+export const CSRF_STORAGE_KEY = 'melia.csrf_token';
+
+/**
  * Session state for the panel, on the browser transport (S2): the refresh token
  * lives in an httpOnly cookie that JS cannot read, and the access token lives in
- * memory only (L4) — never localStorage/sessionStorage, so a reload always starts
- * from `restoreSession()`. Errors propagate as `HttpErrorResponse`; callers parse
+ * memory only (L4). The CSRF double-submit value is the single exception: it is
+ * kept in `sessionStorage` (tab-scoped) so a reload can echo it on the silent
+ * refresh — without it the API answers `403 csrf_invalid` and every reload would
+ * fall to /login (L9). Errors propagate as `HttpErrorResponse`; callers parse
  * `error.error.code`, never `message`.
  */
 @Injectable({ providedIn: 'root' })
@@ -55,6 +65,13 @@ export class AuthService {
 
   /** The one in-flight rotation every concurrent caller shares (S3). */
   private refreshInFlight: Promise<string> | null = null;
+
+  constructor() {
+    // Boot (L9): the in-memory tokens died with the page, but the double-submit
+    // value survived in sessionStorage — seed the state from it so the silent
+    // refresh can echo `X-CSRF-Token` instead of failing as 403 csrf_invalid.
+    this.csrfTokenState.set(sessionStorage.getItem(CSRF_STORAGE_KEY));
+  }
 
   /**
    * Opens a session. The body asks for the browser transport implicitly — the SPA's
@@ -150,9 +167,9 @@ export class AuthService {
   }
 
   /**
-   * Double-submit header for the cookie-based auth calls. After a reload there is
-   * no in-memory value to echo; persisting one across reloads is a T4 decision
-   * (L4 ruled out storage only for the access token), so nothing is invented here.
+   * Double-submit header for the cookie-based auth calls. The value comes from
+   * memory after a login or rotation, and from sessionStorage right after a
+   * reload (L9); when neither exists the call is made bare and the API decides.
    */
   private csrfHeaders(): Record<string, string> {
     const csrf = this.csrfTokenState();
@@ -161,9 +178,11 @@ export class AuthService {
 
   private applyTokenPair(pair: TokenPairResponse): void {
     this.accessTokenState.set(pair.access_token);
-    // The CSRF value rotates with every refresh: keep the new one, drop the old.
+    // The CSRF value rotates with every refresh: keep the new one, drop the old,
+    // and overwrite the stored copy so the next reload echoes the latest (L9).
     if (pair.csrf_token) {
       this.csrfTokenState.set(pair.csrf_token);
+      sessionStorage.setItem(CSRF_STORAGE_KEY, pair.csrf_token);
     }
     this.statusState.set('authenticated');
   }
@@ -171,6 +190,7 @@ export class AuthService {
   private clearSession(): void {
     this.accessTokenState.set(null);
     this.csrfTokenState.set(null);
+    sessionStorage.removeItem(CSRF_STORAGE_KEY);
     this.userState.set(null);
     this.statusState.set('anonymous');
   }

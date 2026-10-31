@@ -13,6 +13,9 @@ import { AuthService } from './auth.service';
  * - On a 401 it refreshes once through `AuthService.refresh()` — single-flight, so
  *   a burst of concurrent 401s rotates exactly once — then retries the original
  *   request once with the new token. A second 401 propagates: no loop.
+ * - A 401 with no session in memory is NOT refreshed: the family is dead or never
+ *   existed, so the refresh could only answer `refresh_invalid` and mask the 401
+ *   the caller actually received. The caller's own error propagates as-is.
  *
  * Requests outside `API_URL` pass through untouched: no token, no credentials, no
  * refresh. The same `startsWith` boundary is what keeps a `…/v10` sibling host path
@@ -39,6 +42,11 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
   return next(outgoing).pipe(
     catchError((error: unknown) => {
       if (!(error instanceof HttpErrorResponse) || error.status !== 401) {
+        return throwError(() => error);
+      }
+      // No session to refresh: the rotation could only fail, so the caller must
+      // see its own 401 rather than a `refresh_invalid` it never caused.
+      if (auth.status() !== 'authenticated') {
         return throwError(() => error);
       }
       return from(auth.refresh()).pipe(

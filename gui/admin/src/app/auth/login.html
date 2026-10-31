@@ -1,0 +1,38 @@
+<main class="login-screen">
+  <form class="login-form" (submit)="submit($event)">
+    <header class="login-header">
+      <h1>melZone admin</h1>
+      <p class="subtitle">Sign in with your panel account</p>
+    </header>
+
+    <div class="field">
+      <label for="email">Email</label>
+      <input id="email" type="email" autocomplete="username" [formField]="loginForm.email" #ef="formField" />
+      @if (ef.state().touched() && ef.errors().length > 0) {
+        <small class="err">{{ ef.errors()[0]!.message }}</small>
+      }
+    </div>
+
+    <div class="field">
+      <label for="password">Password</label>
+      <input
+        id="password"
+        type="password"
+        autocomplete="current-password"
+        [formField]="loginForm.password"
+        #pf="formField"
+      />
+      @if (pf.state().touched() && pf.errors().length > 0) {
+        <small class="err">{{ pf.errors()[0]!.message }}</small>
+      }
+    </div>
+
+    @if (errorCode(); as code) {
+      <p class="error" role="alert">{{ code }}</p>
+    }
+
+    <button type="submit" class="primary" [disabled]="submitting() || loginForm().invalid()">
+      {{ submitting() ? 'Signing in…' : 'Sign in' }}
+    </button>
+  </form>
+</main>

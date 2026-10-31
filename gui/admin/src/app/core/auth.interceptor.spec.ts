@@ -56,6 +56,9 @@ describe('authInterceptor', () => {
   let auth: AuthService;
 
   beforeEach(() => {
+    // The service reads the persisted CSRF value at construction (L9): keep tests hermetic.
+    sessionStorage.clear();
+    localStorage.clear();
     TestBed.configureTestingModule({
       providers: [
         { provide: API_URL, useValue: API },
@@ -181,6 +184,37 @@ describe('authInterceptor', () => {
     httpMock.expectOne(`${API}/faqs`).flush(UNAUTHORIZED.body, UNAUTHORIZED.opts);
 
     await expect(call).rejects.toMatchObject({ status: 401 });
+    httpMock.expectNone(`${API}/auth/refresh`);
+  });
+
+  it('skips the refresh when there is no session: the caller keeps its own 401', async () => {
+    // Never logged in: there is nothing to rotate, so a refresh could only
+    // answer refresh_invalid and mask the 401 the caller actually received.
+    const call = firstValueFrom(http.get(`${API}/faqs`));
+    httpMock
+      .expectOne(`${API}/faqs`)
+      .flush(unauthorized('unauthorized').body, unauthorized('unauthorized').opts);
+
+    await expect(call).rejects.toMatchObject({
+      status: 401,
+      error: { error: { code: 'unauthorized' } },
+    });
+    await tick();
+    httpMock.expectNone(`${API}/auth/refresh`);
+  });
+
+  it('a 401 after logout is not refreshed either: the family is already gone', async () => {
+    await login();
+    const logout = auth.logout();
+    httpMock.expectOne(`${API}/auth/logout`).flush(null, { status: 204, statusText: 'No Content' });
+    await logout;
+    expect(auth.status()).toBe('anonymous');
+
+    const call = firstValueFrom(http.get(`${API}/faqs`));
+    httpMock.expectOne(`${API}/faqs`).flush(UNAUTHORIZED.body, UNAUTHORIZED.opts);
+
+    await expect(call).rejects.toMatchObject({ status: 401 });
+    await tick();
     httpMock.expectNone(`${API}/auth/refresh`);
   });
 

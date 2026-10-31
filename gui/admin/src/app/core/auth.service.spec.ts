@@ -3,7 +3,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { API_URL } from './api-url.token';
-import { AuthService, type Me, type TokenPairResponse } from './auth.service';
+import { AuthService, CSRF_STORAGE_KEY, type Me, type TokenPairResponse } from './auth.service';
 
 const API = 'https://api.test/v1';
 
@@ -41,6 +41,9 @@ describe('AuthService', () => {
   let http: HttpTestingController;
 
   beforeEach(() => {
+    // Storage survives a reload by design (L9) — so it must not leak between tests either.
+    sessionStorage.clear();
+    localStorage.clear();
     TestBed.configureTestingModule({
       providers: [
         { provide: API_URL, useValue: API },
@@ -166,6 +169,8 @@ describe('AuthService', () => {
     expect(auth.accessToken()).toBeNull();
     expect(auth.csrfToken()).toBeNull();
     expect(auth.user()).toBeNull();
+    // A dead family also drops the persisted double-submit value (L9).
+    expect(sessionStorage.getItem(CSRF_STORAGE_KEY)).toBeNull();
   });
 
   it('restoreSession refreshes silently and lands authenticated with the profile', async () => {
@@ -190,6 +195,40 @@ describe('AuthService', () => {
     http.expectNone(`${API}/me`);
   });
 
+  it('boot echoes the CSRF value kept in sessionStorage, so the silent refresh is no 403 (L9)', async () => {
+    sessionStorage.setItem(CSRF_STORAGE_KEY, 'csrf-boot');
+    // A fresh instance is a fresh page load: memory is gone, storage survived.
+    const booted = TestBed.runInInjectionContext(() => new AuthService());
+    expect(booted.accessToken()).toBeNull();
+    expect(booted.csrfToken()).toBe('csrf-boot');
+
+    const pending = booted.restoreSession();
+    const req = http.expectOne(`${API}/auth/refresh`);
+    // The header the API compares against the CSRF cookie: without it the boot
+    // refresh answers 403 csrf_invalid and the panel would fall to /login (L9).
+    expect(req.request.headers.get('X-CSRF-Token')).toBe('csrf-boot');
+    req.flush(tokenPair());
+    await tick();
+    http.expectOne(`${API}/me`).flush(ME);
+
+    await expect(pending).resolves.toBe(true);
+    expect(booted.status()).toBe('authenticated');
+    // Rotation overwrote the stored value, so the next reload echoes csrf-1.
+    expect(sessionStorage.getItem(CSRF_STORAGE_KEY)).toBe('csrf-1');
+  });
+
+  it('a failed restore drops the stored CSRF value too', async () => {
+    sessionStorage.setItem(CSRF_STORAGE_KEY, 'csrf-stale');
+    const booted = TestBed.runInInjectionContext(() => new AuthService());
+
+    const pending = booted.restoreSession();
+    http.expectOne(`${API}/auth/refresh`).flush(...apiError(401, 'refresh_invalid'));
+
+    await expect(pending).resolves.toBe(false);
+    expect(booted.status()).toBe('anonymous');
+    expect(sessionStorage.getItem(CSRF_STORAGE_KEY)).toBeNull();
+  });
+
   it('logout echoes the current CSRF token, then clears the local session', async () => {
     await login();
     // Rotate once so the echoed value proves it tracks the latest pair.
@@ -211,6 +250,7 @@ describe('AuthService', () => {
     expect(auth.accessToken()).toBeNull();
     expect(auth.csrfToken()).toBeNull();
     expect(auth.user()).toBeNull();
+    expect(sessionStorage.getItem(CSRF_STORAGE_KEY)).toBeNull();
   });
 
   it('logout clears the local session even when the request fails', async () => {
@@ -224,16 +264,30 @@ describe('AuthService', () => {
     expect(auth.accessToken()).toBeNull();
   });
 
-  it('never writes the session to web storage (L4)', async () => {
+  it('persists only the CSRF value — the access token never touches storage (L4 + L9)', async () => {
     const setItem = vi.spyOn(Storage.prototype, 'setItem');
 
     await login();
     const rotated = auth.refresh();
-    http.expectOne(`${API}/auth/refresh`).flush(tokenPair({ access_token: 'access-2' }));
+    http
+      .expectOne(`${API}/auth/refresh`)
+      .flush(tokenPair({ access_token: 'access-2', csrf_token: 'csrf-2' }));
     await rotated;
 
-    expect(setItem).not.toHaveBeenCalled();
+    // Exactly one key may ever be written, overwritten on each rotation (L9).
+    expect(setItem).toHaveBeenCalled();
+    for (const [key] of setItem.mock.calls) {
+      expect(key).toBe(CSRF_STORAGE_KEY);
+    }
+    expect(sessionStorage.getItem(CSRF_STORAGE_KEY)).toBe('csrf-2');
+    expect(sessionStorage.length).toBe(1);
     expect(localStorage.length).toBe(0);
-    expect(sessionStorage.length).toBe(0);
+
+    // The 15-minute access token stays memory-only (L4): no stored value may be it.
+    const stored = [sessionStorage, localStorage].flatMap((store) =>
+      Array.from({ length: store.length }, (_, i) => store.getItem(store.key(i) as string)),
+    );
+    expect(stored).not.toContain('access-1');
+    expect(stored).not.toContain('access-2');
   });
 });
