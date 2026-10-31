@@ -59,7 +59,17 @@ compiled predicate. A `select` whose `options` name a resource resolves through 
 the core uses, so the JSON still only names the resource. `value` seeds the form and switching it reseeds
 it; submitting goes through `controller.save()`, which enforces the action matrix and refreshes the list.
 
+### `crud-detail`
+
+```html
+<crud-detail [config]="config" [value]="row()" />
+```
+
+A definition list, not a table and not a disabled form: values go through `crud-cell`, so hints and
+formatters are identical to the list. It renders the record it is given — loading stays with
+`controller.detail(id)`, so the adapter never fetches twice.
+
 ## Status
 
-Early. `crud-cell`, `crud-table` and `crud-form` are implemented and tested; the detail screen is the next
-deliverable.
+The four screens (`crud-cell`, `crud-table`, `crud-form`, `crud-detail`) are implemented and tested. The
+PrimeNG adapter is deferred until this one has proven the contract; it is additive by construction.

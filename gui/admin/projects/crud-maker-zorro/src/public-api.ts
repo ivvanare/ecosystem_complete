@@ -3,5 +3,6 @@
  */
 
 export * from './lib/cell/crud-cell';
+export * from './lib/detail/crud-detail';
 export * from './lib/form/crud-form';
 export * from './lib/table/crud-table';
