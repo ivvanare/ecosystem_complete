@@ -177,6 +177,11 @@ POST /v1/auth/logout
 
 → `204` **siempre**, incluso con un token desconocido. Revoca la familia.
 
+Si el token vino de la cookie, la misma respuesta vence `refresh_token` y `csrf_token`
+(`Max-Age=0`). Si vino de la cookie y falta o no coincide `X-CSRF-Token`, responde
+`403 csrf_invalid` y no revoca nada. No lleva `Authorization`: el token presentado es la
+prueba, y un access token vencido no debe impedir cerrar la sesión.
+
 ### 5.5 Cambio y recuperación de contraseña
 
 **Olvidé mi contraseña**
