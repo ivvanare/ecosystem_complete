@@ -48,6 +48,7 @@ Frontend commands run inside `gui/admin/` (its own pnpm workspace root):
 
 | Command | Purpose |
 |---------|---------|
+| `scripts/link-crud-maker.sh` | Run once per worktree, before `pnpm install` — see below |
 | `pnpm install --frozen-lockfile` | Install exactly what the lockfile pins (what CI runs) |
 | `npx ng test admin --watch=false` | SPA suite (vitest) |
 | `npx ng build` | Production build, with the budgets |
