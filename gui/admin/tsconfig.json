@@ -4,7 +4,8 @@
   "compileOnSave": false,
   "compilerOptions": {
     "paths": {
-      "crud-maker": ["./dist/crud-maker"]
+      "crud-maker": ["./dist/crud-maker"],
+      "crud-maker-zorro": ["./dist/crud-maker-zorro"]
     },
     "noImplicitOverride": true,
     "noPropertyAccessFromIndexSignature": true,
@@ -35,6 +36,12 @@
     },
     {
       "path": "./projects/crud-maker/tsconfig.spec.json"
+    },
+    {
+      "path": "./projects/crud-maker-zorro/tsconfig.lib.json"
+    },
+    {
+      "path": "./projects/crud-maker-zorro/tsconfig.spec.json"
     }
   ]
 }

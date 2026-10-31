@@ -23,7 +23,7 @@ melZone/
 │   ├── internal/      # config · httpapi · db · probe
 │   └── Dockerfile
 ├── gui/admin/         # Angular 22 admin SPA (pnpm, vitest via `ng test`)
-│   └── projects/crud-maker/  # local library: JSON-config CRUD engine (README inside)
+│   └── projects/      # local libraries: crud-maker (logic) + crud-maker-zorro (UI adapter)
 ├── database/          # PostgreSQL init scripts + canonical DBML
 ├── tests/k6/          # Load tests (k6)
 ├── openspec/          # Change proposals, specs, task logs
@@ -50,15 +50,19 @@ Frontend commands run inside `gui/admin/` (its own pnpm workspace root):
 | Command | Purpose |
 |---------|---------|
 | `pnpm install --frozen-lockfile` | Install exactly what the lockfile pins (what CI runs) |
-| `npx ng build crud-maker` | Build the local library — required before the app typechecks |
-| `npx ng test crud-maker --watch=false` | Library suite (vitest) |
+| `npx ng build crud-maker` | Build the core library — required before the adapter or the app typechecks |
+| `npx ng test crud-maker --watch=false` | Core library suite (vitest) |
+| `npx ng build crud-maker-zorro` | Build the ng-zorro adapter (after the core library) |
+| `npx ng test crud-maker-zorro --watch=false` | Adapter suite (vitest, needs `crud-maker` built) |
 | `npx ng test admin --watch=false` | SPA suite (vitest) |
 | `npx ng build` | Production build, with the budgets |
 | `npx ng serve` | Dev server on `:4200` |
 
 `crud-maker` is resolved through `tsconfig.json` paths to `./dist/crud-maker`, and `dist/`
-is not versioned, so a clean checkout has to build the library before the app can typecheck
-or test. The `admin` CI job does exactly that, in that order.
+is not versioned, so a clean checkout has to build the packages in dependency order: core
+first, then `crud-maker-zorro`, then the app. The `admin` CI job does exactly that, in that
+order. Each package added to the family adds one build and one test step there, in the same
+order — the adapter may import the core, never the reverse.
 
 `master` is protected by a ruleset: work on a branch, open a PR and merge once `test`,
 `admin` and `image` are green. A direct `git push origin master` is rejected. The required
@@ -98,9 +102,10 @@ add a silent fallback.
 - Tests must not need PostgreSQL, Redis or RabbitMQ: probes and the migration ledger are
   interfaces, so tests pass fakes
 - `api/internal/...` is a closed surface — keep it that way so packages stay free to move
-- Frontend suites are the two `@angular/build:unit-test` targets (`crud-maker`, `admin`) on
-  vitest/jsdom: no browser and no API needed. The `admin` CI job runs them in the order the
-  workspace requires (library build first); keep that order when adding a step there.
+- Frontend suites are the `@angular/build:unit-test` targets (`crud-maker`, `crud-maker-zorro`,
+  `admin`) on vitest/jsdom: no browser and no API needed. The `admin` CI job runs them in the
+  order the workspace requires (core library, then the adapter, then the app); keep that order
+  when adding a step there.
 
 ## Key Architecture Notes
 
@@ -194,7 +199,8 @@ should not fail because Go is not on `PATH`.
   `docker compose down -v`
 - Session tables are intentionally absent: auth uses JWT plus refresh tokens
 - New CRUD entities in `gui/admin` are driven by a JSON-shaped config through the
-  local library `crud-maker` (import only from `crud-maker`; read
-  `gui/admin/projects/crud-maker/README.md` first). The workspace resolves it from
-  `dist/`, so run `ng build crud-maker` inside `gui/admin/` after touching the
-  library. A working vertical: `gui/admin/src/app/demo/` (FAQs over MemoryTransport).
+  local libraries: logic lives in `crud-maker`, UI in an adapter such as
+  `crud-maker-zorro` (read `gui/admin/projects/crud-maker/README.md` first).
+  The workspace resolves them from `dist/`, so build `crud-maker` first, then
+  `crud-maker-zorro`, then the app — inside `gui/admin/`. A working vertical:
+  `gui/admin/src/app/demo/` (FAQs over MemoryTransport).

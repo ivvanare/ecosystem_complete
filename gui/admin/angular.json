@@ -92,6 +92,32 @@
           }
         }
       }
+    },
+    "crud-maker-zorro": {
+      "projectType": "library",
+      "root": "projects/crud-maker-zorro",
+      "sourceRoot": "projects/crud-maker-zorro/src",
+      "prefix": "crud",
+      "architect": {
+        "build": {
+          "builder": "@angular/build:ng-packagr",
+          "configurations": {
+            "production": {
+              "tsConfig": "projects/crud-maker-zorro/tsconfig.lib.prod.json"
+            },
+            "development": {
+              "tsConfig": "projects/crud-maker-zorro/tsconfig.lib.json"
+            }
+          },
+          "defaultConfiguration": "production"
+        },
+        "test": {
+          "builder": "@angular/build:unit-test",
+          "options": {
+            "tsConfig": "projects/crud-maker-zorro/tsconfig.spec.json"
+          }
+        }
+      }
     }
   }
 }
