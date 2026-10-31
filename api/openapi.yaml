@@ -788,6 +788,15 @@ components:
         refresh_expires_in:
           type: integer
           example: 2592000
+        csrf_token:
+          type: string
+          description: |
+            Browser only. Same value as the readable `csrf_token` cookie, repeated in the
+            body because that cookie is scoped to `Path=/v1/auth` and a document served
+            from the SPA root (or any other host) cannot read it. The client must echo it
+            as the `X-CSRF-Token` header on `/v1/auth/refresh` and `/v1/auth/logout`
+            (double submit). Absent for non-browser clients: they hold the refresh token
+            in the body and pass no CSRF check.
 
     Readiness:
       type: object

@@ -59,7 +59,11 @@ Set-Cookie: refresh_token=<opaco>; HttpOnly; Secure; SameSite=Lax; Path=/v1/auth
 Set-Cookie: csrf_token=<aleatorio>; Secure; SameSite=Lax; Path=/v1/auth
 ```
 
-`csrf_token` es legible por JavaScript a propósito: es la mitad del double-submit.
+`csrf_token` es legible por JavaScript a propósito: es la mitad del double-submit. Pero la
+cookie vive con `Path=/v1/auth`, así que un documento servido desde la raíz de la SPA no
+puede leerla (y desde otro host no se lee ninguna cookie). Por eso el cuerpo de login y
+refresh la repite en el campo `csrf_token`: el panel la toma de ahí, no de la cookie. Solo
+lo recibe el panel; para el móvil el campo no existe.
 
 ### Reglas del panel (CSRF)
 
@@ -67,11 +71,12 @@ Set-Cookie: csrf_token=<aleatorio>; Secure; SameSite=Lax; Path=/v1/auth
 viene de la cookie, hay que mandar el header:
 
 ```
-X-CSRF-Token: <valor de la cookie csrf_token>
+X-CSRF-Token: <csrf_token del cuerpo del login o del último refresh>
 ```
 
 Sin él, o si no coincide → `403 csrf_invalid`. El móvil no necesita CSRF porque manda el token
-explícito en el cuerpo.
+explícito en el cuerpo. El valor rota con cada refresh: hay que guardar el `csrf_token` nuevo
+del cuerpo y descartar el anterior.
 
 ### Rotación y reuso
 
@@ -149,7 +154,9 @@ POST /v1/auth/login
 {"email": "ana@melia.test", "password": "una-clave-larga-123", "device": "iPhone de Ana"}
 ```
 
-→ `200` con el par. `device` es opcional y es la etiqueta que verá el usuario.
+→ `200` con el par. `device` es opcional y es la etiqueta que verá el usuario. Si el cliente
+es el panel, el cuerpo incluye además `csrf_token` (§2) y el refresh token le llega solo como
+cookie.
 
 | Error | Cuándo |
 |---|---|
@@ -165,7 +172,8 @@ POST /v1/auth/refresh
                                   # panel: sin cuerpo, con cookie + X-CSRF-Token
 ```
 
-→ `200` con par nuevo. Errores: `401 refresh_invalid` (desconocido o vencido) y
+→ `200` con par nuevo. Para el panel el cuerpo trae también el `csrf_token` rotado: hay que
+reemplazar el guardado por el nuevo. Errores: `401 refresh_invalid` (desconocido o vencido) y
 `401 refresh_reused` (reuso detectado, familia revocada).
 
 ### 5.4 Logout

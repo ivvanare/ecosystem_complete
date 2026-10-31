@@ -35,8 +35,8 @@ Base evidence: exploration handoff on auth/CORS/contract/front (path:line for ev
 
 | ID | Spec | Route | Status | Commit | Evidence |
 |----|------|-------|--------|--------|----------|
-| T1 | S5 | inline | pending | — | openapi.yaml logout block; verify `go test ./internal/contract` |
-| T2 | S4 | inline | pending | — | Go handler + test: browser response carries `csrf_token`, mobile shape unchanged; openapi/API.md updated |
+| T1 | S5 | inline | **done** | a10c727 | `go vet` limpio y `internal/contract` ok; logout ya no declara `bearerAuth` y documenta el `Set-Cookie` de limpieza y el `403 csrf_invalid` |
+| T2 | S4 | inline | **done** | (commit de T2) | RED observado: `body csrf_token = <nil>` con la cookie ya seteada, en login y en refresh → GREEN: los 4 tests por nombre pasan; `internal/httpapi` + `internal/contract` ok |
 | T3 | S2, S3, S7 | inline | pending | — | app.config providers, `API_URL` token, interceptor, `AuthService`; vitest: single-flight refresh, Bearer attach, no token in storage |
 | T4 | S6, S2 | inline | pending | — | login route + guard + silent refresh on boot; spec covers both landing outcomes |
 | T5 | S1, S8 | inline | pending | — | one real screen consuming `/v1/me` through `HttpTransport`; demo and crud-maker suites still green |
@@ -52,3 +52,4 @@ Writer trigger check: T1/T2 are small backend edits and T3–T5 depend on each o
 - **L4** (decision, parent, 2026-10-31): access token in memory only, never `localStorage`/`sessionStorage`. Rationale: the refresh cookie is httpOnly by design; persisting the 15m access token adds XSS surface and buys nothing, since S6 already restores the session from the cookie.
 - **L5** (open question, not acted on): diagram rule 10 (`database/diagram_base.txt:83-97`) states "no hay frontend web" as the reason codes are used instead of links, and says a web client is additive. The admin panel now exists, so that premise is stale. It affects registration/password flows, not this slice; flagged for the user rather than rewritten unilaterally.
 - **L6** (constraint, recorded): `SameSite=Lax` works for same-site deployments (localhost, or sibling subdomains) but not across registrable domains; a cross-domain deploy needs `SameSite=None; Secure`. Out of scope here, noted so it is not discovered in production.
+- **L7** (incident, 2026-10-31): while T2 was being implemented, the shared checkout `/home/ivanare/proyects/melia` was switched to another branch (`feat/admin-crud-adapters`) by a parallel session, so the T1 commit landed on that branch's tip and the T2 edits sat in its working tree. Recovery: the work moved to the registered worktree `/home/ivanare/proyects/melia-worktrees/api-panel-login` on branch `fix/api-panel-login` (base `d1c3913`, which now includes the merged CI guardrail), T1 was cherry-picked there and T2 re-applied from a saved patch, then re-verified in place. Lesson: one feature, one worktree; never share a checkout between parallel sessions.

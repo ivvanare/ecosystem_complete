@@ -198,10 +198,93 @@ func TestCookieIsSecureByDefault(t *testing.T) {
 	if !settings.isBrowser(req) {
 		t.Fatal("the panel origin was not recognised as a browser")
 	}
-	if err := settings.setSession(rec, session.Tokens{RefreshToken: "r", RefreshExpiresIn: 60}); err != nil {
+	if _, err := settings.setSession(rec, session.Tokens{RefreshToken: "r", RefreshExpiresIn: 60}); err != nil {
 		t.Fatalf("setSession returned error: %v", err)
 	}
 	if cookie := cookieNamed(rec, refreshCookieName); cookie == nil || !cookie.Secure {
 		t.Error("the refresh cookie is not Secure")
+	}
+}
+
+// The panel cannot read a cookie scoped to /v1/auth from the SPA's own origin, and never
+// can when the two are on different hosts. So the value it must echo in X-CSRF-Token has to
+// reach it in the body, next to the access token it already reads from there.
+func TestBrowserLoginBodyCarriesTheCSRFTokenItSet(t *testing.T) {
+	auth := &fakeLogin{tokens: session.Tokens{
+		AccessToken: "access", ExpiresIn: 900, RefreshToken: "refresh-secreto", RefreshExpiresIn: 2592000,
+	}}
+	handler := browserHandler(t, &fakeRotator{}, auth)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(`{"email":"ana@melia.test","password":"x"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", panelOrigin)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	cookie := cookieNamed(rec, csrfCookieName)
+	if cookie == nil || cookie.Value == "" {
+		t.Fatal("no csrf cookie was set")
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body is not JSON: %v", err)
+	}
+	if body["csrf_token"] != cookie.Value {
+		t.Errorf("body csrf_token = %v, cookie = %q", body["csrf_token"], cookie.Value)
+	}
+}
+
+func TestBrowserRefreshBodyCarriesTheRotatedCSRFToken(t *testing.T) {
+	rotator := &fakeRotator{tokens: session.Tokens{
+		AccessToken: "a2", ExpiresIn: 900, RefreshToken: "r2", RefreshExpiresIn: 2592000,
+	}}
+	handler := browserHandler(t, rotator, &fakeLogin{})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/refresh", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", panelOrigin)
+	req.AddCookie(&http.Cookie{Name: refreshCookieName, Value: "r1"})
+	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: "csrf-viejo"})
+	req.Header.Set(csrfHeaderName, "csrf-viejo")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	cookie := cookieNamed(rec, csrfCookieName)
+	if cookie == nil || cookie.Value == "" {
+		t.Fatal("refresh did not set a new csrf cookie")
+	}
+	if cookie.Value == "csrf-viejo" {
+		t.Error("the csrf token was not rotated")
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body is not JSON: %v", err)
+	}
+	if body["csrf_token"] != cookie.Value {
+		t.Errorf("body csrf_token = %v, cookie = %q", body["csrf_token"], cookie.Value)
+	}
+}
+
+func TestMobileLoginBodyHasNoCSRFToken(t *testing.T) {
+	auth := &fakeLogin{tokens: session.Tokens{AccessToken: "a", RefreshToken: "r", ExpiresIn: 900}}
+	handler := browserHandler(t, &fakeRotator{}, auth)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(`{"email":"ana@melia.test","password":"x"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if strings.Contains(rec.Body.String(), "csrf_token") {
+		t.Errorf("a non-browser client got a CSRF token it cannot use: %s", rec.Body.String())
 	}
 }
