@@ -1,6 +1,6 @@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { inject, Injectable, signal } from '@angular/core';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, timeout } from 'rxjs';
 import { API_URL } from './api-url.token';
 
 /**
@@ -9,6 +9,12 @@ import { API_URL } from './api-url.token';
  * an httpOnly cookie. `csrf_token` is the double-submit half the panel must echo
  * back as `X-CSRF-Token` on refresh and logout (S4).
  */
+/**
+ * How long a rotation may take before it counts as failed. Boot awaits the silent
+ * refresh, so without a bound a dead API holds the panel hostage (L11).
+ */
+const REFRESH_TIMEOUT_MS = 8_000;
+
 export interface TokenPairResponse {
   access_token: string;
   token_type: string;
@@ -150,10 +156,12 @@ export class AuthService {
       // The handler decodes the body before falling back to the cookie, and an empty
       // body is a 400 — `{}` is the well-formed "take it from the cookie" payload.
       const pair = await firstValueFrom(
-        this.http.post<TokenPairResponse>(`${this.apiUrl}/auth/refresh`, {}, {
-          withCredentials: true,
-          headers: this.csrfHeaders(),
-        }),
+        this.http
+          .post<TokenPairResponse>(`${this.apiUrl}/auth/refresh`, {}, {
+            withCredentials: true,
+            headers: this.csrfHeaders(),
+          })
+          .pipe(timeout(REFRESH_TIMEOUT_MS)),
       );
       this.applyTokenPair(pair);
       return pair.access_token;
