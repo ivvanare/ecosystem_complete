@@ -8,7 +8,7 @@ name: ci
 # permissions, schema application) need the real stack and are not in scope here.
 on:
   push:
-    branches: [master]
+    branches: [dev, quality, prod]
   pull_request:
 
 concurrency:

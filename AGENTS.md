@@ -43,7 +43,7 @@ Backend commands run inside `api/`:
 | `k6 run tests/k6/smoke.js` | Contract smoke against a running API (writes nothing) |
 | `k6 run tests/k6/signup.js` | Signup load; writes rows and queues mail |
 | `docker compose run --rm --entrypoint /usr/local/bin/bootstrap -e EMAIL=... -e ROLE=SUPERADMIN api` | Grant the first administrator |
-| `gh pr create --fill` | Open a PR; `master` rejects direct pushes |
+| `gh pr create --fill --base dev` | Open a PR against `dev`; `prod` rejects direct pushes |
 
 Frontend commands run inside `gui/admin/` (its own pnpm workspace root):
 
@@ -64,9 +64,20 @@ first, then `crud-maker-zorro`, then the app. The `admin` CI job does exactly th
 order. Each package added to the family adds one build and one test step there, in the same
 order — the adapter may import the core, never the reverse.
 
-`master` is protected by a ruleset: work on a branch, open a PR and merge once `test`,
-`admin` and `image` are green. A direct `git push origin master` is rejected. The required
-checks are matched by name, so renaming a CI job also means updating the ruleset.
+## Branches
+
+Three long-lived branches, promoting in one direction:
+
+| Branch | Role | Protection |
+|--------|------|------------|
+| `dev` | integration — every feature branch merges here first | no deletion, no force-push |
+| `quality` | QA / staging cut, taken from `dev` | no deletion, no force-push |
+| `prod` | releases, taken from `quality` | the default branch: pull request required, `test`, `admin` and `image` green, no deletion, no force-push |
+
+`prod` is the default branch (it replaced `master`). Work on a short-lived branch named after
+its side (`feat/api-*`, `feat/admin-*`, `fix/*`), open the PR against `dev`, and promote:
+`dev` → `quality` → `prod`. The required checks are matched by name, so renaming a CI job also
+means updating the `protect prod` ruleset.
 
 ## Docker Services
 
@@ -184,7 +195,7 @@ Prefix branches by side (`feat/api-*`, `feat/admin-*`, same for `fix/`). Before 
 prove the branch kept its side — a backend branch must print nothing here:
 
 ```bash
-git diff --name-only origin/master...HEAD | grep -E '^(api|database|tests)/'
+git diff --name-only origin/dev...HEAD | grep -E '^(api|database|tests)/'
 ```
 
 `gofmt` and `go vet` stay in CI instead of in the hook: they need a toolchain, and a commit
