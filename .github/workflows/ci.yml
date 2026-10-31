@@ -86,11 +86,11 @@ jobs:
       # gui/admin, so it resolves to the same place locally and on a runner: one directory
       # beside the workspace root.
       - name: check out the crud-maker packages beside the workspace
-        working-directory: ${{ github.workspace }}/../..
+        working-directory: ${{ github.workspace }}/..
         run: git clone --depth 1 https://github.com/ivvanare/crud-maker crud-maker
 
       - name: install and build the crud-maker packages
-        working-directory: ${{ github.workspace }}/../../crud-maker
+        working-directory: ${{ github.workspace }}/../crud-maker
         run: |
           pnpm install --frozen-lockfile
           pnpm exec ng build crud-maker
