@@ -1,0 +1,23 @@
+.account {
+  max-width: 32rem;
+  margin: 3rem auto;
+  font: inherit;
+}
+
+dl {
+  display: grid;
+  grid-template-columns: 8rem 1fr;
+  gap: 0.5rem 1rem;
+}
+
+dt {
+  font-weight: 600;
+}
+
+dd {
+  margin: 0;
+}
+
+button {
+  margin-top: 2rem;
+}
