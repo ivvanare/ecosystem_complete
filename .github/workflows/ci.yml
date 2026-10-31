@@ -1,10 +1,11 @@
 name: ci
 
-# Two gates, both cheap. The test job is the one that matters: the suite needs no services
+# Three gates, all cheap. The Go job is the one that matters: the suite needs no services
 # (everything is faked), so it runs in about a minute and catches documentation drift through
-# internal/contract. The image job only proves the Dockerfile still builds — the runtime
-# problems this project actually hit (bind-mount permissions, schema application) need the
-# real stack and are not in scope here.
+# internal/contract. The admin job gives the SPA its own red/green, so a frontend change can
+# never land on the strength of a backend check alone. The image job only proves the
+# Dockerfile still builds — the runtime problems this project actually hit (bind-mount
+# permissions, schema application) need the real stack and are not in scope here.
 on:
   push:
     branches: [master]
@@ -54,6 +55,51 @@ jobs:
       # unsynchronised map in the OIDC verifier cache.
       - name: test
         run: go test -race ./...
+
+  admin:
+    name: admin
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gui/admin
+    steps:
+      - uses: actions/checkout@v7
+
+      # Reads packageManager from the SPA's package.json, so the pnpm version is declared in
+      # one place instead of a second copy here that drifts. The path is relative to the
+      # repository root, because the workspace root is gui/admin and there is no root
+      # package.json to read.
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: gui/admin/package.json
+
+      - uses: actions/setup-node@v7
+        with:
+          # Pinned to the version used locally; without it the runner image decides, and the
+          # Node version can change under a commit that touched nothing.
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: gui/admin/pnpm-lock.yaml
+
+      # --frozen-lockfile is the frontend's 'go mod tidy' gate: a lockfile that does not match
+      # package.json fails here instead of drifting silently.
+      - name: install
+        run: pnpm install --frozen-lockfile
+
+      # Not an optimisation. The workspace resolves `crud-maker` through tsconfig paths to
+      # ./dist/crud-maker, and dist/ is gitignored, so on a clean checkout the app can
+      # neither typecheck nor test until the library is built.
+      - name: build the local library
+        run: npx ng build crud-maker
+
+      - name: test the library
+        run: npx ng test crud-maker --watch=false
+
+      - name: test the app
+        run: npx ng test admin --watch=false
+
+      - name: build
+        run: npx ng build
 
   image:
     name: image

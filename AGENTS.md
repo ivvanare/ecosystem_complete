@@ -32,7 +32,7 @@ melZone/
 
 ## Developer Commands
 
-All commands run inside `api/`:
+Backend commands run inside `api/`:
 
 | Command | Purpose |
 |---------|---------|
@@ -45,9 +45,24 @@ All commands run inside `api/`:
 | `docker compose run --rm --entrypoint /usr/local/bin/bootstrap -e EMAIL=... -e ROLE=SUPERADMIN api` | Grant the first administrator |
 | `gh pr create --fill` | Open a PR; `master` rejects direct pushes |
 
-`master` is protected by a ruleset: work on a branch, open a PR and merge once `test` and
-`image` are green. A direct `git push origin master` is rejected. The required checks are
-matched by name, so renaming a CI job also means updating the ruleset.
+Frontend commands run inside `gui/admin/` (its own pnpm workspace root):
+
+| Command | Purpose |
+|---------|---------|
+| `pnpm install --frozen-lockfile` | Install exactly what the lockfile pins (what CI runs) |
+| `npx ng build crud-maker` | Build the local library — required before the app typechecks |
+| `npx ng test crud-maker --watch=false` | Library suite (vitest) |
+| `npx ng test admin --watch=false` | SPA suite (vitest) |
+| `npx ng build` | Production build, with the budgets |
+| `npx ng serve` | Dev server on `:4200` |
+
+`crud-maker` is resolved through `tsconfig.json` paths to `./dist/crud-maker`, and `dist/`
+is not versioned, so a clean checkout has to build the library before the app can typecheck
+or test. The `admin` CI job does exactly that, in that order.
+
+`master` is protected by a ruleset: work on a branch, open a PR and merge once `test`,
+`admin` and `image` are green. A direct `git push origin master` is rejected. The required
+checks are matched by name, so renaming a CI job also means updating the ruleset.
 
 ## Docker Services
 
@@ -83,6 +98,9 @@ add a silent fallback.
 - Tests must not need PostgreSQL, Redis or RabbitMQ: probes and the migration ledger are
   interfaces, so tests pass fakes
 - `api/internal/...` is a closed surface — keep it that way so packages stay free to move
+- Frontend suites are the two `@angular/build:unit-test` targets (`crud-maker`, `admin`) on
+  vitest/jsdom: no browser and no API needed. The `admin` CI job runs them in the order the
+  workspace requires (library build first); keep that order when adding a step there.
 
 ## Key Architecture Notes
 
