@@ -45,7 +45,21 @@ itself on every change — call `controller.load()` once yourself for the first 
 appears only when the config (or `ControllerHooks.can`) allows update/delete, and it never mutates: it
 emits the row so the consumer decides the dialog, the route and the confirmation.
 
+### `crud-form`
+
+```html
+<crud-form [config]="config" [controller]="controller" [value]="editingRow()" [options]="options"
+           (saved)="close()" (cancelled)="close()" />
+```
+
+Fields come from `config.formFields`, and the registry's named validators become Signal Forms rules:
+`required`, `min`, `max`, `minLength`, `maxLength`, `pattern` and `email` map onto Angular's own rules with
+an explicit message, and any validator a project registered itself falls back to `validate()` with its
+compiled predicate. A `select` whose `options` name a resource resolves through the same `OptionResolver`
+the core uses, so the JSON still only names the resource. `value` seeds the form and switching it reseeds
+it; submitting goes through `controller.save()`, which enforces the action matrix and refreshes the list.
+
 ## Status
 
-Early. `crud-cell` and `crud-table` are implemented and tested; the form and detail screens are the
-next deliverables.
+Early. `crud-cell`, `crud-table` and `crud-form` are implemented and tested; the detail screen is the next
+deliverable.
