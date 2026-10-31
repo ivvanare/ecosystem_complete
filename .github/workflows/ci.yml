@@ -81,28 +81,25 @@ jobs:
           cache: pnpm
           cache-dependency-path: gui/admin/pnpm-lock.yaml
 
+      # The packages live in their own repository (github.com/ivvanare/crud-maker) and are linked
+      # from a sibling checkout, because nothing is published yet. The path is relative to
+      # gui/admin, so it resolves to the same place locally and on a runner: one directory
+      # beside the workspace root.
+      - name: check out the crud-maker packages beside the workspace
+        working-directory: ${{ github.workspace }}/../..
+        run: git clone --depth 1 https://github.com/ivvanare/crud-maker crud-maker
+
+      - name: install and build the crud-maker packages
+        working-directory: ${{ github.workspace }}/../../crud-maker
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec ng build crud-maker
+          pnpm exec ng build crud-maker-zorro
+
       # --frozen-lockfile is the frontend's 'go mod tidy' gate: a lockfile that does not match
       # package.json fails here instead of drifting silently.
       - name: install
         run: pnpm install --frozen-lockfile
-
-      # Not an optimisation. The workspace resolves `crud-maker` through tsconfig paths to
-      # ./dist/crud-maker, and dist/ is gitignored, so on a clean checkout the app can
-      # neither typecheck nor test until the library is built.
-      - name: build the local library
-        run: npx ng build crud-maker
-
-      - name: test the library
-        run: npx ng test crud-maker --watch=false
-
-      # Same reason one level up: the adapter resolves `crud-maker` through a tsconfig path,
-      # so it can only compile after the core library is built. Every package added to the
-      # family adds one build here, in dependency order.
-      - name: build the zorro adapter
-        run: npx ng build crud-maker-zorro
-
-      - name: test the zorro adapter
-        run: npx ng test crud-maker-zorro --watch=false
 
       - name: test the app
         run: npx ng test admin --watch=false

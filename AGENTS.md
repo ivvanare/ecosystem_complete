@@ -23,7 +23,6 @@ melZone/
 │   ├── internal/      # config · httpapi · db · probe
 │   └── Dockerfile
 ├── gui/admin/         # Angular 22 admin SPA (pnpm, vitest via `ng test`)
-│   └── projects/      # local libraries: crud-maker (logic) + crud-maker-zorro (UI adapter)
 ├── database/          # PostgreSQL init scripts + canonical DBML
 ├── tests/k6/          # Load tests (k6)
 ├── openspec/          # Change proposals, specs, task logs
@@ -50,19 +49,24 @@ Frontend commands run inside `gui/admin/` (its own pnpm workspace root):
 | Command | Purpose |
 |---------|---------|
 | `pnpm install --frozen-lockfile` | Install exactly what the lockfile pins (what CI runs) |
-| `npx ng build crud-maker` | Build the core library — required before the adapter or the app typechecks |
-| `npx ng test crud-maker --watch=false` | Core library suite (vitest) |
-| `npx ng build crud-maker-zorro` | Build the ng-zorro adapter (after the core library) |
-| `npx ng test crud-maker-zorro --watch=false` | Adapter suite (vitest, needs `crud-maker` built) |
 | `npx ng test admin --watch=false` | SPA suite (vitest) |
 | `npx ng build` | Production build, with the budgets |
 | `npx ng serve` | Dev server on `:4200` |
 
-`crud-maker` is resolved through `tsconfig.json` paths to `./dist/crud-maker`, and `dist/`
-is not versioned, so a clean checkout has to build the packages in dependency order: core
-first, then `crud-maker-zorro`, then the app. The `admin` CI job does exactly that, in that
-order. Each package added to the family adds one build and one test step there, in the same
-order — the adapter may import the core, never the reverse.
+`crud-maker` and `crud-maker-zorro` are no longer developed here: they live in
+[`ivvanare/crud-maker`](https://github.com/ivvanare/crud-maker) (logic + adapters, MIT). Nothing
+is published yet, so `gui/admin/package.json` links the built package from a **sibling checkout**
+(`link:../../../crud-maker/dist/crud-maker`) — one directory beside this repository, the same
+relative path locally and in CI. Consequences:
+
+- A clean clone needs that sibling repository cloned and built before `pnpm install` will work:
+  `cd ../crud-maker && pnpm install && pnpm exec ng build crud-maker`. The `admin` CI job does it.
+- Editing a package means editing it there, rebuilding, and re-running the SPA suite here. Do not
+  copy files back into this repository: one source of truth.
+- `crud-maker-zorro` is added to this workspace's dependencies when a screen here actually consumes
+  it; importing an unused package is noise.
+- The one-way rule still holds inside that repository: the adapter may import the core, never the
+  reverse.
 
 ## Branches
 
@@ -113,10 +117,8 @@ add a silent fallback.
 - Tests must not need PostgreSQL, Redis or RabbitMQ: probes and the migration ledger are
   interfaces, so tests pass fakes
 - `api/internal/...` is a closed surface — keep it that way so packages stay free to move
-- Frontend suites are the `@angular/build:unit-test` targets (`crud-maker`, `crud-maker-zorro`,
-  `admin`) on vitest/jsdom: no browser and no API needed. The `admin` CI job runs them in the
-  order the workspace requires (core library, then the adapter, then the app); keep that order
-  when adding a step there.
+- The frontend suite is the `admin` `@angular/build:unit-test` target on vitest/jsdom: no browser
+  and no API needed. The packages carry their own suites in their own repository and their own CI.
 
 ## Key Architecture Notes
 
@@ -209,9 +211,7 @@ should not fail because Go is not on `PATH`.
 - `database/init` runs only when the PostgreSQL volume is empty; reset with
   `docker compose down -v`
 - Session tables are intentionally absent: auth uses JWT plus refresh tokens
-- New CRUD entities in `gui/admin` are driven by a JSON-shaped config through the
-  local libraries: logic lives in `crud-maker`, UI in an adapter such as
-  `crud-maker-zorro` (read `gui/admin/projects/crud-maker/README.md` first).
-  The workspace resolves them from `dist/`, so build `crud-maker` first, then
-  `crud-maker-zorro`, then the app — inside `gui/admin/`. A working vertical:
-  `gui/admin/src/app/demo/` (FAQs over MemoryTransport).
+- New CRUD entities in `gui/admin` are driven by a JSON-shaped config through external
+  packages: logic in `crud-maker`, UI in an adapter such as `crud-maker-zorro`. They live in
+  `ivvanare/crud-maker` and are linked from a sibling checkout until they are published. A
+  working vertical: `gui/admin/src/app/demo/` (FAQs over MemoryTransport).
