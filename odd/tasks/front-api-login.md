@@ -40,8 +40,8 @@ Base evidence: exploration handoff on auth/CORS/contract/front (path:line for ev
 | T2 | S4 | inline | **done** | (commit de T2) | RED observado: `body csrf_token = <nil>` con la cookie ya seteada, en login y en refresh → GREEN: los 4 tests por nombre pasan; `internal/httpapi` + `internal/contract` ok |
 | T3 | S2, S3, S7 | inline + worker | **done** | (commit de T3) | `tsc --noEmit` verde en `tsconfig.spec.json` y `tsconfig.app.json`; suite del humano: **35/35 en 5 archivos** (`auth.service` 13, `auth.interceptor` 9, `api-url.token` 2, más `app` y `memory-transport` 9 → S8 intacto). Un error de tipo en el spec corregido antes de la corrida |
 | T4 | S6, S2 | inline + worker | **done** | (commit de T4) | `tsc --noEmit` verde en spec y app (corrido por el padre); suite del humano: **50/50 en 7 archivos** (guard 4, login 7, servicio 15, interceptor 11). L9 implementado: `sessionStorage` sólo para el csrf, sembrado en el constructor y sobrescrito en cada rotación |
-| T5 | S1, S8 | inline | pending | — | one real screen consuming `/v1/me` through `HttpTransport`; demo and crud-maker suites still green |
-| T6 | all | inline | pending | — | per-`S#` verdict; `go test ./...`, both ng suites, `ng build` |
+| T5 | S1, S8 | inline | **done** | (commit de T5) | `/account` protegida renderiza `/v1/me`; `transport-wiring.spec` prueba que `HttpTransport` arma la URL desde `API_URL` y recibe el Bearer por el interceptor, sin fork del engine. Suite del humano: **54/54 en 9 archivos** |
+| T6 | all | inline | **done** | — | Veredicto por `S#` abajo; `go vet` + `internal/httpapi` + `internal/contract` verdes; `tsc --noEmit` verde en spec y app; suites del humano 50/50 y 54/54. Pendiente explícito: L11 |
 
 Writer trigger check: T1/T2 are small backend edits and T3–T5 depend on each other left to right (no two independent units heavier than a subagent start) → parent implements inline. Sandbox note: this session's cgroup caps pids at 64, so `go test -race`, `ng build` and `ng test` may die with "Resource temporarily unavailable"; any step blocked that way is reported as unverified here and proven in CI.
 
@@ -59,3 +59,13 @@ Writer trigger check: T1/T2 are small backend edits and T3–T5 depend on each o
 - **L10** (method, 2026-10-31): the sandbox pid cap blocks thread-pool tools (esbuild, rolldown, vitest) but **not** single-process Node, so `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.spec.json` and `-p tsconfig.app.json` run fine and must be used as a compile gate after every frontend edit. Telling the T3 writer to execute nothing was too coarse: the type error it shipped would have been caught in seconds. Runtime behaviour still needs the human's `ng test`, which is what turned T3 green.
 - **L11** (finding, 2026-10-31): `provideAppInitializer` awaits the boot refresh, which is what removes the login flash, but it also means a dead API **blocks the app** until the fetch fails — in dev it reads as "the panel does not load". Not fixed in T4 to keep the commit single-purpose; the fix is a bounded timeout (or a race with a short timer) on the boot refresh, tracked for the closing pass.
 - **L12** (decision, 2026-10-31): T5 scope narrowed deliberately. `HttpTransport` is a `CrudTransport` over collections, and `/v1/me` is a single resource, so "the first real screen" is an account view rendered from `AuthService.me()` — which is what proves S1 end to end (login → protected call → render) — plus a spec proving `HttpTransport` can be constructed against `API_URL` and that auth reaches it through the interceptor, never by forking the engine. No invented CRUD screen against an endpoint whose list contract has not been verified.
+- **L13** (closing verdict, 2026-10-31) — evidence per spec, with where it was observed:
+  - S1 satisfied end to end in code and specs (`login` → cookie transport → `/account` rendering `/v1/me`); never exercised against a running API from this session, so "works against the real server" remains unproven here.
+  - S2 `pass` — `cookies_test.go` (browser gets no `refresh_token` in the body, mobile keeps it) and `auth.service.spec`/`auth.interceptor.spec`.
+  - S3 `pass` — single-flight pinned at both layers (3 concurrent 401s → exactly one refresh, all retries carry the new token).
+  - S4 `pass` — RED observed (`csrf_token = <nil>` with the cookie set) then GREEN in Go; contract and API.md updated.
+  - S5 `pass` — `internal/contract` green after the logout rewrite.
+  - S6 `pass` — amended for L9; reload restores from `sessionStorage` + cookie, and the boot path is spec'd.
+  - S7 `pass` — `grep` shows the dev URL only in `api-url.token.ts` and its spec; no `/v1` literal in service, interceptor or components.
+  - S8 `pass` — `crud-maker` and its suite untouched; `transport-wiring.spec` proves auth arrives through the interceptor.
+  - Not verified anywhere yet: the frontend against a live API (no browser session with both servers up), and the CI run of this branch.

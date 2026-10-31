@@ -8,10 +8,16 @@ export const routes: Routes = [
     loadComponent: () => import('./auth/login').then((m) => m.Login),
   },
   {
+    path: 'account',
+    title: 'Account — melZone admin',
+    canActivate: [authGuard],
+    loadComponent: () => import('./account/account').then((m) => m.Account),
+  },
+  {
     path: 'faqs',
     title: 'FAQs — crud-maker demo',
     canActivate: [authGuard],
     loadComponent: () => import('./demo/faqs-demo').then((m) => m.FaqsDemo),
   },
-  { path: '', pathMatch: 'full', redirectTo: 'faqs' },
+  { path: '', pathMatch: 'full', redirectTo: 'account' },
 ];

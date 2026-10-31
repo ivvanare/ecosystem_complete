@@ -1,0 +1,20 @@
+<section class="account">
+  <h1>Account</h1>
+
+  @if (auth.user(); as user) {
+    <dl>
+      <dt>Name</dt>
+      <dd>{{ user.name ?? '—' }}</dd>
+      <dt>Email</dt>
+      <dd>{{ user.email ?? '—' }}</dd>
+      <dt>Status</dt>
+      <dd>{{ user.status }}</dd>
+      <dt>Roles</dt>
+      <dd>{{ user.roles.length ? user.roles.join(', ') : 'none' }}</dd>
+    </dl>
+  } @else {
+    <p>Loading your profile…</p>
+  }
+
+  <button type="button" (click)="signOut()">Sign out</button>
+</section>
