@@ -1,0 +1,11 @@
+:host {
+  display: block;
+}
+
+.toolbar {
+  align-items: flex-end;
+}
+
+.clear {
+  margin-bottom: 1px;
+}

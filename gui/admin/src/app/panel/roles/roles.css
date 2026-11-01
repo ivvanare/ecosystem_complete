@@ -1,0 +1,86 @@
+:host {
+  display: block;
+}
+
+code {
+  background: var(--accent-soft);
+  color: #3730a3;
+  border-radius: 5px;
+  padding: 1px 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.section-title {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--muted);
+  margin: 20px 0 12px;
+}
+
+.section-title:first-of-type {
+  margin-top: 0;
+}
+
+/* ---------- role cards ---------- */
+.role-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.role-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.role-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.role-card h3 {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.description {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.count {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* ---------- catalogue ---------- */
+.module {
+  font-weight: 650;
+  color: var(--slate);
+  white-space: nowrap;
+  vertical-align: top;
+}
