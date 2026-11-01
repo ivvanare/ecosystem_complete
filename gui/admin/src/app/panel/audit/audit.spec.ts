@@ -8,17 +8,27 @@ const ROWS = [
   {
     id: 'e1',
     event: 'auth.login.failed',
+    user_id: 'f51b7735-acc5-4c3b-ba2f-63847d195c85',
     actor_user_id: null,
-    ip: '127.0.0.1',
-    country: 'VE',
+    email_hash: '1fe7ca7a9c6e6a8d57463a4936b009ce',
+    ip: '172.18.0.1',
+    country: null,
+    city: null,
+    user_agent: 'Firefox/153.0 on Linux x86_64',
+    metadata: {},
     created_at: '2026-10-31T12:00:00Z',
   },
   {
     id: 'e2',
     event: 'role.assigned',
-    actor_user_id: 'u1',
-    ip: null,
-    country: null,
+    user_id: 'c0ffee00-0000-4000-8000-000000000002',
+    actor_user_id: 'f51b7735-acc5-4c3b-ba2f-63847d195c85',
+    email_hash: null,
+    ip: '172.18.0.1',
+    country: 'VE',
+    city: 'Caracas',
+    user_agent: 'curl/8.5.0',
+    metadata: {},
     created_at: '2026-10-31T11:00:00Z',
   },
 ];
@@ -59,6 +69,20 @@ describe('Audit', () => {
     expect(text).toContain('auth.login.failed');
     expect(text).toContain('role.assigned');
     expect(text).toContain('42 events');
+  });
+
+  it('shows the fields the API actually sends, not just the event name', async () => {
+    const element = await render();
+    const text = element.textContent ?? '';
+
+    // Headers the log needs to be useful: who, from where, with which client.
+    for (const label of ['User', 'Actor', 'Email hash', 'IP', 'Country', 'City', 'Agent']) {
+      expect(text).toContain(label);
+    }
+    // Values reach the cells, truncated where they would break the layout.
+    expect(text).toContain('Firefox/153.0');
+    expect(text).toContain('Caracas');
+    expect(text).toContain('1fe7ca7a9c6e');
   });
 
   it('turns the exact-event filter into a query on the transport', async () => {

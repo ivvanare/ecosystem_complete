@@ -22,11 +22,20 @@ const AUDIT_CONFIG = defineCrudConfig({
   actions: { create: false, update: false, delete: false },
   fields: [
     { name: 'id', in: { list: false, form: false, detail: true } },
+    { name: 'created_at', label: 'When', type: 'datetime', sortable: false, width: 'narrow' },
     { name: 'event', label: 'Event', sortable: false, filters: ['eq'] },
-    { name: 'actor_user_id', label: 'Actor', sortable: false },
-    { name: 'ip', label: 'Origin IP', sortable: false },
-    { name: 'country', label: 'Country', sortable: false },
-    { name: 'created_at', label: 'When', type: 'datetime', sortable: false },
+    // Who the event is about, and who caused it when they differ (an admin acting
+    // on someone else's account). Both are optional: a failed login has neither.
+    { name: 'user_id', label: 'User', sortable: false, formatter: { name: 'truncate', params: { length: 12 } } },
+    { name: 'actor_user_id', label: 'Actor', sortable: false, formatter: { name: 'truncate', params: { length: 12 } } },
+    // Never a clear address: the API stores an HMAC-SHA256 (api/API.md §7).
+    { name: 'email_hash', label: 'Email hash', sortable: false, formatter: { name: 'truncate', params: { length: 12 } } },
+    { name: 'ip', label: 'IP', sortable: false, width: 'narrow' },
+    { name: 'country', label: 'Country', sortable: false, width: 'narrow' },
+    { name: 'city', label: 'City', sortable: false, width: 'narrow' },
+    { name: 'user_agent', label: 'Agent', sortable: false, formatter: { name: 'truncate', params: { length: 34 } } },
+    // `metadata` is a JSON object and the cell renders text: it would print
+    // "[object Object]". It stays out of the list until a JSON cell exists.
   ],
 });
 
