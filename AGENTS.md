@@ -135,7 +135,11 @@ add a silent fallback.
   with a warning. `database/verify_base_model.sql` is the drift check.
 - `database/provision/01-create-database.sql` is provisioning, not a migration: it is not
   applied by compose nor by the service. psql meta-commands (`\connect`) are stripped by
-  the loader for the same reason.
+  the loader for the same reason. Applying the files **by hand** needs the ledger first:
+  create `seg.tb_schema_migration` (`tx_name text PRIMARY KEY`, `dt_applied_at timestamptz
+  NOT NULL DEFAULT now()`) before `02-schemas-enums.sql`, because `13-comments.sql`
+  comments that table and fails without it. The service is immune: it runs `Ledger.Ensure`
+  before touching any file, which is why the Docker path needs nothing extra.
 - Point-in-time history is database-owned and additive: ledger files 07-08 add six
   append-only `*_history` tables (`core.tb_place_history`, `core.tb_menu_item_history`,
   `core.tb_place_schedule_history`, `core.tb_review_history`,
