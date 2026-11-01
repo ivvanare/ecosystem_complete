@@ -136,6 +136,32 @@ add a silent fallback.
 - `database/provision/01-create-database.sql` is provisioning, not a migration: it is not
   applied by compose nor by the service. psql meta-commands (`\connect`) are stripped by
   the loader for the same reason.
+- Point-in-time history is database-owned and additive: ledger files 07-13 (branch
+  `feat/api-db-history`, not yet merged to `dev`) add six append-only `*_history`
+  tables (`core.tb_place_history`, `core.tb_menu_item_history`,
+  `core.tb_place_schedule_history`, `core.tb_review_history`,
+  `seg.tb_user_role_history`, `seg.tb_role_permission_history`) maintained by
+  PostgreSQL triggers on the source tables. Never write to them from the service —
+  writes collide with the single-open-interval unique and the closed-interval guard.
+  A fresh database on a branch without that feature has none, so no code may depend
+  on them until it merges. Physical delete leaves a `DELETE` row born closed
+  (`dt_valid_from = dt_valid_to`); logical delete (`dt_deleted_at`) arrives as an
+  UPDATE; `dt_updated_at`-only updates record nothing. Optional actor per
+  transaction: `SELECT set_config('app.current_user_id', '<uuid>', true)` before
+  mutating (stored in `co_actor_user`, NULL if unset). A future history endpoint is
+  contract-first: `openapi.yaml` + `API.md` + contract test, never improvised.
+- Locale catalogs and time zones (same branch, ledger 09-13): `ALTER DATABASE melia
+  SET timezone TO 'UTC'` is active (new sessions report UTC; `now()` returns UTC).
+  `core.tb_place` dropped `tx_category`, added `co_place_category uuid NOT NULL` (FK
+  `tb_place_category`), `tx_country char(2) NOT NULL`, `tx_timezone varchar NOT NULL`
+  (IANA, e.g. `America/Caracas`) — no DEFAULT, INSERTs missing them fail with
+  `not_null_violation`. `core.tb_menu_item` added `co_currency uuid NOT NULL` (FK
+  `tb_currency`). Seeded catalogs: categories hotel=0d05c7ce-21b6-4548-9498-d64267ec8ea5,
+  arepera=43c43189-8813-4f55-8636-f2aff3c37c5d, parque=fa004a4f-5fb0-429b-a9bd-81ee40440679;
+  currencies USD=259078f5-a8e4-4319-bd89-21cf448ea8d9, VES=7d4cf35b-7bbe-4845-949c-d56004a14fd6,
+  COP=d3748ccb-77a0-4f51-b2fb-0a0d5fcda746 (all nu_decimals=2). Timezone is per-row:
+  `tb_place_schedule` open/close times are place-local; group reports by
+  `dt_created_at AT TIME ZONE p.tx_timezone`.
 - The admin panel is a SPA on another origin: CORS is driven by `CORS_ALLOWED_ORIGINS`
   and enables credentials (the refresh token is an httpOnly cookie), so a wildcard origin
   is never valid and a preflight must never require authentication.
