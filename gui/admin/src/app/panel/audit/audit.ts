@@ -22,14 +22,35 @@ const AUDIT_CONFIG = defineCrudConfig({
   actions: { create: false, update: false, delete: false },
   fields: [
     { name: 'id', in: { list: false, form: false, detail: true } },
-    { name: 'created_at', label: 'When', type: 'datetime', sortable: false, width: 'narrow' },
+    // A range: the toolbar renders a from/to pair and the transport splits it into
+    // the API's `from`/`to`.
+    {
+      name: 'created_at',
+      label: 'When',
+      type: 'datetime',
+      sortable: false,
+      width: 'narrow',
+      filters: ['between'],
+    },
     { name: 'event', label: 'Event', sortable: false, filters: ['eq'] },
     // Who the event is about, and who caused it when they differ (an admin acting
     // on someone else's account). Both are optional: a failed login has neither.
-    { name: 'user_id', label: 'User', sortable: false, formatter: { name: 'truncate', params: { length: 12 } } },
+    {
+      name: 'user_id',
+      label: 'User',
+      sortable: false,
+      filters: ['eq'],
+      formatter: { name: 'truncate', params: { length: 12 } },
+    },
     { name: 'actor_user_id', label: 'Actor', sortable: false, formatter: { name: 'truncate', params: { length: 12 } } },
     // Never a clear address: the API stores an HMAC-SHA256 (api/API.md §7).
-    { name: 'email_hash', label: 'Email hash', sortable: false, formatter: { name: 'truncate', params: { length: 12 } } },
+    {
+      name: 'email_hash',
+      label: 'Email hash',
+      sortable: false,
+      filters: ['eq'],
+      formatter: { name: 'truncate', params: { length: 12 } },
+    },
     { name: 'ip', label: 'IP', sortable: false, width: 'narrow' },
     { name: 'country', label: 'Country', sortable: false, width: 'narrow' },
     { name: 'city', label: 'City', sortable: false, width: 'narrow' },

@@ -99,4 +99,16 @@ describe('Audit', () => {
     // The log has no search endpoint, so a toolbar search box must not exist.
     expect(element.querySelector('input[type="search"]')).toBeNull();
   });
+
+  it('offers a user filter, an email-hash filter and a date range', async () => {
+    const element = await render();
+    const text = element.textContent ?? '';
+
+    // Labels come from the config, in order: Event, User, Email hash, When.
+    for (const label of ['Event', 'User', 'Email hash', 'When']) {
+      expect(text).toContain(label);
+    }
+    // The range is a from/to pair of native date-time inputs.
+    expect(element.querySelectorAll('input[type="datetime-local"]')).toHaveLength(2);
+  });
 });
