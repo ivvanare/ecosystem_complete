@@ -3,7 +3,7 @@ import { CrudController, defineCrudConfig } from 'crud-maker';
 import { CrudListScreen } from 'crud-maker-zorro';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzModalModule } from 'ng-zorro-antd/modal';
-import { AdminApi, type Role, type UserSummary } from '../../core/admin-api';
+import { AdminApi, type Role, type UserStatus, type UserSummary } from '../../core/admin-api';
 import { AdminTransport } from '../../core/admin-transport';
 import { apiErrorCode } from '../../core/api-error';
 
@@ -20,7 +20,10 @@ const USERS_CONFIG = defineCrudConfig({
   titleField: 'email',
   pageSize: 20,
   searchFields: ['email', 'name'],
-  actions: { create: false, update: false, delete: false },
+  // `update: true` is what makes the table render its Edit button; the screen turns
+  // that event into the profile dialog. Creation and deletion stay out: accounts are
+  // invited, never created or deleted from here.
+  actions: { create: false, update: true, delete: false },
   fields: [
     // The primary key must be declared, but it is not a column.
     { name: 'id', in: { list: false, form: false, detail: true } },
@@ -89,6 +92,14 @@ export class Users {
   protected readonly roles = signal<readonly Role[]>([]);
   protected readonly editingUser = signal<UserSummary | null>(null);
   protected readonly rolesModalOpen = signal(false);
+
+  protected readonly profileUser = signal<UserSummary | null>(null);
+  protected readonly profileModalOpen = signal(false);
+  protected readonly profileName = signal('');
+  protected readonly profileStatus = signal<UserStatus>('ACTIVE');
+  protected readonly profileSaving = signal(false);
+  protected readonly profileErrorCode = signal<string | null>(null);
+  protected readonly statuses: readonly UserStatus[] = ['ACTIVE', 'INACTIVE', 'SUSPENDED'];
   protected readonly draftRoles = signal<readonly string[]>([]);
   protected readonly saving = signal(false);
   protected readonly saveErrorCode = signal<string | null>(null);
@@ -109,6 +120,47 @@ export class Users {
     this.rolesModalOpen.set(false);
     this.editingUser.set(null);
     this.saveErrorCode.set(null);
+  }
+
+  protected openProfile(user: UserSummary): void {
+    this.profileErrorCode.set(null);
+    this.profileUser.set(user);
+    this.profileName.set(user.name ?? '');
+    this.profileStatus.set(user.status);
+    this.profileModalOpen.set(true);
+  }
+
+  protected closeProfile(): void {
+    this.profileModalOpen.set(false);
+    this.profileUser.set(null);
+    this.profileErrorCode.set(null);
+  }
+
+  protected onProfileName(value: string): void {
+    this.profileName.set(value);
+  }
+
+  protected onProfileStatus(value: string): void {
+    this.profileStatus.set(value as UserStatus);
+  }
+
+  protected async saveProfile(): Promise<void> {
+    const user = this.profileUser();
+    if (!user || this.profileSaving()) return;
+    this.profileSaving.set(true);
+    this.profileErrorCode.set(null);
+    try {
+      await this.api.updateUser(user.id, {
+        name: this.profileName().trim(),
+        status: this.profileStatus(),
+      });
+      await this.crud.load();
+      this.closeProfile();
+    } catch (error) {
+      this.profileErrorCode.set(apiErrorCode(error));
+    } finally {
+      this.profileSaving.set(false);
+    }
   }
 
   protected isChecked(role: Role): boolean {

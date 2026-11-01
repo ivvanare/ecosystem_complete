@@ -104,6 +104,23 @@ export class AdminApi {
     );
   }
 
+  /**
+   * Edits what an administrator owns: the display name and the account status. The
+   * email is not editable here — `api/API.md` proves the address before the row
+   * exists, so an admin-side change would skip verification.
+   */
+  updateUser(
+    userId: string,
+    patch: { name?: string; status?: UserStatus },
+  ): Promise<UserSummary> {
+    return firstValueFrom(
+      this.http.patch<UserSummary>(
+        `${this.baseUrl}/admin/users/${encodeURIComponent(userId)}`,
+        patch,
+      ),
+    );
+  }
+
   /** Replaces the whole role set: a role left out of `roles` is removed. */
   setUserRoles(userId: string, roles: string[]): Promise<UserSummary> {
     return firstValueFrom(

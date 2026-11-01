@@ -30,6 +30,27 @@ fieldset {
   accent-color: var(--accent);
 }
 
+.field {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.field label {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.profile-status {
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+}
+
 .muted {
   color: var(--muted);
   font-size: 13px;

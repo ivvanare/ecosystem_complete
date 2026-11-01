@@ -26,12 +26,14 @@ describe('Users', () => {
   const list = vi.fn();
   const listRoles = vi.fn();
   const setUserRoles = vi.fn();
+  const updateUser = vi.fn();
 
   beforeEach(() => {
     TestBed.resetTestingModule();
     list.mockReset().mockResolvedValue({ rows: [USER], total: 1 });
     listRoles.mockReset().mockResolvedValue(ROLES);
     setUserRoles.mockReset().mockResolvedValue({ ...USER, roles: ['EDITOR', 'ADMIN'] });
+    updateUser.mockReset().mockResolvedValue({ ...USER, name: 'Ana María' });
 
     TestBed.configureTestingModule({
       imports: [Users],
@@ -48,7 +50,7 @@ describe('Users', () => {
             remove: vi.fn(),
           },
         },
-        { provide: AdminApi, useValue: { listRoles, setUserRoles } },
+        { provide: AdminApi, useValue: { listRoles, setUserRoles, updateUser } },
       ],
     });
   });
@@ -116,6 +118,30 @@ describe('Users', () => {
     // The endpoint is a replacement: unchecked EDITOR would be sent too if the
     // screen were building a delta.
     expect(setUserRoles).toHaveBeenCalledWith('u1', ['EDITOR', 'ADMIN']);
+  });
+
+  it('edits the profile: name and status, never the email', async () => {
+    const { element, fixture } = await render();
+
+    buttonByText(element, 'Edit').click();
+    fixture.detectChanges();
+    await tick();
+
+    const name = inDialog<HTMLInputElement>('#profile-name')[0]!;
+    expect(name).toBeTruthy();
+    name.value = 'Ana María';
+    name.dispatchEvent(new Event('input'));
+
+    const status = inDialog<HTMLSelectElement>('#profile-status')[0]!;
+    status.value = 'SUSPENDED';
+    status.dispatchEvent(new Event('change'));
+
+    dialogButton('Save').click();
+    await tick();
+
+    expect(updateUser).toHaveBeenCalledWith('u1', { name: 'Ana María', status: 'SUSPENDED' });
+    // The email has no control in the dialog: changing it goes through the verified flow.
+    expect(inDialog('#profile-email')).toHaveLength(0);
   });
 
   it('shows the API code when the role change is rejected', async () => {

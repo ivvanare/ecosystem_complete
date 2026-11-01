@@ -10,6 +10,7 @@
     title="Users"
     [subtitle]="subtitle()"
     [rowActions]="rolesAction"
+    (edit)="openProfile($event)"
   />
 
   <nz-modal
@@ -63,6 +64,61 @@
             audit event.
           </p>
         }
+      }
+    </ng-container>
+  </nz-modal>
+
+  <nz-modal
+    [nzVisible]="profileModalOpen()"
+    nzTitle="Edit user"
+    nzOkText="Save"
+    nzCancelText="Cancel"
+    [nzOkLoading]="profileSaving()"
+    nzWidth="440px"
+    (nzOnCancel)="closeProfile()"
+    (nzOnOk)="saveProfile()"
+  >
+    <ng-container *nzModalContent>
+      @if (profileUser(); as user) {
+        <p class="modal-lead">{{ user.email ?? user.id }}</p>
+
+        <div class="field">
+          <label for="profile-name">Name</label>
+          <input
+            id="profile-name"
+            nz-input
+            type="text"
+            [value]="profileName()"
+            [disabled]="profileSaving()"
+            (input)="onProfileName($any($event.target).value)"
+          />
+        </div>
+
+        <div class="field">
+          <label for="profile-status">Status</label>
+          <select
+            id="profile-status"
+            class="profile-status"
+            [value]="profileStatus()"
+            [disabled]="profileSaving()"
+            (change)="onProfileStatus($any($event.target).value)"
+          >
+            @for (status of statuses; track status) {
+              <option [value]="status">{{ status }}</option>
+            }
+          </select>
+        </div>
+
+        @if (profileErrorCode(); as code) {
+          <p class="save-error" role="alert">
+            The change was rejected: <code>{{ code }}</code>
+          </p>
+        }
+
+        <p class="hint">
+          The email is not editable here: a new address has to prove itself through the
+          verified change flow. Suspending a user keeps their sessions valid until they expire.
+        </p>
       }
     </ng-container>
   </nz-modal>
