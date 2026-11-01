@@ -1,14 +1,16 @@
-import { Component, effect, inject, OnDestroy, signal } from '@angular/core';
-import { CrudListState, defineCrudConfig, type ListQuery } from 'crud-maker';
-import { AdminApi, type AuditEvent } from '../../core/admin-api';
-import { apiErrorCode } from '../../core/api-error';
-import { formatDateTime } from '../../core/format';
+import { Component, inject } from '@angular/core';
+import { CrudController, defineCrudConfig } from 'crud-maker';
+import { CrudListScreen } from 'crud-maker-zorro';
+import { AdminTransport } from '../../core/admin-transport';
 
 /**
- * The log is append-only and read-only (`api/API.md` §7), so the config exposes
- * exactly one filter — the exact event name — and no mutation action. Paging goes
- * through `CrudListState`; the engine's `event_eq` key is translated to the API's
- * `event` query parameter here, because this API has no filter grammar (L9).
+ * The audit log as config: read-only, newest first (the API's own order, so every
+ * field is unsortable), and exactly one filter — the exact event name — which is the
+ * only one `admin/audit-events` accepts.
+ *
+ * The event code renders as text, not as a tag: `crud-cell`'s `variantMap` matches
+ * exact values, and audit events are open-ended (`auth.login.failed`, `role.assigned`,
+ * …), so colouring them would need a pattern rule the adapter does not have yet.
  */
 const AUDIT_CONFIG = defineCrudConfig({
   key: 'audit-events',
@@ -20,82 +22,32 @@ const AUDIT_CONFIG = defineCrudConfig({
   actions: { create: false, update: false, delete: false },
   fields: [
     { name: 'id', in: { list: false, form: false, detail: true } },
-    { name: 'event', label: 'Event', filters: ['eq'] },
+    { name: 'event', label: 'Event', sortable: false, filters: ['eq'] },
     { name: 'actor_user_id', label: 'Actor', sortable: false },
-    { name: 'ip', label: 'IP', sortable: false },
+    { name: 'ip', label: 'Origin IP', sortable: false },
     { name: 'country', label: 'Country', sortable: false },
-    { name: 'created_at', label: 'When', type: 'datetime' },
+    { name: 'created_at', label: 'When', type: 'datetime', sortable: false },
   ],
 });
 
+/**
+ * Audit screen: the listing, its filter and its pagination come from
+ * `crud-list-screen`; the page only states what the log is.
+ */
 @Component({
   selector: 'app-audit',
+  imports: [CrudListScreen],
   templateUrl: './audit.html',
   styleUrl: './audit.css',
 })
-export class Audit implements OnDestroy {
-  private readonly api = inject(AdminApi);
-
-  protected readonly list = new CrudListState(AUDIT_CONFIG);
-  protected readonly formatDateTime = formatDateTime;
-
-  protected readonly rows = signal<readonly AuditEvent[]>([]);
-  protected readonly total = signal(0);
-  protected readonly loading = signal(true);
-  protected readonly errorCode = signal<string | null>(null);
-  protected readonly pageCount = signal(1);
-
-  private filterTimer: ReturnType<typeof setTimeout> | null = null;
+export class Audit {
+  protected readonly config = AUDIT_CONFIG;
+  protected readonly crud = new CrudController<Record<string, unknown>>(
+    AUDIT_CONFIG,
+    inject(AdminTransport),
+  );
 
   constructor() {
-    effect(() => {
-      const query = this.list.query();
-      void this.fetch(query);
-    });
-  }
-
-  ngOnDestroy(): void {
-    if (this.filterTimer) clearTimeout(this.filterTimer);
-  }
-
-  protected onFilter(value: string): void {
-    if (this.filterTimer) clearTimeout(this.filterTimer);
-    this.filterTimer = setTimeout(() => this.list.setFilter('event', 'eq', value), 250);
-  }
-
-  protected clear(): void {
-    this.list.clearFilters();
-  }
-
-  protected previous(): void {
-    if (this.list.query().page > 1) this.list.setPage(this.list.query().page - 1);
-  }
-
-  protected next(): void {
-    if (this.list.query().page < this.pageCount()) this.list.setPage(this.list.query().page + 1);
-  }
-
-  protected retry(): void {
-    void this.fetch(this.list.query());
-  }
-
-  private async fetch(query: ListQuery): Promise<void> {
-    this.loading.set(true);
-    this.errorCode.set(null);
-    try {
-      const filter = this.list.getFilter('event', 'eq');
-      const page = await this.api.listAuditEvents({
-        page: query.page,
-        limit: query.pageSize,
-        event: typeof filter === 'string' ? filter : null,
-      });
-      this.rows.set(page.data);
-      this.total.set(page.total);
-      this.pageCount.set(Math.max(1, Math.ceil(page.total / query.pageSize)));
-    } catch (error) {
-      this.errorCode.set(apiErrorCode(error));
-    } finally {
-      this.loading.set(false);
-    }
+    void this.crud.load();
   }
 }

@@ -2,83 +2,11 @@
   <header class="pagehead">
     <div>
       <h1 id="audit-title">Audit log</h1>
-      <p>{{ total() }} events · append-only, newest first · emails are never stored in clear</p>
+      <p>
+        {{ crud.total() }} events · append-only, newest first · emails are never stored in clear
+      </p>
     </div>
   </header>
 
-  <div class="toolbar">
-    <label class="field">
-      <span>Exact event name</span>
-      <input
-        type="search"
-        placeholder="auth.login.failed"
-        autocomplete="off"
-        (input)="onFilter($any($event.target).value)"
-      />
-    </label>
-    <button type="button" class="btn secondary clear" (click)="clear()">Clear filter</button>
-  </div>
-
-  @if (errorCode(); as code) {
-    <div class="alert" role="alert">
-      <p>Could not read the log: <code>{{ code }}</code></p>
-      <button type="button" class="btn secondary" (click)="retry()">Try again</button>
-    </div>
-  }
-
-  <div class="table-wrap">
-    <table class="panel-table">
-      <caption class="sr-only">Security audit events, newest first</caption>
-      <thead>
-        <tr>
-          <th scope="col">Event</th>
-          <th scope="col">Actor</th>
-          <th scope="col">Origin</th>
-          <th scope="col">When</th>
-        </tr>
-      </thead>
-      <tbody>
-        @if (loading()) {
-          <tr><td colspan="4" class="empty">Reading the log…</td></tr>
-        } @else if (!rows().length) {
-          <tr><td colspan="4" class="empty">No events match this filter.</td></tr>
-        } @else {
-          @for (event of rows(); track event.id) {
-            <tr>
-              <td>
-                <span class="tag" [class.danger]="event.event.includes('failed')" [class.info]="!event.event.includes('failed')">
-                  {{ event.event }}
-                </span>
-              </td>
-              <td class="mono">
-                @if (event.actor_user_id) {
-                  actor {{ event.actor_user_id.slice(0, 8) }}
-                } @else if (event.user_id) {
-                  user {{ event.user_id.slice(0, 8) }}
-                } @else if (event.email_hash) {
-                  hash {{ event.email_hash.slice(0, 8) }}
-                } @else {
-                  system
-                }
-              </td>
-              <td class="muted">
-                {{ event.ip ?? 'unknown IP' }}@if (event.country) {<span> · {{ event.country }}</span>}
-              </td>
-              <td class="muted">{{ formatDateTime(event.created_at) }}</td>
-            </tr>
-          }
-        }
-      </tbody>
-    </table>
-  </div>
-
-  <nav class="pager" aria-label="Pagination">
-    <button type="button" class="btn secondary" [disabled]="list.query().page <= 1 || loading()" (click)="previous()">
-      Previous
-    </button>
-    <p>Page {{ list.query().page }} of {{ pageCount() }}</p>
-    <button type="button" class="btn secondary" [disabled]="list.query().page >= pageCount() || loading()" (click)="next()">
-      Next
-    </button>
-  </nav>
+  <crud-list-screen [config]="config" [controller]="crud" />
 </section>
