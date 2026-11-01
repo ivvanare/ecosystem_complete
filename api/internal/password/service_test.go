@@ -312,3 +312,23 @@ func TestRequestResetIsThrottledByTheWindowLimit(t *testing.T) {
 		t.Error("the daily limit did not stop the mail")
 	}
 }
+
+func TestRequestResetMailPointsAtTheRecoveryPage(t *testing.T) {
+	publisher := &fakePublisher{}
+	store := &fakeStore{userID: "user-1"}
+	service := newService(store, publisher, &fakeAuditor{})
+	service.Origin = "https://panel.test/"
+
+	if err := service.RequestReset(context.Background(), "ana@melia.test"); err != nil {
+		t.Fatalf("RequestReset: %v", err)
+	}
+
+	var message mailer.Message
+	if err := json.Unmarshal(publisher.messages[0], &message); err != nil {
+		t.Fatalf("decoding the message: %v", err)
+	}
+	// Without the link the person receives a code and no place to enter it.
+	if !strings.Contains(message.Text, "https://panel.test/recuperar?email=ana%40melia.test") {
+		t.Errorf("text has no recovery link carrying the address: %s", message.Text)
+	}
+}

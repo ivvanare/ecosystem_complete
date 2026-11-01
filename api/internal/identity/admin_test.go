@@ -17,10 +17,21 @@ type fakeAdmin struct {
 	events   Page[AuditEvent]
 	gotRoles []string
 	gotUser  string
+	// Captured profile edit and its canned result.
+	updated   UserSummary
+	updateErr error
 }
 
 func (f *fakeAdmin) ListUsers(context.Context, UserFilter) (Page[UserSummary], error) {
 	return f.users, nil
+}
+
+func (f *fakeAdmin) UpdateUser(_ context.Context, userID string, _, _ *string) (UserSummary, error) {
+	f.gotUser = userID
+	if f.updateErr != nil {
+		return UserSummary{}, f.updateErr
+	}
+	return f.updated, nil
 }
 
 func (f *fakeAdmin) SetRoles(_ context.Context, userID string, roles []string) ([]string, error) {

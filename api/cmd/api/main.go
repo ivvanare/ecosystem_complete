@@ -21,6 +21,7 @@ import (
 	"github.com/ivvanare/ecosystem_complete/api/internal/emailchange"
 	"github.com/ivvanare/ecosystem_complete/api/internal/httpapi"
 	"github.com/ivvanare/ecosystem_complete/api/internal/identity"
+	"github.com/ivvanare/ecosystem_complete/api/internal/invitation"
 	"github.com/ivvanare/ecosystem_complete/api/internal/login"
 	"github.com/ivvanare/ecosystem_complete/api/internal/password"
 	"github.com/ivvanare/ecosystem_complete/api/internal/probe"
@@ -121,9 +122,26 @@ func run() error {
 	if cfg.RabbitMQURL != "" {
 		passwordPublisher := queue.NewAMQP(cfg.RabbitMQURL, cfg.MailQueue)
 		defer func() { _ = passwordPublisher.Close() }()
-		passwordService = password.New(password.NewPostgresStore(pool), passwordPublisher, auditor, logger)
+		recovery := password.New(password.NewPostgresStore(pool), passwordPublisher, auditor, logger)
+		if len(cfg.CORSOrigins) > 0 {
+			recovery.Origin = cfg.CORSOrigins[0]
+		}
+		passwordService = recovery
 	} else {
 		logger.Warn("RABBITMQ_URL is empty: password recovery is disabled because codes cannot be delivered")
+	}
+
+	var invitationSender httpapi.InvitationSender
+	if cfg.RabbitMQURL == "" {
+		logger.Warn("RABBITMQ_URL is empty: panel invitations are disabled because the message cannot be delivered")
+	} else {
+		invitationPublisher := queue.NewAMQP(cfg.RabbitMQURL, cfg.MailQueue)
+		defer func() { _ = invitationPublisher.Close() }()
+		origin := ""
+		if len(cfg.CORSOrigins) > 0 {
+			origin = cfg.CORSOrigins[0]
+		}
+		invitationSender = invitation.New(invitationPublisher, origin, logger)
 	}
 
 	var signupRequester httpapi.SignupRequester
@@ -150,6 +168,7 @@ func run() error {
 			Authorizer:         identityService,
 			Identity:           identityService,
 			Admin:              identityService,
+			Invitations:        invitationSender,
 			Password:           passwordService,
 			EmailChange:        emailChangeService,
 			Social:             socialService,

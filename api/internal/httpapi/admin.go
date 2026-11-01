@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/mail"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 type AdminReader interface {
 	Users(ctx context.Context, filter identity.UserFilter) (identity.Page[identity.UserSummary], error)
 	User(ctx context.Context, userID string) (identity.UserSummary, error)
+	UpdateUser(ctx context.Context, actorID, userID string, name, status *string, meta audit.Event) (identity.UserSummary, error)
 	SetRoles(ctx context.Context, actorID, userID string, roles []string, meta audit.Event) ([]string, error)
 	AuditEvents(ctx context.Context, filter identity.AuditFilter) (identity.Page[identity.AuditEvent], error)
 }
@@ -45,17 +47,41 @@ type auditEventResponse struct {
 	CreatedAt time.Time      `json:"created_at"`
 }
 
+// InvitationSender emails an invitation to a future panel user.
+type InvitationSender interface {
+	Invite(ctx context.Context, email, name string) error
+}
+
 type adminHandlers struct {
-	reader AdminReader
+	reader      AdminReader
+	password    PasswordService
+	invitations InvitationSender
+}
+
+func validUserScope(value string) bool {
+	for _, candidate := range identity.UserScopes {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *adminHandlers) users(w http.ResponseWriter, r *http.Request) {
 	page, limit := paging(r)
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+	if scope != "" && !validUserScope(scope) {
+		// An unknown scope would silently match nobody; say so instead.
+		writeValidationError(w, []fieldError{{Field: "scope", Code: "invalid"}})
+		return
+	}
+
 	filter := identity.UserFilter{
 		Page:   page,
 		Limit:  limit,
 		Query:  strings.TrimSpace(r.URL.Query().Get("q")),
 		Status: strings.TrimSpace(r.URL.Query().Get("status")),
+		Scope:  scope,
 	}
 
 	result, err := h.reader.Users(r.Context(), filter)
@@ -72,6 +98,127 @@ func (h *adminHandlers) users(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": data, "page": result.Page, "limit": result.Limit, "total": result.Total,
 	})
+}
+
+type inviteRequest struct {
+	Email string `json:"email"`
+	Name  string `json:"name"`
+}
+
+// inviteUser emails an invitation. Nothing is created here: the person registers and
+// proves the address themselves, and the role is granted afterwards.
+func (h *adminHandlers) inviteUser(w http.ResponseWriter, r *http.Request) {
+	var body inviteRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+		return
+	}
+
+	email := strings.ToLower(strings.TrimSpace(body.Email))
+	if _, err := mail.ParseAddress(email); err != nil {
+		writeValidationError(w, []fieldError{{Field: "email", Code: "invalid"}})
+		return
+	}
+
+	if err := h.invitations.Invite(r.Context(), email, strings.TrimSpace(body.Name)); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "The request could not be completed.")
+		return
+	}
+
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// resetUserPassword sends the account's reset code to its owner. An administrator never
+// sets another password: the code proves the address, which keeps ownership with the user.
+func (h *adminHandlers) resetUserPassword(w http.ResponseWriter, r *http.Request) {
+	targetID := r.PathValue("userId")
+	if targetID == "" {
+		writeError(w, http.StatusNotFound, "not_found", "Not found.")
+		return
+	}
+
+	user, err := h.reader.User(r.Context(), targetID)
+	if err != nil || user.Email == nil {
+		// A user without an address (federated sign-in) has nothing to send a code to.
+		writeError(w, http.StatusNotFound, "not_found", "Not found.")
+		return
+	}
+
+	if err := h.password.RequestReset(r.Context(), *user.Email); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "The request could not be completed.")
+		return
+	}
+
+	w.WriteHeader(http.StatusAccepted)
+}
+
+type updateUserRequest struct {
+	Name   *string `json:"name"`
+	Status *string `json:"status"`
+}
+
+// Mirrors public.suspendable_status in the model.
+var validUserStatuses = []string{"ACTIVE", "INACTIVE", "SUSPENDED"}
+
+func validUserStatus(value string) bool {
+	for _, candidate := range validUserStatuses {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
+
+// updateUser edits the fields an administrator owns. The email is not among them: it
+// is proven before the row exists (diagram_base.txt:74), so changing it here would
+// skip verification.
+func (h *adminHandlers) updateUser(w http.ResponseWriter, r *http.Request) {
+	actorID, ok := userIDFrom(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication is required.")
+		return
+	}
+
+	targetID := r.PathValue("userId")
+	if targetID == "" {
+		writeError(w, http.StatusNotFound, "not_found", "Not found.")
+		return
+	}
+
+	var body updateUserRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+		return
+	}
+	if body.Name == nil && body.Status == nil {
+		writeValidationError(w, []fieldError{{Field: "name", Code: "required"}})
+		return
+	}
+	if body.Name != nil {
+		trimmed := strings.TrimSpace(*body.Name)
+		if len(trimmed) > 120 {
+			writeValidationError(w, []fieldError{{Field: "name", Code: "too_long"}})
+			return
+		}
+		body.Name = &trimmed
+	}
+	if body.Status != nil && !validUserStatus(*body.Status) {
+		writeValidationError(w, []fieldError{{Field: "status", Code: "invalid"}})
+		return
+	}
+
+	meta := audit.Event{IP: clientIP(r), UserAgent: r.UserAgent()}
+	user, err := h.reader.UpdateUser(r.Context(), actorID, targetID, body.Name, body.Status, meta)
+	if err != nil {
+		if errors.Is(err, identity.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "Not found.")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal_error", "The request could not be completed.")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, toUserSummary(user))
 }
 
 type setRolesRequest struct {
