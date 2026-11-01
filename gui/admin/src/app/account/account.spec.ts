@@ -1,6 +1,6 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { Router } from '@angular/router';
+import { provideRouter, Router } from '@angular/router';
 import { vi } from 'vitest';
 import { Account } from './account';
 import { AuthService, type Me } from '../core/auth.service';
@@ -33,9 +33,14 @@ describe('Account', () => {
       imports: [Account],
       providers: [
         { provide: AuthService, useValue: { user, logout } },
-        { provide: Router, useValue: { navigate } },
+        // The template links to /login in the done state, so the real router is needed;
+        // navigation itself is spied per test.
+        provideRouter([]),
       ],
     });
+    // The real router provides the directives the template needs; navigation is spied so
+    // the assertions keep checking what the component asked for.
+    vi.spyOn(TestBed.inject(Router), 'navigate').mockImplementation(navigate);
   });
 
   it('renders what GET /v1/me returned', () => {
@@ -72,10 +77,12 @@ describe('Account — change email', () => {
   const user = signal<Me | null>(USER);
   const requestEmailChange = vi.fn().mockResolvedValue(undefined);
   const confirmEmailChange = vi.fn().mockResolvedValue(undefined);
+  const navigate = vi.fn().mockResolvedValue(true);
 
   beforeEach(() => {
     requestEmailChange.mockClear();
     confirmEmailChange.mockClear();
+    navigate.mockClear();
     TestBed.resetTestingModule();
     TestBed.configureTestingModule({
       imports: [Account],
@@ -90,9 +97,12 @@ describe('Account — change email', () => {
             confirmEmailChange,
           },
         },
-        { provide: Router, useValue: { navigate: vi.fn().mockResolvedValue(true) } },
+        provideRouter([]),
       ],
     });
+    // The real router provides the directives the template needs; navigation is spied so
+    // the assertions keep checking what the component asked for.
+    vi.spyOn(TestBed.inject(Router), 'navigate').mockImplementation(navigate);
   });
 
   function fill(fixture: ReturnType<typeof TestBed.createComponent<Account>>, id: string, value: string): void {
