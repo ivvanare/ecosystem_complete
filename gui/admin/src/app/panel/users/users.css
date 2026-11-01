@@ -2,12 +2,68 @@
   display: block;
 }
 
-.tag + .tag {
-  margin-left: 4px;
+.editor {
+  margin-top: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.editor header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.editor h2 {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.check input {
+  margin-top: 2px;
+  accent-color: var(--accent);
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--muted);
+  max-width: 46ch;
 }
 
 .save-error {
-  margin-bottom: 12px;
+  margin: 10px 0 0;
   font-size: 13px;
   color: #991b1b;
 }
@@ -17,51 +73,4 @@
   background: #fdecec;
   border-radius: 5px;
   padding: 1px 6px;
-}
-
-.editor td {
-  background: #f8fafc;
-  padding: 14px 16px;
-}
-
-.editor fieldset {
-  border: 0;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 8px;
-}
-
-.editor legend {
-  padding: 0;
-  margin-bottom: 8px;
-  font-size: 12.5px;
-  font-weight: 650;
-  color: var(--ink);
-}
-
-.check {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  font-size: 12.5px;
-}
-
-.check input {
-  margin-top: 2px;
-  accent-color: var(--accent);
-}
-
-.editor-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 6px;
-}
-
-.editor-actions .hint {
-  font-size: 12px;
-  color: var(--muted);
-  max-width: 46ch;
 }

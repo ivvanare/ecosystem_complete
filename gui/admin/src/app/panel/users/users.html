@@ -2,147 +2,63 @@
   <header class="pagehead">
     <div>
       <h1 id="users-title">Users</h1>
-      <p>{{ total() }} {{ total() === 1 ? 'account' : 'accounts' }} · roles are replaced, never merged</p>
+      <p>{{ crud.total() }} {{ crud.total() === 1 ? 'account' : 'accounts' }} · roles are replaced, never merged</p>
     </div>
   </header>
 
-  <div class="toolbar">
-    <label class="field">
-      <span>Search</span>
-      <input
-        type="search"
-        placeholder="Name or email"
-        autocomplete="off"
-        (input)="onSearch($any($event.target).value)"
-      />
-    </label>
-    <label class="field narrow">
-      <span>Status</span>
-      <select (change)="onStatus($any($event.target).value)">
-        @for (status of statuses; track status) {
-          <option [value]="status">{{ status === '' ? 'Any' : status }}</option>
-        }
-      </select>
-    </label>
-  </div>
+  <!-- Declared before the screen so the projection input sees the reference. -->
+  <ng-template #rolesAction let-row>
+    <button nz-button nzSize="small" type="button" (click)="openRoles(row)">Roles</button>
+  </ng-template>
 
-  @if (errorCode(); as code) {
-    <div class="alert" role="alert">
-      <p>Could not load users: <code>{{ code }}</code></p>
-      <button type="button" class="btn secondary" (click)="retry()">Try again</button>
-    </div>
-  }
+  <crud-list-screen [config]="config" [controller]="crud" [rowActions]="rolesAction" />
 
-  @if (saveErrorCode(); as code) {
-    <p class="save-error" role="alert">The role change was rejected: <code>{{ code }}</code></p>
-  }
+  @if (editingUser(); as user) {
+    <section class="editor" aria-labelledby="roles-editor-title">
+      <header>
+        <h2 id="roles-editor-title">Roles for {{ user.email ?? user.id }}</h2>
+        <button nz-button type="button" (click)="closeRoles()">Close</button>
+      </header>
 
-  <div class="table-wrap">
-    <table class="panel-table">
-      <caption class="sr-only">Users of the backoffice, with their roles</caption>
-      <thead>
-        <tr>
-          <th scope="col">Name</th>
-          <th scope="col">Email</th>
-          <th scope="col">Status</th>
-          <th scope="col">Roles</th>
-          <th scope="col">Created</th>
-          <th scope="col"><span class="sr-only">Actions</span></th>
-        </tr>
-      </thead>
-      <tbody>
-        @if (loading()) {
-          <tr>
-            <td colspan="6" class="empty">Loading users…</td>
-          </tr>
-        } @else if (!rows().length) {
-          <tr>
-            <td colspan="6" class="empty">No users match this filter.</td>
-          </tr>
-        } @else {
-          @for (user of rows(); track user.id) {
-            <tr>
-              <td>{{ user.name ?? '—' }}</td>
-              <td class="mono">{{ user.email ?? '—' }}</td>
-              <td>
-                <span class="tag" [class.ok]="user.status === 'ACTIVE'" [class.warn]="user.status !== 'ACTIVE'">
-                  {{ user.status }}
-                </span>
-              </td>
-              <td>
-                @if (user.roles.length) {
-                  @for (role of user.roles; track role) {
-                    <span class="tag info">{{ role }}</span>
-                  }
-                } @else {
-                  <span class="muted">none</span>
+      @if (!roles().length) {
+        <p class="muted">The role catalogue could not be loaded.</p>
+      } @else {
+        <fieldset>
+          <legend class="sr-only">Roles</legend>
+          @for (role of roles(); track role.name) {
+            <label class="check">
+              <input
+                type="checkbox"
+                [checked]="isChecked(role)"
+                [disabled]="saving()"
+                (change)="toggleRole(role)"
+              />
+              <span>
+                <strong>{{ role.name }}</strong>
+                @if (role.description) {
+                  <span class="muted"> — {{ role.description }}</span>
                 }
-              </td>
-              <td class="muted">{{ formatDateTime(user.created_at) }}</td>
-              <td class="actions">
-                <button type="button" class="btn secondary" (click)="openRoles(user)">
-                  {{ editingId() === user.id ? 'Close' : 'Roles' }}
-                </button>
-              </td>
-            </tr>
-
-            @if (editingId() === user.id) {
-              <tr class="editor">
-                <td colspan="6">
-                  <fieldset>
-                    <legend>Roles for {{ user.email ?? user.id }}</legend>
-                    @if (!roles().length) {
-                      <p class="muted">The role catalogue could not be loaded.</p>
-                    } @else {
-                      @for (role of roles(); track role.name) {
-                        <label class="check">
-                          <input
-                            type="checkbox"
-                            [checked]="isChecked(role)"
-                            [disabled]="savingId() !== null"
-                            (change)="toggleRole(role)"
-                          />
-                          <span>
-                            <strong>{{ role.name }}</strong>
-                            @if (role.description) {
-                              <span class="muted"> — {{ role.description }}</span>
-                            }
-                          </span>
-                        </label>
-                      }
-                    }
-                    <div class="editor-actions">
-                      <button
-                        type="button"
-                        class="btn primary"
-                        [disabled]="savingId() !== null || !roles().length"
-                        (click)="saveRoles(user)"
-                      >
-                        {{ savingId() === user.id ? 'Saving…' : 'Save roles' }}
-                      </button>
-                      <button type="button" class="btn secondary" (click)="openRoles(user)">Cancel</button>
-                      <p class="hint">
-                        The set replaces the current one: a role left unchecked is removed. Saving
-                        writes an audit event.
-                      </p>
-                    </div>
-                  </fieldset>
-                </td>
-              </tr>
-            }
+              </span>
+            </label>
           }
-        }
-      </tbody>
-    </table>
-  </div>
+        </fieldset>
 
-  <nav class="pager" aria-label="Pagination">
-    <button type="button" class="btn secondary" [disabled]="!hasPrevious() || loading()" (click)="previous()">
-      Previous
-    </button>
-    <p>Page {{ list.query().page }} of {{ pageCount() }}</p>
-    <button type="button" class="btn secondary" [disabled]="!hasNext() || loading()" (click)="next()">
-      Next
-    </button>
-  </nav>
+        @if (saveErrorCode(); as code) {
+          <p class="save-error" role="alert">
+            The role change was rejected: <code>{{ code }}</code>
+          </p>
+        }
+
+        <footer>
+          <button nz-button nzType="primary" type="button" [disabled]="saving()" (click)="saveRoles()">
+            {{ saving() ? 'Saving…' : 'Save roles' }}
+          </button>
+          <p class="hint">
+            The set replaces the current one: a role left unchecked is removed. Saving writes an
+            audit event.
+          </p>
+        </footer>
+      }
+    </section>
+  }
 </section>

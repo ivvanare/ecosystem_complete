@@ -1,14 +1,16 @@
-import { Component, computed, effect, inject, OnDestroy, signal } from '@angular/core';
-import { CrudListState, defineCrudConfig, type ListQuery } from 'crud-maker';
-import { AdminApi, type Role, type UserStatus, type UserSummary } from '../../core/admin-api';
+import { Component, inject, signal } from '@angular/core';
+import { CrudController, defineCrudConfig } from 'crud-maker';
+import { CrudListScreen } from 'crud-maker-zorro';
+import { NzButtonModule } from 'ng-zorro-antd/button';
+import { AdminApi, type Role, type UserSummary } from '../../core/admin-api';
+import { AdminTransport } from '../../core/admin-transport';
 import { apiErrorCode } from '../../core/api-error';
-import { formatDateTime } from '../../core/format';
 
 /**
- * The users entity as the engine sees it: read-only, because the API exposes no
- * create/update/delete for users — only `PATCH /v1/admin/users/{id}/roles`, which
- * is a domain call, not a generic update. `CrudListState` still owns paging and
- * search so the screen cannot invent a second pagination.
+ * The users entity as JSON-shaped config: the engine derives columns, search and
+ * the status filter from it, and `admin/users` is the endpoint `AdminTransport`
+ * knows how to speak. No create/update/delete: the API exposes none for users, so
+ * every mutation here is the domain call below (`PATCH .../roles`).
  */
 const USERS_CONFIG = defineCrudConfig({
   key: 'users',
@@ -19,110 +21,61 @@ const USERS_CONFIG = defineCrudConfig({
   searchFields: ['email', 'name'],
   actions: { create: false, update: false, delete: false },
   fields: [
-    { name: 'id', in: { list: false, form: false, detail: true } },
     { name: 'name', label: 'Name' },
     { name: 'email', label: 'Email', type: 'email' },
-    { name: 'status', label: 'Status' },
+    {
+      name: 'status',
+      label: 'Status',
+      filters: ['eq'],
+      options: [
+        { label: 'Active', value: 'ACTIVE' },
+        { label: 'Inactive', value: 'INACTIVE' },
+        { label: 'Suspended', value: 'SUSPENDED' },
+      ],
+      cell: { render: 'tag', variantMap: { ACTIVE: 'green', INACTIVE: 'default', SUSPENDED: 'orange' } },
+    },
     { name: 'roles', label: 'Roles', sortable: false },
     { name: 'created_at', label: 'Created', type: 'datetime' },
   ],
 });
 
-/** Statuses the API accepts as a filter (`UserStatus` in `api/openapi.yaml`). */
-const STATUSES: readonly (UserStatus | '')[] = ['', 'ACTIVE', 'INACTIVE', 'SUSPENDED'];
-
 /**
- * Users screen: list, search, status filter, and the one mutation the API offers —
- * replacing a user's role set (S4, S8). The save sends exactly the checked names
- * because `PATCH .../roles` is a replacement, never a delta.
+ * Users screen (S5): the listing, its search and its filter come from
+ * `crud-list-screen`; the only thing written by hand is the domain action the
+ * adapter cannot know about — replacing a user's role set.
  */
 @Component({
   selector: 'app-users',
+  imports: [CrudListScreen, NzButtonModule],
   templateUrl: './users.html',
   styleUrl: './users.css',
 })
-export class Users implements OnDestroy {
+export class Users {
   private readonly api = inject(AdminApi);
 
-  protected readonly list = new CrudListState(USERS_CONFIG);
-  protected readonly statuses = STATUSES;
-  protected readonly formatDateTime = formatDateTime;
-
-  protected readonly rows = signal<readonly UserSummary[]>([]);
-  protected readonly total = signal(0);
-  protected readonly loading = signal(true);
-  protected readonly errorCode = signal<string | null>(null);
+  protected readonly config = USERS_CONFIG;
+  protected readonly crud = new CrudController<UserSummary>(USERS_CONFIG, inject(AdminTransport));
 
   protected readonly roles = signal<readonly Role[]>([]);
-  protected readonly editingId = signal<string | null>(null);
+  protected readonly editingUser = signal<UserSummary | null>(null);
   protected readonly draftRoles = signal<readonly string[]>([]);
-  protected readonly savingId = signal<string | null>(null);
+  protected readonly saving = signal(false);
   protected readonly saveErrorCode = signal<string | null>(null);
 
-  protected readonly pageCount = computed(() =>
-    Math.max(1, Math.ceil(this.total() / this.list.query().pageSize)),
-  );
-  protected readonly hasPrevious = computed(() => this.list.query().page > 1);
-  protected readonly hasNext = computed(() => this.list.query().page < this.pageCount());
-
-  private searchTimer: ReturnType<typeof setTimeout> | null = null;
-  private filterTimer: ReturnType<typeof setTimeout> | null = null;
-
   constructor() {
+    void this.crud.load();
     void this.loadRoles();
-    // One effect owns "the query changed, reload": paging, search and the status
-    // filter all funnel through `list`, so there is no second source of truth.
-    effect(() => {
-      const query = this.list.query();
-      void this.fetch(query);
-    });
-  }
-
-  ngOnDestroy(): void {
-    if (this.searchTimer) clearTimeout(this.searchTimer);
-    if (this.filterTimer) clearTimeout(this.filterTimer);
-  }
-
-  protected onSearch(value: string): void {
-    if (this.searchTimer) clearTimeout(this.searchTimer);
-    this.searchTimer = setTimeout(() => this.list.setSearch(value), 250);
-  }
-
-  protected onStatus(value: string): void {
-    if (this.filterTimer) clearTimeout(this.filterTimer);
-    this.filterTimer = setTimeout(() => {
-      this.list.clearFilters();
-      if (value !== '') {
-        // The API has no filter grammar: the screen maps its own control to
-        // `status`, and `list` still validates the value's type.
-        this.statusFilter.set(value as UserStatus);
-        this.list.setPage(1);
-      } else {
-        this.statusFilter.set(null);
-      }
-      this.list.setPage(1);
-    }, 200);
-  }
-
-  /** Status travels as a plain query param, not through the engine's filter keys. */
-  protected readonly statusFilter = signal<UserStatus | null>(null);
-
-  protected previous(): void {
-    if (this.hasPrevious()) this.list.setPage(this.list.query().page - 1);
-  }
-
-  protected next(): void {
-    if (this.hasNext()) this.list.setPage(this.list.query().page + 1);
-  }
-
-  protected retry(): void {
-    void this.fetch(this.list.query());
   }
 
   protected openRoles(user: UserSummary): void {
     this.saveErrorCode.set(null);
-    this.editingId.set(this.editingId() === user.id ? null : user.id);
+    this.editingUser.set(user);
     this.draftRoles.set([...user.roles]);
+  }
+
+  protected closeRoles(): void {
+    this.editingUser.set(null);
+    this.saveErrorCode.set(null);
   }
 
   protected isChecked(role: Role): boolean {
@@ -132,22 +85,26 @@ export class Users implements OnDestroy {
   protected toggleRole(role: Role): void {
     const current = this.draftRoles();
     this.draftRoles.set(
-      current.includes(role.name) ? current.filter((name) => name !== role.name) : [...current, role.name],
+      current.includes(role.name)
+        ? current.filter((name) => name !== role.name)
+        : [...current, role.name],
     );
   }
 
-  protected async saveRoles(user: UserSummary): Promise<void> {
-    if (this.savingId() !== null) return;
-    this.savingId.set(user.id);
+  /** The endpoint replaces the set, so exactly the checked names are sent. */
+  protected async saveRoles(): Promise<void> {
+    const user = this.editingUser();
+    if (!user || this.saving()) return;
+    this.saving.set(true);
     this.saveErrorCode.set(null);
     try {
-      const updated = await this.api.setUserRoles(user.id, [...this.draftRoles()]);
-      this.rows.set(this.rows().map((row) => (row.id === updated.id ? updated : row)));
-      this.editingId.set(null);
+      await this.api.setUserRoles(user.id, [...this.draftRoles()]);
+      await this.crud.load();
+      this.editingUser.set(null);
     } catch (error) {
       this.saveErrorCode.set(apiErrorCode(error));
     } finally {
-      this.savingId.set(null);
+      this.saving.set(false);
     }
   }
 
@@ -155,28 +112,8 @@ export class Users implements OnDestroy {
     try {
       this.roles.set(await this.api.listRoles());
     } catch {
-      // The list is still useful without the editor; the save path reports its own
-      // failure. Nothing to tell the user until they try to edit.
+      // The listing still works without the catalogue; the editor says so.
       this.roles.set([]);
-    }
-  }
-
-  private async fetch(query: ListQuery): Promise<void> {
-    this.loading.set(true);
-    this.errorCode.set(null);
-    try {
-      const page = await this.api.listUsers({
-        page: query.page,
-        limit: query.pageSize,
-        q: query.search,
-        status: this.statusFilter(),
-      });
-      this.rows.set(page.data);
-      this.total.set(page.total);
-    } catch (error) {
-      this.errorCode.set(apiErrorCode(error));
-    } finally {
-      this.loading.set(false);
     }
   }
 }

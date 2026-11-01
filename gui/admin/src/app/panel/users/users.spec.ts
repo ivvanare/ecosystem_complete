@@ -1,7 +1,7 @@
-import { HttpErrorResponse } from '@angular/common/http';
 import { TestBed } from '@angular/core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdminApi, type Role, type UserSummary } from '../../core/admin-api';
+import { AdminTransport } from '../../core/admin-transport';
 import { Users } from './users';
 
 const USER: UserSummary = {
@@ -19,100 +19,103 @@ const ROLES: Role[] = [
   { id: 'r2', name: 'ADMIN', description: null, status: 'ACTIVE', permissions: [] },
 ];
 
-/** One macrotask: drains every microtask chained off a resolved response. */
+/** One macrotask: drains the microtasks chained off a resolved promise. */
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 describe('Users', () => {
+  const list = vi.fn();
+  const listRoles = vi.fn();
   const setUserRoles = vi.fn();
 
-  function setup(listUsers: ReturnType<typeof vi.fn>): void {
+  beforeEach(() => {
+    TestBed.resetTestingModule();
+    list.mockReset().mockResolvedValue({ rows: [USER], total: 1 });
+    listRoles.mockReset().mockResolvedValue(ROLES);
+    setUserRoles.mockReset().mockResolvedValue({ ...USER, roles: ['EDITOR', 'ADMIN'] });
+
     TestBed.configureTestingModule({
       imports: [Users],
       providers: [
+        // The screen never talks HTTP in a unit test: the transport is the seam the
+        // engine was built around, so replacing it is enough.
         {
-          provide: AdminApi,
+          provide: AdminTransport,
           useValue: {
-            listUsers,
-            setUserRoles,
-            listRoles: vi.fn().mockResolvedValue(ROLES),
+            list,
+            get: vi.fn(),
+            create: vi.fn(),
+            update: vi.fn(),
+            remove: vi.fn(),
           },
         },
+        { provide: AdminApi, useValue: { listRoles, setUserRoles } },
       ],
     });
-  }
+  });
 
-  async function render(): Promise<HTMLElement> {
+  async function render(): Promise<{ element: HTMLElement; fixture: ReturnType<typeof TestBed.createComponent<Users>> }> {
     const fixture = TestBed.createComponent(Users);
     fixture.detectChanges();
     await tick();
     fixture.detectChanges();
-    return fixture.nativeElement as HTMLElement;
+    return { element: fixture.nativeElement as HTMLElement, fixture };
   }
 
-  beforeEach(() => {
-    TestBed.resetTestingModule();
-    setUserRoles.mockReset();
-    setUserRoles.mockResolvedValue({ ...USER, roles: ['EDITOR', 'ADMIN'] });
-  });
+  function buttonByText(element: HTMLElement, text: string): HTMLButtonElement {
+    const found = [...element.querySelectorAll('button')].find(
+      (button) => button.textContent?.trim() === text,
+    );
+    if (!found) throw new Error(`no button labelled "${text}"`);
+    return found as HTMLButtonElement;
+  }
 
-  it('renders the page of users with their roles', async () => {
-    setup(vi.fn().mockResolvedValue({ data: [USER], page: 1, limit: 20, total: 1 }));
-    const element = await render();
+  it('renders the rows the engine loaded, through the config columns', async () => {
+    const { element } = await render();
     const text = element.textContent ?? '';
 
+    expect(list).toHaveBeenCalled();
     expect(text).toContain('ana@melia.test');
-    expect(text).toContain('EDITOR');
+    expect(text).toContain('ACTIVE');
     expect(text).toContain('1 account');
   });
 
-  it('saves the whole role set, because the API replaces it', async () => {
-    setup(vi.fn().mockResolvedValue({ data: [USER], page: 1, limit: 20, total: 1 }));
-    const element = await render();
+  it('replaces the whole role set from the row action', async () => {
+    const { element } = await render();
 
-    const rolesButton = [...element.querySelectorAll('button')].find(
-      (button) => button.textContent?.trim() === 'Roles',
-    ) as HTMLButtonElement;
-    rolesButton.click();
+    buttonByText(element, 'Roles').click();
     await tick();
 
     const checkboxes = [...element.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
+    expect(checkboxes).toHaveLength(ROLES.length);
     const admin = checkboxes[1]!;
     admin.checked = true;
     admin.dispatchEvent(new Event('change'));
 
-    const save = [...element.querySelectorAll('button')].find(
-      (button) => button.textContent?.trim() === 'Save roles',
-    ) as HTMLButtonElement;
-    save.click();
+    buttonByText(element, 'Save roles').click();
     await tick();
 
+    // The endpoint is a replacement: unchecked EDITOR would be sent too if the
+    // screen were building a delta.
     expect(setUserRoles).toHaveBeenCalledWith('u1', ['EDITOR', 'ADMIN']);
   });
 
-  it('shows the API code when a role change is rejected', async () => {
-    setup(vi.fn().mockResolvedValue({ data: [USER], page: 1, limit: 20, total: 1 }));
+  it('shows the API code when the role change is rejected', async () => {
+    const { HttpErrorResponse } = await import('@angular/common/http');
     setUserRoles.mockRejectedValue(
       new HttpErrorResponse({
         status: 403,
         error: { error: { code: 'permission_denied', message: 'Nope.' } },
       }),
     );
-    const element = await render();
+    const { element } = await render();
 
-    const rolesButton = [...element.querySelectorAll('button')].find(
-      (button) => button.textContent?.trim() === 'Roles',
-    ) as HTMLButtonElement;
-    rolesButton.click();
+    buttonByText(element, 'Roles').click();
     await tick();
-
-    const save = [...element.querySelectorAll('button')].find(
-      (button) => button.textContent?.trim() === 'Save roles',
-    ) as HTMLButtonElement;
-    save.click();
+    buttonByText(element, 'Save roles').click();
     await tick();
     await tick();
 
-    const alert = element.querySelector('[role="alert"]') as HTMLElement | null;
+    const alert = element.querySelector('[role="alert"]');
     expect(alert?.textContent).toContain('permission_denied');
     expect(alert?.textContent).not.toContain('Nope.');
   });
