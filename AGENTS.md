@@ -76,9 +76,44 @@ Three long-lived branches, promoting in one direction:
 | `prod` | releases, taken from `quality` | the default branch: pull request required, `test` and `image` green, no deletion, no force-push |
 
 `prod` is the default branch (it replaced `master`). Work on a short-lived branch named after
-its side (`feat/api-*`, `feat/admin-*`, `fix/*`), open the PR against `dev`, and promote:
+its side (`feat/api-*`, `feat/db-*`, `fix/*`), open the PR against `dev`, and promote:
 `dev` → `quality` → `prod`. The required checks are matched by name, so renaming a CI job also
-means updating the `protect prod` ruleset.
+means updating the `protect prod` ruleset. The SPA has its own repository and its own ruleset;
+it left in the split that removed `gui/`.
+
+## Working alongside other sessions
+
+Two agent sessions work in this repository — one on `api/`, one on `database/` — and a third owns
+`melia-admin`. These rules exist because the same collision has cost real work: a session switched
+branches under another, and a migration changed the behaviour of another session's tests while
+those tests were running.
+
+**The shared resource is the live database, not the files.** A `.sql` file is inert until someone
+applies it; `melia` is live for both sessions at once. Before applying a migration to the dev
+database, announce the file and its observable effect — for example "applying 14: it relaxes the
+`tb_place.tx_timezone` CHECK, it cannot break existing inserts". Applied DDL has no cheap undo,
+and the session that applies it is not always the one that pays for it.
+
+**The ledger is environment state, not source.** `seg.tb_schema_migration` is written at runtime by
+the service; `database/init/*.sql` is the source of truth. Rebuilding the image and restarting
+touches the ledger, so it belongs to the shared instance rather than to one side.
+
+**Files both sessions touch — announce before editing:** `AGENTS.md`, `README.md`,
+`database/diagram_base.txt` (the canonical spec the HTTP contract is written against),
+`database/verify_base_model.sql`, `docker-compose.yml`, `odd/tasks/*`.
+
+**A schema change that reaches Go arrives as a message, not a surprise.** When DDL affects models,
+say: tables touched, columns added with type and nullability, columns removed, defaults, and any
+seeded UUID a test needs. A `NOT NULL` without a default plus a shape `CHECK` that rejected valid
+IANA zones is exactly the case this prevents — it was found late and only by running the path that
+nobody had run.
+
+**One worktree per session.** Two sessions on one checkout is what let a branch switch happen
+under someone else's feet. Reads and diagnostics need no turn; writes do.
+
+**`dev` is integration: branch, then pull request.** No required check gates `dev`, so nothing but
+discipline stops a direct push there. A PR body states what was verified, not just what changed —
+that is what makes the merge auditable later.
 
 ## Docker Services
 
