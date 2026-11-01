@@ -4,6 +4,7 @@ import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } fro
 import { filter, map, startWith } from 'rxjs';
 import { AuthService } from '../core/auth.service';
 import { ICON_PATHS, PANEL_GROUPS, PANEL_MODULES } from './panel-nav';
+import { ZorroStyles } from './zorro-styles';
 
 /**
  * Chrome for every `/panel` route: the sidebar built from the module catalogue
@@ -14,7 +15,7 @@ import { ICON_PATHS, PANEL_GROUPS, PANEL_MODULES } from './panel-nav';
  */
 @Component({
   selector: 'app-panel-layout',
-  imports: [RouterOutlet, RouterLink, RouterLinkActive],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, ZorroStyles],
   templateUrl: './panel-layout.html',
   styleUrl: './panel-layout.css',
 })

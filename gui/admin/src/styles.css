@@ -5,11 +5,6 @@
    state. Components read these variables, never literal hex values. */
 
 @import 'tailwindcss';
-/* ng-zorro styles. Its `exports` map exposes the full bundle and per-component
-   files, but not the base layer on its own, so the bundle is the supported way in;
-   the cost lands on every route (see L10 of odd/tasks/admin-crud-screens.md). */
-@import 'ng-zorro-antd/ng-zorro-antd.min.css';
-
 :root {
   /* surfaces */
   --ink: #0b1220;
