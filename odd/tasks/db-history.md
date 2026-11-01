@@ -104,3 +104,21 @@ L12 (limits, deliberate): history is not exposed through the API yet; retention 
 DELETE old intervals in bulk (the guard only blocks rewriting a closed interval, not
 removing it); `co_actor_user` stays NULL until the service announces
 `app.current_user_id` per transaction.
+
+L13 (evidence, independent verification): `gentle-ai-verify` reviewed the branch
+read-only and returned PASS on 8/8 items — scope, exclusions, additivity (1133
+insertions, 0 deletions, `02..06` untouched), the interval model driven at runtime,
+trigger delta risk (lock ordering, recursion, transaction timestamps, failure
+isolation), composite-key isolation, non-vacuous assertions, and diagram/ledger
+consistency. It left three advisories, all resolved in `aae2a89`: the guard assertion
+caught any error and is now pinned to SQLSTATE 23001 plus the exact message (A1); the
+`tb_review_history` immutability assumption is now documented in `07` (A2); the header
+now names the `HISTORIA` section (A3). The behaviors it proved by hand are now committed
+as S17 (composite keys), S18 (actor robustness) and S19 (interval CHECK and
+open-interval unique both bite).
+
+L14 (unproven, stated not hidden): the fresh-database path cannot be proven from inside
+an authorized read-only review (`CREATE DATABASE` cannot run in a rolled-back
+transaction), so the verifier accepted the writer's L10 observation as unreplicated; and
+true concurrent sessions were reasoned from lock ordering rather than exercised with two
+connections.
