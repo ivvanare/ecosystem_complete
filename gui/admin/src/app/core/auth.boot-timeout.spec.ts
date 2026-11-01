@@ -4,6 +4,7 @@ import { TestBed } from '@angular/core/testing';
 import { vi } from 'vitest';
 import { API_URL } from './api-url.token';
 import { AuthService } from './auth.service';
+import { CSRF_STORAGE_KEY } from './auth.service';
 
 const API = 'http://api.test/v1';
 
@@ -18,6 +19,9 @@ describe('AuthService boot bound (L11)', () => {
 
   beforeEach(() => {
     sessionStorage.clear();
+    // A reload keeps the double-submit value; without it `restoreSession` does not
+    // even call the API (see L17 of odd/tasks/admin-crud-screens.md).
+    sessionStorage.setItem(CSRF_STORAGE_KEY, 'csrf-boot');
     vi.useFakeTimers();
     TestBed.configureTestingModule({
       providers: [

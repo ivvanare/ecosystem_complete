@@ -11,7 +11,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { API_URL } from './api-url.token';
 import { authGuard } from './auth.guard';
-import { AuthService, type Me, type TokenPairResponse } from './auth.service';
+import { AuthService, CSRF_STORAGE_KEY, type Me, type TokenPairResponse } from './auth.service';
 
 const API = 'https://api.test/v1';
 
@@ -48,6 +48,9 @@ describe('authGuard', () => {
   beforeEach(() => {
     sessionStorage.clear();
     localStorage.clear();
+    // These specs drive a silent restore, which only runs when the tab can echo the
+    // double-submit value — what a real reload has (L17 of admin-crud-screens).
+    sessionStorage.setItem(CSRF_STORAGE_KEY, 'csrf-test');
     TestBed.configureTestingModule({
       providers: [
         { provide: API_URL, useValue: API },
