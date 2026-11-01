@@ -1,5 +1,7 @@
 import { Component } from '@angular/core';
 import { RouterLink } from '@angular/router';
+import { AppPreview } from './app-preview';
+import { PanelPreview } from './panel-preview';
 
 /**
  * Public landing at `/` (S2): the product page for melZone, with the only
@@ -12,7 +14,7 @@ import { RouterLink } from '@angular/router';
  */
 @Component({
   selector: 'app-landing',
-  imports: [RouterLink],
+  imports: [RouterLink, AppPreview, PanelPreview],
   templateUrl: './landing.html',
   styleUrl: './landing.css',
 })

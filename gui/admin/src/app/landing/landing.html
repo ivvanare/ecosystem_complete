@@ -37,37 +37,7 @@
         </p>
       </div>
 
-      <!-- Illustrative app preview: static markup, no live data. -->
-      <div class="phone" role="img" aria-label="App preview: map with venue cards">
-        <div class="screen">
-          <div class="bar"><span>9:41</span><span>Melia · Downtown</span></div>
-          <div class="search">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <circle cx="11" cy="11" r="7" stroke="#64748b" stroke-width="2" />
-              <path d="m16.5 16.5 4 4" stroke="#64748b" stroke-width="2" stroke-linecap="round" />
-            </svg>
-            Arepas, parks, hotels
-          </div>
-          <div class="map">
-            <span class="pin" style="left: 34%; top: 32%"></span>
-            <span class="pin p2"></span>
-            <span class="pin p3"></span>
-          </div>
-          <div class="row">
-            <div class="card">
-              <div class="thumb th1"></div>
-              <h4>Arepera Doña Rosa</h4>
-              <p>Breakfast · open now</p>
-            </div>
-            <div class="card">
-              <div class="thumb th2"></div>
-              <h4>Parque La Estancia</h4>
-              <p>Park · until 19:00</p>
-            </div>
-          </div>
-          <div class="foot"><span class="chip">Build a route</span><span class="chip">Save</span></div>
-        </div>
-      </div>
+      <app-app-preview />
     </div>
   </section>
 
@@ -151,26 +121,7 @@
         <a class="btn primary" routerLink="/login">Sign in to panel</a>
       </div>
 
-      <div class="shot" role="img" aria-label="Panel preview: sidebar, indicators and activity">
-        <div class="top"><i></i><i></i><i></i></div>
-        <div class="inner">
-          <div class="side">
-            <span></span><span class="active"></span><span></span><span></span><span></span><span></span>
-          </div>
-          <div class="main">
-            <div class="kpis">
-              <div class="kpi"><b>Users</b><i></i></div>
-              <div class="kpi"><b>Roles</b><i></i></div>
-              <div class="kpi"><b>Audit</b><i></i></div>
-            </div>
-            <div class="bars" aria-hidden="true">
-              <span style="height: 38%"></span><span style="height: 56%"></span><span style="height: 44%"></span>
-              <span style="height: 72%"></span><span style="height: 60%"></span><span style="height: 88%"></span>
-              <span style="height: 66%"></span><span style="height: 94%"></span>
-            </div>
-          </div>
-        </div>
-      </div>
+      <app-panel-preview />
     </div>
   </section>
 
