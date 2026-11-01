@@ -305,6 +305,8 @@ Todas requieren `admin.access`; sin él → `403 permission_denied`.
 |---|---|---|
 | `GET` | `/v1/admin/users?page&limit&q&status&scope` | lista paginada; `q` busca en nombre o email |
 | `PATCH` | `/v1/admin/users/{userId}` | edita `name` y `status` (nunca el email) |
+| `POST` | `/v1/admin/users/invitations` | envía una invitación al panel a esa dirección |
+| `POST` | `/v1/admin/users/{userId}/password-reset` | envía el código de reseteo al dueño |
 | `PATCH` | `/v1/admin/users/{userId}/roles` | **reemplaza** el set de roles |
 | `GET` | `/v1/admin/roles` | catálogo con los permisos de cada rol |
 | `GET` | `/v1/admin/permissions` | catálogo, ordenado por módulo |
@@ -322,6 +324,15 @@ PATCH /v1/admin/users/9f1c...
 → `200` con el usuario. **El email no se edita acá**: la dirección se prueba antes de que exista
 la fila, así que un cambio desde el panel saltearía la verificación. Suspender no invalida las
 sesiones vivas: expiran solas.
+
+```http
+POST /v1/admin/users/invitations
+{"email": "nueva@melia.test", "name": "Nueva"}
+```
+
+→ `202`. **No crea nada**: la persona se registra y prueba la dirección con el código, y
+recién después se le asigna el rol. El administrador nunca fija la contraseña de otro: para
+eso existe `/password-reset`, que manda el código al dueño de la cuenta.
 
 ```http
 PATCH /v1/admin/users/9f1c.../roles

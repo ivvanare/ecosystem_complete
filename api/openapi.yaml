@@ -522,6 +522,64 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /v1/admin/users/invitations:
+    post:
+      tags: [Admin]
+      operationId: inviteUser
+      summary: Invite an address to the panel
+      description: |
+        Requires `admin.access`. Queues an invitation email. Nothing is created and no
+        role is granted: the person registers and proves the address with the code, and the
+        administrator assigns the role afterwards. The answer is always `202`, so the
+        endpoint cannot be used to learn whether an address already has an account.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+                name: { type: string, maxLength: 120 }
+      responses:
+        "202":
+          description: Invitation queued.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /v1/admin/users/{userId}/password-reset:
+    post:
+      tags: [Admin]
+      operationId: requestUserPasswordReset
+      summary: Send the reset code to a user
+      description: |
+        Requires `admin.access`. Sends the account's reset code to its owner. An administrator
+        never sets another account's password: the code proves the address, which keeps
+        ownership with the user.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "202":
+          description: Reset code queued.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/admin/users/{userId}:
     patch:
       tags: [Admin]

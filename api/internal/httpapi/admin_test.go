@@ -54,7 +54,22 @@ func (f *fakeAdminReader) AuditEvents(context.Context, identity.AuditFilter) (id
 	return f.events, nil
 }
 
+type fakeInvitations struct {
+	to, name string
+	err      error
+}
+
+func (f *fakeInvitations) Invite(_ context.Context, email, name string) error {
+	f.to, f.name = email, name
+	return f.err
+}
+
 func adminHandler(t *testing.T, reader AdminReader) http.Handler {
+	t.Helper()
+	return adminHandlerWith(t, reader, &fakePassword{}, &fakeInvitations{})
+}
+
+func adminHandlerWith(t *testing.T, reader AdminReader, password PasswordService, invitations InvitationSender) http.Handler {
 	t.Helper()
 	parser := &fakeParser{}
 	parser.claims.Subject = "admin-1"
@@ -64,6 +79,8 @@ func adminHandler(t *testing.T, reader AdminReader) http.Handler {
 		Authorizer:  &fakeAuthorizer{allowed: true},
 		Identity:    &fakeIdentity{},
 		Admin:       reader,
+		Password:    password,
+		Invitations: invitations,
 		Logger:      slog.New(slog.DiscardHandler),
 	})
 }
@@ -243,5 +260,67 @@ func TestAdminUpdateUserReportsAnUnknownUser(t *testing.T) {
 	rec := adminRequest(t, adminHandler(t, reader), http.MethodPatch, "/v1/admin/users/nope", `{"name":"X"}`)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestAdminInviteUserQueuesTheInvitation(t *testing.T) {
+	invitations := &fakeInvitations{}
+	rec := adminRequest(t, adminHandlerWith(t, &fakeAdminReader{}, &fakePassword{}, invitations),
+		http.MethodPost, "/v1/admin/users/invitations", `{"email":"  Nueva@Melia.Test ","name":"Nueva"}`)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202: %s", rec.Code, rec.Body.String())
+	}
+	// The address is normalised before it reaches the mail queue.
+	if invitations.to != "nueva@melia.test" {
+		t.Errorf("to = %q", invitations.to)
+	}
+	if invitations.name != "Nueva" {
+		t.Errorf("name = %q", invitations.name)
+	}
+}
+
+func TestAdminInviteUserRejectsABadAddress(t *testing.T) {
+	invitations := &fakeInvitations{}
+	rec := adminRequest(t, adminHandlerWith(t, &fakeAdminReader{}, &fakePassword{}, invitations),
+		http.MethodPost, "/v1/admin/users/invitations", `{"email":"nope"}`)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rec.Code)
+	}
+	if invitations.to != "" {
+		t.Error("the queue was touched with an invalid address")
+	}
+}
+
+func TestAdminResetUserPasswordSendsTheCode(t *testing.T) {
+	email := "ana@melia.test"
+	password := &fakePassword{}
+	reader := &fakeAdminReader{user: identity.UserSummary{ID: "u1", Email: &email}}
+
+	rec := adminRequest(t, adminHandlerWith(t, reader, password, &fakeInvitations{}),
+		http.MethodPost, "/v1/admin/users/u1/password-reset", "")
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202: %s", rec.Code, rec.Body.String())
+	}
+	// The code goes to the owner, never to the administrator.
+	if password.requested != email {
+		t.Errorf("reset requested for %q, want the user's own address", password.requested)
+	}
+}
+
+func TestAdminResetUserPasswordReportsAMissingUser(t *testing.T) {
+	password := &fakePassword{}
+	reader := &fakeAdminReader{user: identity.UserSummary{ID: "u1"}} // no email
+
+	rec := adminRequest(t, adminHandlerWith(t, reader, password, &fakeInvitations{}),
+		http.MethodPost, "/v1/admin/users/u1/password-reset", "")
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+	if password.requested != "" {
+		t.Error("a reset was requested for a user without an address")
 	}
 }

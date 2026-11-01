@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/mail"
 	"strconv"
 	"strings"
 	"time"
@@ -46,8 +47,15 @@ type auditEventResponse struct {
 	CreatedAt time.Time      `json:"created_at"`
 }
 
+// InvitationSender emails an invitation to a future panel user.
+type InvitationSender interface {
+	Invite(ctx context.Context, email, name string) error
+}
+
 type adminHandlers struct {
-	reader AdminReader
+	reader      AdminReader
+	password    PasswordService
+	invitations InvitationSender
 }
 
 func validUserScope(value string) bool {
@@ -90,6 +98,58 @@ func (h *adminHandlers) users(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": data, "page": result.Page, "limit": result.Limit, "total": result.Total,
 	})
+}
+
+type inviteRequest struct {
+	Email string `json:"email"`
+	Name  string `json:"name"`
+}
+
+// inviteUser emails an invitation. Nothing is created here: the person registers and
+// proves the address themselves, and the role is granted afterwards.
+func (h *adminHandlers) inviteUser(w http.ResponseWriter, r *http.Request) {
+	var body inviteRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+		return
+	}
+
+	email := strings.ToLower(strings.TrimSpace(body.Email))
+	if _, err := mail.ParseAddress(email); err != nil {
+		writeValidationError(w, []fieldError{{Field: "email", Code: "invalid"}})
+		return
+	}
+
+	if err := h.invitations.Invite(r.Context(), email, strings.TrimSpace(body.Name)); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "The request could not be completed.")
+		return
+	}
+
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// resetUserPassword sends the account's reset code to its owner. An administrator never
+// sets another password: the code proves the address, which keeps ownership with the user.
+func (h *adminHandlers) resetUserPassword(w http.ResponseWriter, r *http.Request) {
+	targetID := r.PathValue("userId")
+	if targetID == "" {
+		writeError(w, http.StatusNotFound, "not_found", "Not found.")
+		return
+	}
+
+	user, err := h.reader.User(r.Context(), targetID)
+	if err != nil || user.Email == nil {
+		// A user without an address (federated sign-in) has nothing to send a code to.
+		writeError(w, http.StatusNotFound, "not_found", "Not found.")
+		return
+	}
+
+	if err := h.password.RequestReset(r.Context(), *user.Email); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "The request could not be completed.")
+		return
+	}
+
+	w.WriteHeader(http.StatusAccepted)
 }
 
 type updateUserRequest struct {
