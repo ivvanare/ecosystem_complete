@@ -478,7 +478,7 @@ Table core.tb_place {
   // agrupamiento por strings que el catálogo vino a terminar.
   co_place_category uuid [not null, note: 'Categoría formal del lugar (FK al catálogo). Sin default: toda escritura la declara explícitamente. Reemplaza al tx_category de texto libre removido en la migración 12']
   tx_country char(2) [not null, check: `tx_country ~ '^[A-Z]{2}$'`, note: 'ISO 3166-1 alpha-2. Para agrupar y reportar']
-  tx_timezone varchar [not null, check: `tx_timezone ~ '^[A-Za-z]+/[A-Za-z_]+$'`, note: 'Nombre IANA (America/Caracas): es lo que hace interpretables los horarios. El CHECK valida la forma; la validación real contra pg_timezone_names ocurre en el borde de la aplicación']
+  tx_timezone varchar [not null, check: `tx_timezone ~ '^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}$'`, note: 'Nombre IANA (America/Caracas, America/Argentina/Buenos_Aires): es lo que hace interpretables los horarios. El CHECK valida sólo la forma y admite hasta tres niveles, porque 26 zonas IANA reales los usan; la validación real contra pg_timezone_names ocurre en el borde de la aplicación']
   nu_latitude decimal(9,6) [not null, check: `nu_latitude BETWEEN -90 AND 90`]
   nu_longitude decimal(9,6) [not null, check: `nu_longitude BETWEEN -180 AND 180`]
   tx_address varchar
