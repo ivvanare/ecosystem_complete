@@ -62,11 +62,11 @@ Test runners: `npx ng test admin --watch=false` and `npx ng build` inside `gui/a
 
 | ID | Spec | Route | Status | Commit | Evidence |
 |----|------|-------|--------|--------|----------|
-| T1 | S5 | inline | **done** | — | 4 artboards + `design.json` in `gui/admin/design/admin-dashboard/`; canvas opened at http://127.0.0.1:37641/Xu3G26qWwd7ujLALQrNuiAzJkCaYQ10_/d/admin-dashboard/ |
-| T2 | S2, S5 | inline or worker | **pending** | — | `/` renders for an anonymous session; tokens/global styles land here |
-| T3 | S2, S3 | inline | **pending** | — | no `/registro`; `/login` keeps the CSRF cookie flow and shows the alta note |
-| T4 | S2, S4, S8, S9 | inline | **pending** | — | `/panel` shell + KPI home; `admin.access` gate; `/faqs` redirect |
-| T5 | S4, S7 | inline | **pending** | — | Usuarios, Roles y permisos, Auditoría, Cuenta against the running API |
+| T1 | S5 | inline | **done** | 3a8a4c4 | 4 artboards + `design.json` in `gui/admin/design/admin-dashboard/`; canvas opened at http://127.0.0.1:37641/Xu3G26qWwd7ujLALQrNuiAzJkCaYQ10_/d/admin-dashboard/ |
+| T2 | S2, S5 | inline | **done** | 1c39caf | Tokens in `styles.css`, landing at `/`, spec asserting the hero and the only real CTA (`/login`). Compile + ngc strict green; suite pending T7 |
+| T3 | S2, S3 | inline | **done** | 0bd6048 | No `/registro` route or component (`grep` clean); `/login` split layout with the provisioning note; `DEFAULT_RETURN_URL` is now `/panel` and `login.spec` was updated for it (L8) |
+| T4 | S2, S4, S8, S9 | inline | **done** | 0bd6048, 0c51ce0 | `authGuard` + `adminAccessGuard` on `/panel`, sidebar built from `permissions`, `/no-access` outside the chrome, `/account` and `/faqs` redirects, overview with four real totals + recent audit events |
+| T5 | S4, S7 | inline | **done** | 0bd6048, ec0e9a6 | `AdminApi` (L9) + `CrudListState`-driven users and audit screens, roles catalogue, role assignment through the replacing PATCH |
 
 Route map agreed in L10:
 
@@ -83,8 +83,8 @@ Route map agreed in L10:
 | `/panel/places`, `/panel/menus`, `/panel/reviews`, `/panel/routes` | "Coming soon" structure | `admin.access` |
 | `/panel/faqs` | Existing `crud-maker` demo | `admin.access` |
 | `/account`, `/faqs` | Redirects to the panel routes above | — |
-| T6 | S4 | inline | **pending** | — | Lugares, Menús, Reseñas, Rutas as "próximamente" screens, zero calls |
-| T7 | S6 | inline | **pending** | — | full suite + build green; specs not weakened; docs updated |
+| T6 | S4 | inline | **done** | 0c51ce0 | One data-driven `Soon` screen behind four routes with their `data`; no HTTP call, asserted by spec |
+| T7 | S6 | inline | **blocked** | — | `tsc -p tsconfig.app.json` and `-p tsconfig.spec.json` green; `ngc -p` with `strictTemplates: true` green (temporary throwaway config, deleted); `ng test` and `ng build` blocked by the 64-pid cgroup cap (L12). Waits for a runner outside the sandbox: `npx ng test admin --watch=false` and `npx ng build` |
 
 Writer trigger check: T1 is one cohesive visual system (splitting it across writers would fork the design language) → parent. T2–T6 are sequential edits in the same few files (`app.routes.ts`, `styles.css`, panel layout) with no two independent units heavier than a subagent start → parent, re-evaluated at T5 once the shell exists.
 
@@ -102,3 +102,5 @@ Writer trigger check: T1 is one cohesive visual system (splitting it across writ
 - **L10** (decision, parent, 2026-10-31): route map and access rules are recorded in `## Tasks`. `/no-access` renders outside the panel chrome so a session without `admin.access` never sees the sidebar; `/panel` requires `authGuard` + a new `adminAccessGuard`; the old `/account` and `/faqs` URLs redirect, so nothing that points at them breaks.
 - **L11** (incident, parent, 2026-10-31): both writer subagents handed off for T4–T6 failed with `provider_unavailable` before writing a single file. No output existed to merge, so the two units moved back to inline execution; the delegation attempt cost two handoffs and no code. Nothing was relaunched, because the units are now being implemented directly.
 - **L12** (environment, parent, 2026-10-31): this session's cgroup caps pids at **64** (`/sys/fs/cgroup/.../pids.max`), and `pids.current` sits around 52 with an active dev server. `npx ng build` and `npx ng test` therefore die at startup with `Cannot fork` / `uv_thread_create` assertion when two run at once, and can still starve when run alone. The compile gate used instead is `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.app.json` and `-p tsconfig.spec.json`, both green. Suite and production build are attempted one job at a time; whatever the cap still blocks is reported as unverified here and belongs to CI, never claimed as passing.
+- **L13** (evidence, parent, 2026-10-31): what is proven and what is not. Proven: `tsc` app + spec clean; `ngc` with `strictTemplates: true` clean over every template (a throwaway `tsconfig.strict.json` was created, used and deleted, never staged); five work-unit commits on `feat/admin-dashboard-shell` (`3a8a4c4`, `1c39caf`, `0bd6048`, `0c51ce0`, `ec0e9a6`), each staging only its own files, working tree clean afterwards. Not proven: the vitest suite and the production build — `ng test` (three attempts, including `node …/ng.js` with one worker) and `ng build` (with `NG_BUILD_MAX_WORKERS=1`) both stop when esbuild's service cannot start under the pid cap. T7 stays blocked until someone runs `npx ng test admin --watch=false` and `npx ng build` outside this sandbox.
+- **L14** (design, parent, 2026-10-31): artboard `02-landing-product.html` was handed off through `gentle_design implement` and implemented as the `/` landing plus the shared tokens; `01-landing-editorial.html` stays as the rejected alternative and `03-auth-split.html` / `04-panel-modules.html` became the login and the panel. The artboards keep their Spanish marketing copy while the app copy is English (L8).
