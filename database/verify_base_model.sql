@@ -236,6 +236,208 @@ BEGIN
     END;
 END $$;
 
+-- ---- S16: every scoped entity records history -------------------------------
+DO $$
+DECLARE
+    v_user   uuid := gen_random_uuid();
+    v_place  uuid := gen_random_uuid();
+    v_menu   uuid := gen_random_uuid();
+    v_item   uuid := gen_random_uuid();
+    v_sched  uuid := gen_random_uuid();
+    v_review uuid := gen_random_uuid();
+    v_role   uuid := gen_random_uuid();
+    v_perm   uuid := gen_random_uuid();
+BEGIN
+    INSERT INTO seg.tb_user (co_user, tx_email, dt_created_at, dt_updated_at)
+    VALUES (v_user, 'history@test.dev', now(), now());
+
+    INSERT INTO seg.tb_role (co_role, tx_name, dt_created_at, dt_updated_at)
+    VALUES (v_role, 'VERIFY_HISTORY', now(), now());
+
+    INSERT INTO seg.tb_permission (co_permission, tx_code, tx_module, tx_name,
+                                   dt_created_at, dt_updated_at)
+    VALUES (v_perm, 'verify.history', 'VERIFY', 'Verify history', now(), now());
+
+    INSERT INTO core.tb_place (co_place, tx_name, tx_title, tx_category,
+                               nu_latitude, nu_longitude, dt_created_at, dt_updated_at)
+    VALUES (v_place, 'History Place', 'History Place', 'Hotel',
+            -34.6, -58.4, now(), now());
+
+    INSERT INTO core.tb_menu (co_menu, co_place, tx_name, dt_created_at, dt_updated_at)
+    VALUES (v_menu, v_place, 'Cena', now(), now());
+
+    INSERT INTO core.tb_menu_item (co_menu_item, co_menu, tx_name, nu_price,
+                                   dt_created_at, dt_updated_at)
+    VALUES (v_item, v_menu, 'Milanesa', 10.00, now(), now());
+
+    INSERT INTO core.tb_place_schedule (co_schedule, co_place, nu_day_of_week,
+                                        dt_open_time, dt_close_time,
+                                        dt_created_at, dt_updated_at)
+    VALUES (v_sched, v_place, 1, '20:00', '02:00', now(), now());
+
+    INSERT INTO core.tb_review (co_review, co_user, co_place, nu_rating, tx_comment,
+                                dt_created_at, dt_updated_at)
+    VALUES (v_review, v_user, v_place, 5, 'Muy bueno', now(), now());
+
+    INSERT INTO seg.tb_user_role (co_user, co_role, dt_created_at, dt_updated_at)
+    VALUES (v_user, v_role, now(), now());
+
+    INSERT INTO seg.tb_role_permission (co_role, co_permission, dt_created_at, dt_updated_at)
+    VALUES (v_role, v_perm, now(), now());
+
+    -- The six scoped entities must all have recorded their insert.
+    IF NOT EXISTS (SELECT 1 FROM core.tb_place_history WHERE co_place = v_place) THEN
+        RAISE EXCEPTION 'S16 FAIL: tb_place insert not recorded';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM core.tb_menu_item_history WHERE co_menu_item = v_item) THEN
+        RAISE EXCEPTION 'S16 FAIL: tb_menu_item insert not recorded';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM core.tb_place_schedule_history WHERE co_schedule = v_sched) THEN
+        RAISE EXCEPTION 'S16 FAIL: tb_place_schedule insert not recorded';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM core.tb_review_history WHERE co_review = v_review) THEN
+        RAISE EXCEPTION 'S16 FAIL: tb_review insert not recorded';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM seg.tb_user_role_history
+                    WHERE co_user = v_user AND co_role = v_role) THEN
+        RAISE EXCEPTION 'S16 FAIL: tb_user_role insert not recorded';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM seg.tb_role_permission_history
+                    WHERE co_role = v_role AND co_permission = v_perm) THEN
+        RAISE EXCEPTION 'S16 FAIL: tb_role_permission insert not recorded';
+    END IF;
+
+    -- A recorded insert is an OPEN interval with the matching operation.
+    IF (SELECT count(*) FROM core.tb_place_history
+         WHERE co_place = v_place AND dt_valid_to IS NULL
+           AND tx_operation = 'INSERT') <> 1 THEN
+        RAISE EXCEPTION 'S16 FAIL: tb_place insert interval is not a single open INSERT';
+    END IF;
+END $$;
+
+-- ---- S16b: the past survives an update and an interval closes once -----------
+DO $$
+DECLARE
+    v_user   uuid := gen_random_uuid();
+    v_place  uuid := gen_random_uuid();
+    v_menu   uuid := gen_random_uuid();
+    v_item   uuid := gen_random_uuid();
+    v_before int;
+    v_open   int;
+    v_price  numeric;
+    v_guard  boolean := false;
+BEGIN
+    INSERT INTO seg.tb_user (co_user, tx_email, dt_created_at, dt_updated_at)
+    VALUES (v_user, 'history2@test.dev', now(), now());
+    INSERT INTO core.tb_place (co_place, tx_name, tx_title, tx_category,
+                               nu_latitude, nu_longitude, dt_created_at, dt_updated_at)
+    VALUES (v_place, 'H2', 'H2', 'Hotel', -34.6, -58.4, now(), now());
+    INSERT INTO core.tb_menu (co_menu, co_place, tx_name, dt_created_at, dt_updated_at)
+    VALUES (v_menu, v_place, 'Almuerzo', now(), now());
+    INSERT INTO core.tb_menu_item (co_menu_item, co_menu, tx_name, nu_price,
+                                   dt_created_at, dt_updated_at)
+    VALUES (v_item, v_menu, 'Milanesa', 10.00, now(), now());
+
+    SELECT count(*) INTO v_before
+      FROM core.tb_menu_item_history WHERE co_menu_item = v_item;
+    IF v_before <> 1 THEN
+        RAISE EXCEPTION 'S16 FAIL: expected 1 history row after insert, got %', v_before;
+    END IF;
+
+    -- An UPDATE closes the previous interval and opens exactly one new one.
+    UPDATE core.tb_menu_item SET nu_price = 12.50, dt_updated_at = now()
+     WHERE co_menu_item = v_item;
+
+    SELECT count(*) INTO v_open FROM core.tb_menu_item_history
+     WHERE co_menu_item = v_item AND dt_valid_to IS NULL;
+    IF v_open <> 1 THEN
+        RAISE EXCEPTION 'S16 FAIL: expected exactly 1 open interval, got %', v_open;
+    END IF;
+
+    -- THE point of this feature: the previous price is still recoverable.
+    SELECT nu_price INTO v_price FROM core.tb_menu_item_history
+     WHERE co_menu_item = v_item AND dt_valid_to IS NOT NULL
+     ORDER BY dt_valid_from DESC LIMIT 1;
+    IF v_price <> 10.00 THEN
+        RAISE EXCEPTION 'S16 FAIL: history lost the previous price (got %)', v_price;
+    END IF;
+
+    -- An update that touches no business attribute must not create noise.
+    SELECT count(*) INTO v_before
+      FROM core.tb_menu_item_history WHERE co_menu_item = v_item;
+    UPDATE core.tb_menu_item SET dt_updated_at = now() WHERE co_menu_item = v_item;
+    IF (SELECT count(*) FROM core.tb_menu_item_history WHERE co_menu_item = v_item)
+       <> v_before THEN
+        RAISE EXCEPTION 'S16 FAIL: a no-op update created history noise';
+    END IF;
+
+    -- A closed interval is immutable: rewriting it must be rejected.
+    BEGIN
+        UPDATE core.tb_menu_item_history
+           SET dt_valid_to = dt_valid_to + interval '1 day'
+         WHERE co_menu_item = v_item AND dt_valid_to IS NOT NULL;
+    EXCEPTION WHEN others THEN
+        v_guard := true;
+    END;
+    IF NOT v_guard THEN
+        RAISE EXCEPTION 'S16 FAIL: a closed interval was rewritten';
+    END IF;
+END $$;
+
+-- ---- S16c: physical deletes keep their history -------------------------------
+DO $$
+DECLARE
+    v_user   uuid := gen_random_uuid();
+    v_place  uuid := gen_random_uuid();
+    v_sched  uuid := gen_random_uuid();
+    v_role   uuid := gen_random_uuid();
+    v_rows   int;
+    v_place_of_schedule uuid;
+BEGIN
+    INSERT INTO seg.tb_user (co_user, tx_email, dt_created_at, dt_updated_at)
+    VALUES (v_user, 'history3@test.dev', now(), now());
+    INSERT INTO seg.tb_role (co_role, tx_name, dt_created_at, dt_updated_at)
+    VALUES (v_role, 'VERIFY_HISTORY_3', now(), now());
+    INSERT INTO core.tb_place (co_place, tx_name, tx_title, tx_category,
+                               nu_latitude, nu_longitude, dt_created_at, dt_updated_at)
+    VALUES (v_place, 'H3', 'H3', 'Hotel', -34.6, -58.4, now(), now());
+
+    INSERT INTO core.tb_place_schedule (co_schedule, co_place, nu_day_of_week,
+                                        dt_open_time, dt_close_time,
+                                        dt_created_at, dt_updated_at)
+    VALUES (v_sched, v_place, 2, '09:00', '18:00', now(), now());
+
+    -- The schedule table is deleted PHYSICALLY on purpose (rule 3).
+    DELETE FROM core.tb_place_schedule WHERE co_schedule = v_sched;
+
+    SELECT count(*) INTO v_rows FROM core.tb_place_schedule_history
+     WHERE co_schedule = v_sched AND tx_operation = 'DELETE';
+    IF v_rows <> 1 THEN
+        RAISE EXCEPTION 'S16 FAIL: physical delete recorded % DELETE intervals', v_rows;
+    END IF;
+
+    -- The payload survives the entity, because the bridge row is gone.
+    SELECT co_place INTO v_place_of_schedule FROM core.tb_place_schedule_history
+     WHERE co_schedule = v_sched AND tx_operation = 'DELETE';
+    IF v_place_of_schedule IS DISTINCT FROM v_place THEN
+        RAISE EXCEPTION 'S16 FAIL: DELETE interval lost the place link';
+    END IF;
+
+    -- Same for a physically deleted bridge row.
+    INSERT INTO seg.tb_user_role (co_user, co_role, dt_created_at, dt_updated_at)
+    VALUES (v_user, v_role, now(), now());
+    DELETE FROM seg.tb_user_role WHERE co_user = v_user AND co_role = v_role;
+
+    IF (SELECT count(*) FROM seg.tb_user_role_history
+         WHERE co_user = v_user AND co_role = v_role AND tx_operation = 'INSERT') <> 1 THEN
+        RAISE EXCEPTION 'S16 FAIL: bridge insert was not recorded';
+    END IF;
+    IF (SELECT count(*) FROM seg.tb_user_role_history
+         WHERE co_user = v_user AND co_role = v_role AND dt_valid_to IS NULL) <> 0 THEN
+        RAISE EXCEPTION 'S16 FAIL: deleted bridge still has an open interval';
+    END IF;
+END $$;
+
 -- ---- S12: inserts route to the right monthly partition / default -------------
 DO $$
 DECLARE
