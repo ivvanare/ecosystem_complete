@@ -328,7 +328,7 @@ func TestRequestResetMailPointsAtTheRecoveryPage(t *testing.T) {
 		t.Fatalf("decoding the message: %v", err)
 	}
 	// Without the link the person receives a code and no place to enter it.
-	if !strings.Contains(message.Text, "https://panel.test/recuperar") {
-		t.Errorf("text has no recovery link: %s", message.Text)
+	if !strings.Contains(message.Text, "https://panel.test/recuperar?email=ana%40melia.test") {
+		t.Errorf("text has no recovery link carrying the address: %s", message.Text)
 	}
 }

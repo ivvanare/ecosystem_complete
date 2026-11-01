@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 
@@ -178,7 +179,7 @@ func (s *Service) RequestReset(ctx context.Context, email string) error {
 	if err := s.publish(ctx, mailer.Message{
 		To:      email,
 		Subject: "Recuperá tu contraseña",
-		Text:    resetText(code, s.Origin),
+		Text:    resetText(code, s.Origin, email),
 	}); err != nil {
 		return err
 	}
@@ -288,12 +289,14 @@ func (s *Service) Change(ctx context.Context, userID, currentPassword, newPasswo
 
 // resetText is the mail body. The link is the part that was missing: a code with no
 // screen to spend it on is a dead end (the registration flow had the same hole).
-func resetText(code, origin string) string {
+func resetText(code, origin, email string) string {
 	text := fmt.Sprintf("Tu código para cambiar la contraseña es %s.\n"+
 		"Vence en 10 minutos y sirve una sola vez. Si no lo pediste, ignorá este mensaje: "+
 		"tu contraseña actual sigue funcionando.", code)
 	if trimmed := strings.TrimRight(strings.TrimSpace(origin), "/"); trimmed != "" {
-		text += fmt.Sprintf("\n\nIngresalo en %s/recuperar", trimmed)
+		// The address travels in the link so the screen opens on the code step: asking
+		// for the email again would force a second, pointless code.
+		text += fmt.Sprintf("\n\nIngresalo en %s/recuperar?email=%s", trimmed, url.QueryEscape(email))
 	}
 	return text
 }
