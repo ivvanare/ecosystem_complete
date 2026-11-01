@@ -21,11 +21,16 @@ const USERS_CONFIG = defineCrudConfig({
   searchFields: ['email', 'name'],
   actions: { create: false, update: false, delete: false },
   fields: [
-    { name: 'name', label: 'Name' },
-    { name: 'email', label: 'Email', type: 'email' },
+    // The primary key must be declared, but it is not a column.
+    { name: 'id', in: { list: false, form: false, detail: true } },
+    // Every field is unsortable on purpose: this API takes no sort parameter, so a
+    // sort affordance would change state and return the same order.
+    { name: 'name', label: 'Name', sortable: false },
+    { name: 'email', label: 'Email', type: 'email', sortable: false },
     {
       name: 'status',
       label: 'Status',
+      sortable: false,
       filters: ['eq'],
       options: [
         { label: 'Active', value: 'ACTIVE' },
@@ -35,7 +40,7 @@ const USERS_CONFIG = defineCrudConfig({
       cell: { render: 'tag', variantMap: { ACTIVE: 'green', INACTIVE: 'default', SUSPENDED: 'orange' } },
     },
     { name: 'roles', label: 'Roles', sortable: false },
-    { name: 'created_at', label: 'Created', type: 'datetime' },
+    { name: 'created_at', label: 'Created', type: 'datetime', sortable: false },
   ],
 });
 
