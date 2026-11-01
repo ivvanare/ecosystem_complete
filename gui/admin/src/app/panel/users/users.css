@@ -80,3 +80,23 @@ fieldset {
   font-size: 13px;
   color: var(--tag-ok-ink);
 }
+
+/* The dialog is portalled to <body>, so neither the panel's component styles nor the
+   vendor class can be trusted for the field frame: draw it here. */
+.modal-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+
+.modal-input:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}

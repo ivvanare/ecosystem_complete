@@ -1,7 +1,7 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { type ComponentFixture, TestBed } from '@angular/core/testing';
-import { provideRouter } from '@angular/router';
+import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { API_URL } from '../core/api-url.token';
 import { Recover } from './recover';
@@ -10,11 +10,13 @@ const API = 'https://api.test/v1';
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 describe('Recover', () => {
-  let fixture: ComponentFixture<Recover>;
   let http: HttpTestingController;
+  /** Address the URL carries, as if the mail had been opened. */
+  let linkedEmail: string | null;
 
   beforeEach(async () => {
     sessionStorage.clear();
+    linkedEmail = null;
     await TestBed.configureTestingModule({
       imports: [Recover],
       providers: [
@@ -22,11 +24,17 @@ describe('Recover', () => {
         provideHttpClient(),
         provideHttpClientTesting(),
         provideRouter([]),
+        {
+          provide: ActivatedRoute,
+          useFactory: () => ({
+            snapshot: {
+              queryParamMap: convertToParamMap(linkedEmail ? { email: linkedEmail } : {}),
+            },
+          }),
+        },
       ],
     }).compileComponents();
     http = TestBed.inject(HttpTestingController);
-    fixture = TestBed.createComponent(Recover);
-    fixture.detectChanges();
   });
 
   afterEach(() => {
@@ -34,25 +42,33 @@ describe('Recover', () => {
     vi.restoreAllMocks();
   });
 
-  function fill(selector: string, value: string): void {
+  function create(): ComponentFixture<Recover> {
+    const fixture = TestBed.createComponent(Recover);
+    fixture.detectChanges();
+    return fixture;
+  }
+
+  function fill(fixture: ComponentFixture<Recover>, selector: string, value: string): void {
     const input = fixture.nativeElement.querySelector(selector) as HTMLInputElement;
     input.value = value;
     input.dispatchEvent(new Event('input'));
     fixture.detectChanges();
   }
 
-  function submit(): void {
+  function submit(fixture: ComponentFixture<Recover>): void {
     (fixture.nativeElement.querySelector('form') as HTMLFormElement).dispatchEvent(
       new Event('submit'),
     );
     fixture.detectChanges();
   }
 
-  const text = () => (fixture.nativeElement as HTMLElement).textContent ?? '';
+  const text = (fixture: ComponentFixture<Recover>) =>
+    (fixture.nativeElement as HTMLElement).textContent ?? '';
 
   it('asks for a code and moves to the second step', async () => {
-    fill('#email', 'ana@melia.test');
-    submit();
+    const fixture = create();
+    fill(fixture, '#email', 'ana@melia.test');
+    submit(fixture);
 
     const req = http.expectOne(`${API}/auth/password/forgot`);
     expect(req.request.body).toEqual({ email: 'ana@melia.test' });
@@ -60,21 +76,27 @@ describe('Recover', () => {
     await tick();
     fixture.detectChanges();
 
-    expect(text()).toContain('Set a new password');
-    // The screen cannot claim the account exists: it says "if it has an account".
-    expect(text()).toContain('has an account');
+    expect(text(fixture)).toContain('Set a new password');
+    expect(text(fixture)).toContain('has an account');
+  });
+
+  it('opens on the code step when the mail link carries the address', () => {
+    // Arriving from the mail: the code is already in hand, so no request is made.
+    linkedEmail = 'ana@melia.test';
+    const fixture = create();
+
+    expect(text(fixture)).toContain('Set a new password');
+    expect(text(fixture)).toContain('ana@melia.test');
+    http.expectNone(`${API}/auth/password/forgot`);
   });
 
   it('spends the code and sets the new password', async () => {
-    fill('#email', 'ana@melia.test');
-    submit();
-    http.expectOne(`${API}/auth/password/forgot`).flush(null, { status: 202, statusText: 'Accepted' });
-    await tick();
-    fixture.detectChanges();
+    linkedEmail = 'ana@melia.test';
+    const fixture = create();
 
-    fill('#code', '042317');
-    fill('#password', 'otra-clave-larga-123');
-    submit();
+    fill(fixture, '#code', '042317');
+    fill(fixture, '#password', 'otra-clave-larga-123');
+    submit(fixture);
 
     const req = http.expectOne(`${API}/auth/password/reset`);
     expect(req.request.body).toEqual({
@@ -86,19 +108,16 @@ describe('Recover', () => {
     await tick();
     fixture.detectChanges();
 
-    expect(text()).toContain('Password updated');
+    expect(text(fixture)).toContain('Password updated');
   });
 
   it('shows the API code when the password change is rejected', async () => {
-    fill('#email', 'ana@melia.test');
-    submit();
-    http.expectOne(`${API}/auth/password/forgot`).flush(null, { status: 202, statusText: 'Accepted' });
-    await tick();
-    fixture.detectChanges();
+    linkedEmail = 'ana@melia.test';
+    const fixture = create();
 
-    fill('#code', '000000');
-    fill('#password', 'otra-clave-larga-123');
-    submit();
+    fill(fixture, '#code', '000000');
+    fill(fixture, '#password', 'otra-clave-larga-123');
+    submit(fixture);
     http
       .expectOne(`${API}/auth/password/reset`)
       .flush(
@@ -114,19 +133,18 @@ describe('Recover', () => {
   });
 
   it('never sends a short password or a partial code', () => {
-    fill('#email', 'ana@melia.test');
-    submit();
-    http.expectOne(`${API}/auth/password/forgot`).flush(null, { status: 202, statusText: 'Accepted' });
-    return tick().then(() => {
-      fixture.detectChanges();
-      fill('#code', '123');
-      fill('#password', 'corta');
-      const button = (fixture.nativeElement as HTMLElement).querySelector(
-        'button[type="submit"]',
-      ) as HTMLButtonElement;
-      expect(button.disabled).toBe(true);
-      submit();
-      http.expectNone(`${API}/auth/password/reset`);
-    });
+    linkedEmail = 'ana@melia.test';
+    const fixture = create();
+
+    fill(fixture, '#code', '123');
+    fill(fixture, '#password', 'corta');
+
+    const button = (fixture.nativeElement as HTMLElement).querySelector(
+      'button[type="submit"]',
+    ) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+
+    submit(fixture);
+    http.expectNone(`${API}/auth/password/reset`);
   });
 });

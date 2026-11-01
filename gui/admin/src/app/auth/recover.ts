@@ -1,5 +1,6 @@
 import { HttpErrorResponse } from '@angular/common/http';
 import { Component, computed, inject, signal } from '@angular/core';
+import { ActivatedRoute } from '@angular/router';
 import { RouterLink } from '@angular/router';
 import { AuthService } from '../core/auth.service';
 
@@ -19,6 +20,7 @@ import { AuthService } from '../core/auth.service';
 })
 export class Recover {
   private readonly auth = inject(AuthService);
+  private readonly route = inject(ActivatedRoute);
 
   protected readonly step = signal<'email' | 'code' | 'done'>('email');
   protected readonly email = signal('');
@@ -27,6 +29,17 @@ export class Recover {
   protected readonly submitting = signal(false);
   protected readonly errorCode = signal<string | null>(null);
   protected readonly sentTo = signal('');
+
+  constructor() {
+    // The mail links here with the address, so a person who already holds a code never
+    // has to ask for a second one: they land straight on the code step.
+    const email = (this.route.snapshot.queryParamMap.get('email') ?? '').trim();
+    if (email !== '') {
+      this.email.set(email);
+      this.sentTo.set(email);
+      this.step.set('code');
+    }
+  }
 
   /** Mirrors the API floor: twelve characters, no composition rules. */
   protected readonly canReset = computed(
