@@ -129,6 +129,15 @@ export class AuthService {
    * restore; never throws.
    */
   async restoreSession(): Promise<boolean> {
+    // The refresh token is an httpOnly cookie, and the API requires the double-submit
+    // header whenever the cookie is the source of the token. A tab that holds no CSRF
+    // value therefore cannot rotate: asking anyway produces a 403 csrf_invalid from a
+    // session it cannot prove it owns (measured on the running API, see L17 of
+    // odd/tasks/admin-crud-screens.md). Start anonymous instead of failing loudly.
+    if (!this.csrfTokenState()) {
+      this.clearSession();
+      return false;
+    }
     try {
       await this.refresh();
       await this.me();

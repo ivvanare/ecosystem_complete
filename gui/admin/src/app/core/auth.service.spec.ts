@@ -174,25 +174,41 @@ describe('AuthService', () => {
   });
 
   it('restoreSession refreshes silently and lands authenticated with the profile', async () => {
-    const pending = auth.restoreSession();
+    // A reload keeps the CSRF value in sessionStorage; that is the only case in which
+    // asking the API makes sense.
+    sessionStorage.setItem(CSRF_STORAGE_KEY, 'csrf-boot');
+    const booted = TestBed.runInInjectionContext(() => new AuthService());
+    const pending = booted.restoreSession();
 
     http.expectOne(`${API}/auth/refresh`).flush(tokenPair());
     await tick();
     http.expectOne(`${API}/me`).flush(ME);
 
     await expect(pending).resolves.toBe(true);
-    expect(auth.status()).toBe('authenticated');
-    expect(auth.accessToken()).toBe('access-1');
-    expect(auth.user()?.email).toBe('ana@melia.test');
+    expect(booted.status()).toBe('authenticated');
+    expect(booted.accessToken()).toBe('access-1');
+    expect(booted.user()?.email).toBe('ana@melia.test');
   });
 
-  it('restoreSession lands anonymous, quietly, when there is no live session', async () => {
-    const pending = auth.restoreSession();
+  it('restoreSession lands anonymous when the API rejects the rotation', async () => {
+    sessionStorage.setItem(CSRF_STORAGE_KEY, 'csrf-stale');
+    const booted = TestBed.runInInjectionContext(() => new AuthService());
+    const pending = booted.restoreSession();
     http.expectOne(`${API}/auth/refresh`).flush(...apiError(401, 'refresh_invalid'));
 
     await expect(pending).resolves.toBe(false);
-    expect(auth.status()).toBe('anonymous');
+    expect(booted.status()).toBe('anonymous');
     http.expectNone(`${API}/me`);
+  });
+
+  it('restoreSession does not ask the API when the tab holds no CSRF value', async () => {
+    // Cookie present, sessionStorage gone (new tab, restarted browser): the API would
+    // answer 403 csrf_invalid, so the app must not fire the request at all.
+    const pending = auth.restoreSession();
+
+    await expect(pending).resolves.toBe(false);
+    http.expectNone(`${API}/auth/refresh`);
+    expect(auth.status()).toBe('anonymous');
   });
 
   it('boot echoes the CSRF value kept in sessionStorage, so the silent refresh is no 403 (L9)', async () => {
