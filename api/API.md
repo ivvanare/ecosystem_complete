@@ -303,11 +303,25 @@ Todas requieren `admin.access`; sin él → `403 permission_denied`.
 
 | Método | Ruta | Qué hace |
 |---|---|---|
-| `GET` | `/v1/admin/users?page&limit&q&status` | lista paginada; `q` busca en nombre o email |
+| `GET` | `/v1/admin/users?page&limit&q&status&scope` | lista paginada; `q` busca en nombre o email |
+| `PATCH` | `/v1/admin/users/{userId}` | edita `name` y `status` (nunca el email) |
 | `PATCH` | `/v1/admin/users/{userId}/roles` | **reemplaza** el set de roles |
 | `GET` | `/v1/admin/roles` | catálogo con los permisos de cada rol |
 | `GET` | `/v1/admin/permissions` | catálogo, ordenado por módulo |
 | `GET` | `/v1/admin/audit-events?page&limit&event&userId&from&to` | bitácora, más reciente primero |
+
+`scope` no es un tipo guardado: `admin` son los usuarios con un rol activo que otorga
+`admin.access`, `app` los que no lo tienen, y `none` los que no tienen ningún rol activo. Un
+valor desconocido → `422` (`field: scope`).
+
+```http
+PATCH /v1/admin/users/9f1c...
+{"name": "Ana María", "status": "SUSPENDED"}
+```
+
+→ `200` con el usuario. **El email no se edita acá**: la dirección se prueba antes de que exista
+la fila, así que un cambio desde el panel saltearía la verificación. Suspender no invalida las
+sesiones vivas: expiran solas.
 
 ```http
 PATCH /v1/admin/users/9f1c.../roles

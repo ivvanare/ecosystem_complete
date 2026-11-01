@@ -123,6 +123,7 @@ func New(opts Options) http.Handler {
 			if opts.Admin != nil {
 				adminHandler := &adminHandlers{reader: opts.Admin}
 				mux.HandleFunc("GET /v1/admin/users", admin(adminHandler.users))
+				mux.HandleFunc("PATCH /v1/admin/users/{userId}", admin(adminHandler.updateUser))
 				mux.HandleFunc("PATCH /v1/admin/users/{userId}/roles", admin(adminHandler.setRoles))
 				mux.HandleFunc("GET /v1/admin/audit-events", admin(adminHandler.auditEvents))
 			}

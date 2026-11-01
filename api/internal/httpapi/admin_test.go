@@ -21,6 +21,11 @@ type fakeAdminReader struct {
 	events    identity.Page[identity.AuditEvent]
 	gotRoles  []string
 	gotFilter identity.UserFilter
+	// Captured profile edit, so a dropped field fails the test.
+	gotName   *string
+	gotStatus *string
+	updateErr error
+	updated   identity.UserSummary
 }
 
 func (f *fakeAdminReader) Users(_ context.Context, filter identity.UserFilter) (identity.Page[identity.UserSummary], error) {
@@ -30,6 +35,14 @@ func (f *fakeAdminReader) Users(_ context.Context, filter identity.UserFilter) (
 
 func (f *fakeAdminReader) User(context.Context, string) (identity.UserSummary, error) {
 	return f.user, nil
+}
+
+func (f *fakeAdminReader) UpdateUser(_ context.Context, _, _ string, name, status *string, _ audit.Event) (identity.UserSummary, error) {
+	f.gotName, f.gotStatus = name, status
+	if f.updateErr != nil {
+		return identity.UserSummary{}, f.updateErr
+	}
+	return f.updated, nil
 }
 
 func (f *fakeAdminReader) SetRoles(_ context.Context, _, _ string, roles []string, _ audit.Event) ([]string, error) {
@@ -172,5 +185,63 @@ func TestAdminAuditEventsRejectsABadDate(t *testing.T) {
 	rec := adminRequest(t, adminHandler(t, &fakeAdminReader{}), http.MethodGet, "/v1/admin/audit-events?from=ayer", "")
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want 422", rec.Code)
+	}
+}
+
+func TestAdminUsersScopeFilter(t *testing.T) {
+	reader := &fakeAdminReader{}
+	adminRequest(t, adminHandler(t, reader), http.MethodGet, "/v1/admin/users?scope=admin", "")
+	if reader.gotFilter.Scope != "admin" {
+		t.Errorf("scope = %q, want it forwarded", reader.gotFilter.Scope)
+	}
+}
+
+func TestAdminUsersRejectsAnUnknownScope(t *testing.T) {
+	rec := adminRequest(t, adminHandler(t, &fakeAdminReader{}), http.MethodGet, "/v1/admin/users?scope=root", "")
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rec.Code)
+	}
+}
+
+func TestAdminUpdateUserEditsNameAndStatus(t *testing.T) {
+	name, status := "Ana María", "SUSPENDED"
+	reader := &fakeAdminReader{updated: identity.UserSummary{ID: "u1", Name: &name, Status: status, Roles: []string{}}}
+
+	rec := adminRequest(t, adminHandler(t, reader), http.MethodPatch, "/v1/admin/users/u1",
+		`{"name":"  Ana María  ","status":"SUSPENDED"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if reader.gotName == nil || *reader.gotName != "Ana María" {
+		t.Errorf("name = %v, want it trimmed and forwarded", reader.gotName)
+	}
+	if reader.gotStatus == nil || *reader.gotStatus != "SUSPENDED" {
+		t.Errorf("status = %v", reader.gotStatus)
+	}
+	if !strings.Contains(rec.Body.String(), `"name":"Ana María"`) {
+		t.Errorf("body = %s", rec.Body.String())
+	}
+}
+
+func TestAdminUpdateUserRejectsAnUnknownStatus(t *testing.T) {
+	rec := adminRequest(t, adminHandler(t, &fakeAdminReader{}), http.MethodPatch, "/v1/admin/users/u1",
+		`{"status":"DELETED"}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rec.Code)
+	}
+}
+
+func TestAdminUpdateUserRequiresAField(t *testing.T) {
+	rec := adminRequest(t, adminHandler(t, &fakeAdminReader{}), http.MethodPatch, "/v1/admin/users/u1", `{}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rec.Code)
+	}
+}
+
+func TestAdminUpdateUserReportsAnUnknownUser(t *testing.T) {
+	reader := &fakeAdminReader{updateErr: identity.ErrNotFound}
+	rec := adminRequest(t, adminHandler(t, reader), http.MethodPatch, "/v1/admin/users/nope", `{"name":"X"}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
 	}
 }

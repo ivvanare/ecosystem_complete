@@ -497,6 +497,13 @@ paths:
         - name: status
           in: query
           schema: { $ref: "#/components/schemas/UserStatus" }
+        - name: scope
+          in: query
+          description: |
+            Narrows by capability, never by a stored type: `admin` is a user whose active
+            roles grant `admin.access`, `app` is one without such a role, and `none` is a
+            user with no active role at all.
+          schema: { type: string, enum: [admin, app, none] }
       responses:
         "200":
           description: Page of users.
@@ -514,6 +521,47 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+
+  /v1/admin/users/{userId}:
+    patch:
+      tags: [Admin]
+      operationId: updateUser
+      summary: Edit a user's name or status
+      description: |
+        Requires `admin.access`. Edits only what an administrator owns: the display name and
+        the account status. The email is deliberately absent — it is proven before the row
+        exists, so changing it here would skip verification. The change is audited.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                name: { type: string, maxLength: 120 }
+                status: { $ref: "#/components/schemas/UserStatus" }
+      responses:
+        "200":
+          description: User updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserSummary" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /v1/admin/users/{userId}/roles:
     patch:

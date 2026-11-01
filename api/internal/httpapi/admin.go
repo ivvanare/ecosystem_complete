@@ -17,6 +17,7 @@ import (
 type AdminReader interface {
 	Users(ctx context.Context, filter identity.UserFilter) (identity.Page[identity.UserSummary], error)
 	User(ctx context.Context, userID string) (identity.UserSummary, error)
+	UpdateUser(ctx context.Context, actorID, userID string, name, status *string, meta audit.Event) (identity.UserSummary, error)
 	SetRoles(ctx context.Context, actorID, userID string, roles []string, meta audit.Event) ([]string, error)
 	AuditEvents(ctx context.Context, filter identity.AuditFilter) (identity.Page[identity.AuditEvent], error)
 }
@@ -49,13 +50,30 @@ type adminHandlers struct {
 	reader AdminReader
 }
 
+func validUserScope(value string) bool {
+	for _, candidate := range identity.UserScopes {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *adminHandlers) users(w http.ResponseWriter, r *http.Request) {
 	page, limit := paging(r)
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+	if scope != "" && !validUserScope(scope) {
+		// An unknown scope would silently match nobody; say so instead.
+		writeValidationError(w, []fieldError{{Field: "scope", Code: "invalid"}})
+		return
+	}
+
 	filter := identity.UserFilter{
 		Page:   page,
 		Limit:  limit,
 		Query:  strings.TrimSpace(r.URL.Query().Get("q")),
 		Status: strings.TrimSpace(r.URL.Query().Get("status")),
+		Scope:  scope,
 	}
 
 	result, err := h.reader.Users(r.Context(), filter)
@@ -72,6 +90,75 @@ func (h *adminHandlers) users(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": data, "page": result.Page, "limit": result.Limit, "total": result.Total,
 	})
+}
+
+type updateUserRequest struct {
+	Name   *string `json:"name"`
+	Status *string `json:"status"`
+}
+
+// Mirrors public.suspendable_status in the model.
+var validUserStatuses = []string{"ACTIVE", "INACTIVE", "SUSPENDED"}
+
+func validUserStatus(value string) bool {
+	for _, candidate := range validUserStatuses {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
+
+// updateUser edits the fields an administrator owns. The email is not among them: it
+// is proven before the row exists (diagram_base.txt:74), so changing it here would
+// skip verification.
+func (h *adminHandlers) updateUser(w http.ResponseWriter, r *http.Request) {
+	actorID, ok := userIDFrom(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication is required.")
+		return
+	}
+
+	targetID := r.PathValue("userId")
+	if targetID == "" {
+		writeError(w, http.StatusNotFound, "not_found", "Not found.")
+		return
+	}
+
+	var body updateUserRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+		return
+	}
+	if body.Name == nil && body.Status == nil {
+		writeValidationError(w, []fieldError{{Field: "name", Code: "required"}})
+		return
+	}
+	if body.Name != nil {
+		trimmed := strings.TrimSpace(*body.Name)
+		if len(trimmed) > 120 {
+			writeValidationError(w, []fieldError{{Field: "name", Code: "too_long"}})
+			return
+		}
+		body.Name = &trimmed
+	}
+	if body.Status != nil && !validUserStatus(*body.Status) {
+		writeValidationError(w, []fieldError{{Field: "status", Code: "invalid"}})
+		return
+	}
+
+	meta := audit.Event{IP: clientIP(r), UserAgent: r.UserAgent()}
+	user, err := h.reader.UpdateUser(r.Context(), actorID, targetID, body.Name, body.Status, meta)
+	if err != nil {
+		if errors.Is(err, identity.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "Not found.")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal_error", "The request could not be completed.")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, toUserSummary(user))
 }
 
 type setRolesRequest struct {
