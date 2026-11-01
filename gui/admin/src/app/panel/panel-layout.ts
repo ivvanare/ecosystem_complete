@@ -1,10 +1,18 @@
+import { DOCUMENT } from '@angular/common';
 import { Component, computed, inject } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { filter, map, startWith } from 'rxjs';
 import { AuthService } from '../core/auth.service';
+import {
+  CaretDownOutline,
+  CaretUpOutline,
+  DownOutline,
+  FilterOutline,
+} from '@ant-design/icons-angular/icons';
+import { NzI18nService, en_US } from 'ng-zorro-antd/i18n';
+import { NzIconService } from 'ng-zorro-antd/icon';
 import { ICON_PATHS, PANEL_GROUPS, PANEL_MODULES } from './panel-nav';
-import { ZorroStyles } from './zorro-styles';
 
 /**
  * Chrome for every `/panel` route: the sidebar built from the module catalogue
@@ -15,7 +23,7 @@ import { ZorroStyles } from './zorro-styles';
  */
 @Component({
   selector: 'app-panel-layout',
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, ZorroStyles],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive],
   templateUrl: './panel-layout.html',
   styleUrl: './panel-layout.css',
 })
@@ -49,6 +57,18 @@ export class PanelLayout {
     return PANEL_MODULES.find((module) => url.startsWith(`/panel/${module.path}`))?.label ?? 'Overview';
   });
 
+  private readonly document = inject(DOCUMENT);
+  private readonly iconService = inject(NzIconService);
+  private readonly i18n = inject(NzI18nService);
+
+  constructor() {
+    // ng-zorro lives only inside the panel: its stylesheet is an asset fetched on
+    // entry (not a global import, which cost the landing 570 kB of CSS) and its
+    // services are injected here rather than provided in `app.config`, which kept
+    // 90 kB of zorro core in the initial bundle.
+    this.loadZorro();
+  }
+
   protected readonly initials = computed(() => {
     const user = this.auth.user();
     const source = user?.name?.trim() || user?.email?.trim() || '?';
@@ -60,6 +80,23 @@ export class PanelLayout {
   });
 
   protected readonly roleLabel = computed(() => this.auth.user()?.roles.join(', ') ?? 'no role');
+
+  private loadZorro(): void {
+    if (!this.document.querySelector('link[data-zorro-styles]')) {
+      const link = this.document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = 'ng-zorro-antd.min.css';
+      link.setAttribute('data-zorro-styles', '');
+      this.document.head.appendChild(link);
+    }
+    // Only the glyphs the table draws: registering the whole set would pull
+    // thousands of paths into the bundle for four carets.
+    for (const icon of [CaretDownOutline, CaretUpOutline, DownOutline, FilterOutline]) {
+      this.iconService.addIcon(icon);
+    }
+    // ng-zorro falls back to zh_CN; the panel is English.
+    this.i18n.setLocale(en_US);
+  }
 
   protected async signOut(): Promise<void> {
     await this.auth.logout();

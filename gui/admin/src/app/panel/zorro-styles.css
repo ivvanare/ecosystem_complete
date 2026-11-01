@@ -1,4 +1,0 @@
-/* ng-zorro's full stylesheet, loaded with the panel chunk (see zorro-styles.ts).
-   Its `exports` map exposes the bundles and per-component files but not the base
-   layer alone, so the bundle is the supported way in. */
-@import 'ng-zorro-antd/ng-zorro-antd.min.css';
