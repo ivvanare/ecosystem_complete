@@ -167,6 +167,13 @@ Enum user_token_purpose {
   EMAIL_CHANGE
 }
 
+// Operación que originó una fila de historia (ver sección HISTORIA).
+Enum change_operation {
+  INSERT
+  UPDATE
+  DELETE
+}
+
 // ==============================================================================
 // ESQUEMA seg — IDENTIDAD Y PERMISOS
 // ==============================================================================
@@ -536,6 +543,178 @@ Table core.tb_route_place {
     // Clave primaria compuesta: pk_tb_route_place
     (co_route, co_place) [pk]
     co_place
+  }
+}
+
+// ==============================================================================
+// HISTORIA (point-in-time) — seis entidades con valor analítico
+// ==============================================================================
+//
+// POR QUÉ EXISTE
+//   Un OLTP normalizado guarda el ESTADO ACTUAL; no guarda el pasado. Las filas
+//   de negocio se actualizan y los puentes y horarios se borran físicamente, así
+//   que preguntas como "qué precio tenía este plato cuando se escribió esta
+//   reseña" o "quién era ADMIN el día X" eran irrecuperables.
+//
+// POR QUÉ SON TABLAS APARTE Y NO COLUMNAS EN LA ENTIDAD
+//   Agregar dt_valid_from/dt_valid_to a la entidad metería la historia dentro de
+//   la tabla operativa: toda consulta necesitaría WHERE dt_valid_to IS NULL y
+//   todo modelo del API tendría que crecer. Acá la historia vive al lado y la
+//   escriben triggers, sin tocar una sola columna existente.
+//
+// POR QUÉ NO LLEVAN FK A LA ENTIDAD
+//   tb_place_schedule, tb_user_role y tb_role_permission se borran FÍSICAMENTE
+//   por diseño (regla 3). Una FK prohibiría ese borrado o lo cascadearía
+//   destruyendo justo la historia que tiene que conservar. Misma razón por la que
+//   tb_security_event no lleva FK a tb_user (regla 11). co_actor_user tampoco
+//   lleva FK: la auditoría sobrevive al borrado del usuario.
+//
+// RELACIÓN CON tb_security_event
+//   No se solapan. El evento dice QUIÉN hizo QUÉ y CUÁNDO; estas tablas dicen
+//   CUÁL ERA EL ESTADO en un instante. Si se mezclan hay dos fuentes de verdad.
+//
+// FORMA DE UNA FILA
+//   co_<entidad>_history  id de la fila de historia
+//   co_<entidad>          entidad que describe el intervalo
+//   payload               atributos necesarios para interpretar el intervalo
+//   tx_operation          INSERT | UPDATE | DELETE (el borrado lógico de una
+//                         entidad llega como UPDATE del origen)
+//   co_actor_user         quién lo cambió, cuando el servicio lo anuncia con
+//                         set_config('app.current_user_id', ...); si no, NULL
+//   dt_valid_from         instante en que el estado empezó a ser cierto
+//   dt_valid_to           instante en que dejó de serlo; NULL = sigue vigente
+//
+// REGLAS DE LA HISTORIA
+//   - Append-only: se agrega un intervalo y se CIERRA el anterior. Cerrar es la
+//     única mutación permitida y ocurre una sola vez: un intervalo cerrado es
+//     inmutable y no se reabre (lo hace cumplir el trigger de 08).
+//   - Un solo intervalo abierto por entidad (unique parcial WHERE dt_valid_to IS
+//     NULL): es lo que hace que "el estado actual" no sea ambiguo (regla 4).
+//   - Sin CHECK de negocio: la fila registra algo que ya fue validado por la
+//     entidad. Duplicar rating 1..5 o el rango de latitud haría que la historia
+//     rechace su propio pasado el día que una regla cambie.
+//   - Los triggers son nota de implementación: DBML no puede expresarlos. Viven
+//     en database/init/08-history-triggers.sql.
+//   - Los seeds ya aplicados no generan historia; es a propósito.
+
+Table core.tb_place_history {
+  co_place_history uuid [pk]
+  co_place uuid [not null]
+  co_owner_user uuid
+  tx_name varchar [not null]
+  tx_title varchar [not null]
+  tx_description text
+  tx_category varchar [not null]
+  nu_latitude decimal(9,6) [not null]
+  nu_longitude decimal(9,6) [not null]
+  tx_address varchar
+  js_social_media jsonb
+  tx_status suspendable_status [not null]
+  dt_deleted_at timestamp
+  tx_operation change_operation [not null]
+  co_actor_user uuid
+  dt_valid_from timestamp [not null]
+  dt_valid_to timestamp [note: 'NULL = estado vigente']
+
+  Indexes {
+    (co_place) [unique, name: 'ux_tb_place_history_open']
+    (co_place, dt_valid_from) [name: 'ix_tb_place_history_validity']
+  }
+}
+
+// El caso que motivó la feature: el precio es mutable y no tenía pasado.
+Table core.tb_menu_item_history {
+  co_menu_item_history uuid [pk]
+  co_menu_item uuid [not null]
+  co_menu uuid [not null, note: 'El plato puede cambiar de menú: es parte del estado']
+  tx_name varchar [not null]
+  tx_description text
+  nu_price decimal(10,2) [not null]
+  tx_status activatable_status [not null]
+  dt_deleted_at timestamp
+  tx_operation change_operation [not null]
+  co_actor_user uuid
+  dt_valid_from timestamp [not null]
+  dt_valid_to timestamp
+
+  Indexes {
+    (co_menu_item) [unique, name: 'ux_tb_menu_item_history_open']
+    (co_menu_item, dt_valid_from) [name: 'ix_tb_menu_item_history_validity']
+  }
+}
+
+// Se borra FÍSICAMENTE (regla 3): hoy un horario eliminado no deja rastro. El
+// payload es completo porque la fila de la entidad puede ya no existir.
+Table core.tb_place_schedule_history {
+  co_schedule_history uuid [pk]
+  co_schedule uuid [not null]
+  co_place uuid [not null]
+  nu_day_of_week int [not null]
+  dt_open_time time [not null]
+  dt_close_time time [not null]
+  tx_operation change_operation [not null]
+  co_actor_user uuid
+  dt_valid_from timestamp [not null]
+  dt_valid_to timestamp
+
+  Indexes {
+    (co_schedule) [unique, name: 'ux_tb_place_schedule_history_open']
+    (co_place, dt_valid_from) [name: 'ix_tb_place_schedule_history_validity']
+  }
+}
+
+// Habilita medir el funnel de moderación, que con una columna tx_status mutable
+// era inmedible. co_user y co_place son inmutables (una reseña por usuario y
+// lugar) y las reseñas nunca se purgan: se leen de la entidad.
+Table core.tb_review_history {
+  co_review_history uuid [pk]
+  co_review uuid [not null]
+  nu_rating int [not null]
+  tx_comment text
+  tx_status review_status [not null]
+  dt_deleted_at timestamp
+  tx_operation change_operation [not null]
+  co_actor_user uuid
+  dt_valid_from timestamp [not null]
+  dt_valid_to timestamp
+
+  Indexes {
+    (co_review) [unique, name: 'ux_tb_review_history_open']
+    (co_review, dt_valid_from) [name: 'ix_tb_review_history_validity']
+  }
+}
+
+// Puente borrado físicamente: "quién era ADMIN el día X" era irrecuperable.
+Table seg.tb_user_role_history {
+  co_user_role_history uuid [pk]
+  co_user uuid [not null]
+  co_role uuid [not null]
+  tx_operation change_operation [not null]
+  co_actor_user uuid
+  dt_valid_from timestamp [not null]
+  dt_valid_to timestamp
+
+  Indexes {
+    (co_user, co_role) [unique, name: 'ux_tb_user_role_history_open']
+    (co_user, dt_valid_from) [name: 'ix_tb_user_role_history_validity']
+    (co_role, dt_valid_from) [name: 'ix_tb_user_role_history_role']
+  }
+}
+
+// Deriva de permisos por rol: pregunta de seguridad además de analítica.
+Table seg.tb_role_permission_history {
+  co_role_permission_history uuid [pk]
+  co_role uuid [not null]
+  co_permission uuid [not null]
+  tx_operation change_operation [not null]
+  co_actor_user uuid
+  dt_valid_from timestamp [not null]
+  dt_valid_to timestamp
+
+  Indexes {
+    (co_role, co_permission) [unique, name: 'ux_tb_role_permission_history_open']
+    (co_role, dt_valid_from) [name: 'ix_tb_role_permission_history_validity']
+    (co_permission, dt_valid_from) [name: 'ix_tb_role_permission_history_permission']
   }
 }
 

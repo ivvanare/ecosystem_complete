@@ -124,6 +124,54 @@ BEGIN
     END IF;
 END $$;
 
+-- ---- S15: history inventory — 6 tables, one open interval each --------------
+DO $$
+DECLARE
+    missing   text;
+    no_unique text;
+    bad_enum  text;
+BEGIN
+    SELECT string_agg(v.t, ', ') INTO missing
+    FROM (VALUES
+        ('core.tb_place_history'), ('core.tb_menu_item_history'),
+        ('core.tb_place_schedule_history'), ('core.tb_review_history'),
+        ('seg.tb_user_role_history'), ('seg.tb_role_permission_history')
+    ) AS v(t)
+    WHERE NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_tables pt
+        WHERE pt.schemaname || '.' || pt.tablename = v.t
+    );
+    IF missing IS NOT NULL THEN
+        RAISE EXCEPTION 'S15 FAIL: missing history tables: %', missing;
+    END IF;
+
+    -- Exactly one open (dt_valid_to IS NULL) interval per entity: a partial unique
+    -- index is what makes "the current state" unambiguous.
+    SELECT string_agg(v.t, ', ') INTO no_unique
+    FROM (VALUES
+        ('core.tb_place_history'), ('core.tb_menu_item_history'),
+        ('core.tb_place_schedule_history'), ('core.tb_review_history'),
+        ('seg.tb_user_role_history'), ('seg.tb_role_permission_history')
+    ) AS v(t)
+    WHERE NOT EXISTS (
+        SELECT 1 FROM pg_indexes pi
+        WHERE pi.schemaname || '.' || pi.tablename = v.t
+          AND pi.indexdef ILIKE 'CREATE UNIQUE INDEX%'
+          AND pi.indexdef ILIKE '%dt_valid_to IS NULL%'
+    );
+    IF no_unique IS NOT NULL THEN
+        RAISE EXCEPTION 'S15 FAIL: history tables without an open-interval unique: %', no_unique;
+    END IF;
+
+    SELECT string_agg(e.enumlabel, ', ' ORDER BY e.enumsortorder) INTO bad_enum
+    FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+    JOIN pg_enum e ON e.enumtypid = t.oid
+    WHERE n.nspname = 'public' AND t.typname = 'change_operation';
+    IF bad_enum IS DISTINCT FROM 'INSERT, UPDATE, DELETE' THEN
+        RAISE EXCEPTION 'S15 FAIL: public.change_operation labels are %', coalesce(bad_enum, 'missing');
+    END IF;
+END $$;
+
 -- ============================================================================
 -- Behavioral checks (inside the transaction, rolled back at the end).
 -- ============================================================================
