@@ -159,6 +159,33 @@ export class AuthService {
   }
 
   /**
+   * Starts an email change. The code goes to the **new** address, and the password is
+   * required: a stolen access token alone must not be able to move the account.
+   */
+  async requestEmailChange(newEmail: string, password: string): Promise<void> {
+    await firstValueFrom(
+      this.http.post<void>(
+        `${this.apiUrl}/auth/email/change`,
+        { new_email: newEmail, password },
+        { withCredentials: true },
+      ),
+    );
+  }
+
+  /**
+   * Spends the code. The address that identifies the account changed, so the API revokes
+   * every session — including this one — and the panel drops what it holds.
+   */
+  async confirmEmailChange(code: string): Promise<void> {
+    await firstValueFrom(
+      this.http.post<void>(`${this.apiUrl}/auth/email/change/verify`, { code }, {
+        withCredentials: true,
+      }),
+    );
+    this.clearSession();
+  }
+
+  /**
    * Revokes the family server-side and always clears the local state, even when the
    * call fails: the panel must not keep credentials it can no longer exercise.
    */

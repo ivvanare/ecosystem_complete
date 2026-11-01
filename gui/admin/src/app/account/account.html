@@ -1,20 +1,115 @@
 <section class="account">
   <h1>Account</h1>
 
-  @if (auth.user(); as user) {
-    <dl>
-      <dt>Name</dt>
-      <dd>{{ user.name ?? '—' }}</dd>
-      <dt>Email</dt>
-      <dd>{{ user.email ?? '—' }}</dd>
-      <dt>Status</dt>
-      <dd>{{ user.status }}</dd>
-      <dt>Roles</dt>
-      <dd>{{ user.roles.length ? user.roles.join(', ') : 'none' }}</dd>
-    </dl>
+  @if (emailStep() === 'done') {
+    <section class="panel" aria-labelledby="email-done">
+      <h2 id="email-done">Email updated</h2>
+      <p>
+        The account now answers at <strong>{{ sentTo() }}</strong>. Every session was closed,
+        including this one: sign in again with the new address.
+      </p>
+      <a class="btn primary as-link" routerLink="/login">Go to sign in</a>
+    </section>
   } @else {
-    <p>Loading your profile…</p>
-  }
+    @if (auth.user(); as user) {
+      <dl>
+        <dt>Name</dt>
+        <dd>{{ user.name ?? '—' }}</dd>
+        <dt>Email</dt>
+        <dd>{{ user.email ?? '—' }}</dd>
+        <dt>Status</dt>
+        <dd>{{ user.status }}</dd>
+        <dt>Roles</dt>
+        <dd>{{ user.roles.length ? user.roles.join(', ') : 'none' }}</dd>
+      </dl>
+    } @else {
+      <p>Loading your profile…</p>
+    }
 
-  <button type="button" (click)="signOut()">Sign out</button>
+    <button type="button" class="btn secondary" (click)="signOut()">Sign out</button>
+
+    <section class="panel" aria-labelledby="email-change">
+      <h2 id="email-change">Change email</h2>
+
+      @if (emailStep() === 'form') {
+        <p class="hint">
+          The code goes to the new address. Your password is required: a stolen session alone
+          must not be able to move the account.
+        </p>
+
+        <form (submit)="requestChange($event)">
+          <div class="field">
+            <label for="new-email">New email</label>
+            <input
+              id="new-email"
+              class="panel-input"
+              type="email"
+              autocomplete="email"
+              [value]="newEmail()"
+              [disabled]="submitting()"
+              (input)="newEmail.set($any($event.target).value)"
+            />
+          </div>
+
+          <div class="field">
+            <label for="current-password">Current password</label>
+            <input
+              id="current-password"
+              class="panel-input"
+              type="password"
+              autocomplete="current-password"
+              [value]="password()"
+              [disabled]="submitting()"
+              (input)="password.set($any($event.target).value)"
+            />
+          </div>
+
+          @if (errorCode(); as code) {
+            <p class="error" role="alert">{{ code }}</p>
+          }
+
+          <button
+            type="submit"
+            class="btn primary"
+            [disabled]="submitting() || newEmail().trim() === '' || password() === ''"
+          >
+            {{ submitting() ? 'Sending the code…' : 'Send the code' }}
+          </button>
+        </form>
+      } @else {
+        <p class="hint">
+          If <strong>{{ sentTo() }}</strong> accepts mail, a six-digit code is on its way. It
+          expires in ten minutes.
+        </p>
+
+        <form (submit)="confirmChange($event)">
+          <div class="field">
+            <label for="email-code">Code</label>
+            <input
+              id="email-code"
+              class="panel-input code"
+              type="text"
+              inputmode="numeric"
+              maxlength="6"
+              autocomplete="one-time-code"
+              [value]="code()"
+              [disabled]="submitting()"
+              (input)="code.set($any($event.target).value.trim())"
+            />
+          </div>
+
+          @if (errorCode(); as error) {
+            <p class="error" role="alert">{{ error }}</p>
+          }
+
+          <div class="actions">
+            <button type="submit" class="btn primary" [disabled]="submitting() || !canConfirm()">
+              {{ submitting() ? 'Confirming…' : 'Confirm the new email' }}
+            </button>
+            <button type="button" class="btn secondary" (click)="backToForm()">Cancel</button>
+          </div>
+        </form>
+      }
+    </section>
+  }
 </section>
