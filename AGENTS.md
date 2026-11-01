@@ -22,12 +22,15 @@ melZone/
 │   ├── cmd/worker/    # queue consumer: delivers mail over SMTP
 │   ├── internal/      # config · httpapi · db · probe
 │   └── Dockerfile
-├── gui/admin/         # Angular 22 admin SPA (pnpm, vitest via `ng test`)
 ├── database/          # PostgreSQL init scripts + canonical DBML
 ├── tests/k6/          # Load tests (k6)
 ├── openspec/          # Change proposals, specs, task logs
 └── docker-compose.yml # Multi-service orchestration
 ```
+
+The Angular console used to sit here as `gui/admin/`. It now lives in its own repository,
+`melia-admin`, with the same `dev` → `quality` → `prod` promotion. Nothing here builds, tests
+or serves it.
 
 ## Developer Commands
 
@@ -44,28 +47,21 @@ Backend commands run inside `api/`:
 | `docker compose run --rm --entrypoint /usr/local/bin/bootstrap -e EMAIL=... -e ROLE=SUPERADMIN api` | Grant the first administrator |
 | `gh pr create --fill --base dev` | Open a PR against `dev`; `prod` rejects direct pushes |
 
-Frontend commands run inside `gui/admin/` (its own pnpm workspace root):
+Frontend commands live with the SPA in `melia-admin`: the toolchain, the budgets, the suite and
+the `crud-maker` sibling link are documented there, not here.
 
-| Command | Purpose |
-|---------|---------|
-| `scripts/link-crud-maker.sh` | Run once per worktree, before `pnpm install` — see below |
-| `pnpm install --frozen-lockfile` | Install exactly what the lockfile pins (what CI runs) |
-| `npx ng test admin --watch=false` | SPA suite (vitest) |
-| `npx ng build` | Production build, with the budgets |
-| `npx ng serve` | Dev server on `:4200` |
-
-`crud-maker` and `crud-maker-zorro` are no longer developed here: they live in
+`crud-maker` and `crud-maker-zorro` are not developed here: they live in
 [`ivvanare/crud-maker`](https://github.com/ivvanare/crud-maker) (logic + adapters, MIT). Nothing
-is published yet, so `gui/admin/package.json` links the built package from a **sibling checkout**
-(`link:../../../crud-maker/dist/crud-maker`) — one directory beside this repository, the same
-relative path locally and in CI. Consequences:
+is published yet, so the SPA links the built package from a **sibling checkout** — one
+directory beside whichever repository consumes it, the same relative path locally and in CI.
+Consequences:
 
-- A clean clone needs that sibling repository cloned and built before `pnpm install` will work:
-  `cd ../crud-maker && pnpm install && pnpm exec ng build crud-maker`. The `admin` CI job does it.
-- Editing a package means editing it there, rebuilding, and re-running the SPA suite here. Do not
-  copy files back into this repository: one source of truth.
-- `crud-maker-zorro` is added to this workspace's dependencies when a screen here actually consumes
-  it; importing an unused package is noise.
+- A clean clone of the SPA needs that sibling cloned and built before `pnpm install` will work:
+  `cd ../crud-maker && pnpm install && pnpm exec ng build crud-maker`. Its CI job does it.
+- Editing a package means editing it there, rebuilding, and re-running the SPA suite. Do not copy
+  files between repositories: one source of truth.
+- `crud-maker-zorro` is added to the SPA's dependencies when a screen actually consumes it;
+  importing an unused package is noise.
 - The one-way rule still holds inside that repository: the adapter may import the core, never the
   reverse.
 
@@ -77,7 +73,7 @@ Three long-lived branches, promoting in one direction:
 |--------|------|------------|
 | `dev` | integration — every feature branch merges here first | no deletion, no force-push |
 | `quality` | QA / staging cut, taken from `dev` | no deletion, no force-push |
-| `prod` | releases, taken from `quality` | the default branch: pull request required, `test`, `admin` and `image` green, no deletion, no force-push |
+| `prod` | releases, taken from `quality` | the default branch: pull request required, `test` and `image` green, no deletion, no force-push |
 
 `prod` is the default branch (it replaced `master`). Work on a short-lived branch named after
 its side (`feat/api-*`, `feat/admin-*`, `fix/*`), open the PR against `dev`, and promote:
@@ -198,46 +194,20 @@ add a silent fallback.
 
 ## Commit Scope
 
-One repository, two independent sides. A commit stays on one side; a branch belongs to one
-side. This is what keeps a backend push from carrying frontend work in progress.
+There is one side here now. `api/`, `database/`, `tests/` and the documentation that describes
+them are all backend, so the old two-sides rule and its guardrail are gone: the script went out
+with the frontend, and nothing here can mix a frontend change into a backend commit because
+there is no frontend in this repository.
 
-| Paths | Side |
-|-------|------|
-| `api/`, `database/`, `tests/` | backend |
-| `gui/` | frontend |
-| `odd/`, `openspec/`, `.github/`, `scripts/`, root docs, `docker-compose.yml` | whichever side it describes |
+Branch names keep the side prefix (`feat/api-*`, `fix/*`) because they still read as intent.
+`crud-maker` and `melia-admin` keep their own repositories, with their own commits and their own
+CI.
 
-`scripts/check-commit-scope.sh` rejects a commit that stages both sides, reading the index so
-unrelated dirty files do not matter. Install it once per clone (git shares `hooks/` across
-linked worktrees, so one install covers them all):
+Before opening a PR, confirm the branch only touched this repository's side:
 
 ```bash
-cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
-bash scripts/check-commit-scope.test.sh   # the guardrail's own tests
+git diff --name-only origin/dev...HEAD | grep -vE '^(api|database|tests|odd|openspec|\.github|scripts)/'
 ```
-
-Stage by path. Never `git add -A` or `git commit -a` while the other side is dirty:
-
-```bash
-git commit -m "feat(api): ..." -- api database tests
-git commit -m "feat(admin): ..." -- gui
-```
-
-A change that genuinely belongs to both sides opts out explicitly, and the hook says so:
-
-```bash
-MELIA_ALLOW_MIXED=1 git commit -m "chore(contract): ..."
-```
-
-Prefix branches by side (`feat/api-*`, `feat/admin-*`, same for `fix/`). Before opening a PR,
-prove the branch kept its side — a backend branch must print nothing here:
-
-```bash
-git diff --name-only origin/dev...HEAD | grep -E '^(api|database|tests)/'
-```
-
-`gofmt` and `go vet` stay in CI instead of in the hook: they need a toolchain, and a commit
-should not fail because Go is not on `PATH`.
 
 ## Gotchas
 
@@ -247,7 +217,7 @@ should not fail because Go is not on `PATH`.
 - `database/init` runs only when the PostgreSQL volume is empty; reset with
   `docker compose down -v`
 - Session tables are intentionally absent: auth uses JWT plus refresh tokens
-- New CRUD entities in `gui/admin` are driven by a JSON-shaped config through external
-  packages: logic in `crud-maker`, UI in an adapter such as `crud-maker-zorro`. They live in
-  `ivvanare/crud-maker` and are linked from a sibling checkout until they are published. A
-  working vertical: `gui/admin/src/app/demo/` (FAQs over MemoryTransport).
+- New CRUD entities in the console are driven by a JSON-shaped config through external packages:
+  logic in `crud-maker`, UI in an adapter such as `crud-maker-zorro`. Both live in
+  `ivvanare/crud-maker` and are linked from a sibling checkout until they are published. The
+  working vertical is `src/app/demo/` in the SPA's own repository.

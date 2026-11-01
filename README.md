@@ -67,10 +67,9 @@ melZone/
 │   └── README.md      # service documentation
 ├── database/          # PostgreSQL schema: canonical DBML + init scripts
 │   ├── diagram_base.txt
-│   ├── init/          # 02..06 SQL, applied by the service
+│   ├── init/          # 02..14 SQL, applied by the service
 │   ├── provision/     # 01: manual database bootstrap, never applied automatically
 │   └── verify_base_model.sql
-├── gui/admin/         # Angular admin SPA
 ├── tests/k6/          # Contract and load tests (k6)
 ├── openspec/          # Change proposals, specs and task logs
 ├── docker-compose.yml # Multi-service orchestration
