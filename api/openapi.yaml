@@ -627,6 +627,12 @@ paths:
         - name: userId
           in: query
           schema: { type: string, format: uuid }
+        - name: emailHash
+          in: query
+          description: |
+            Exact `email_hash` of the events to return. The log stores only an HMAC-SHA256
+            of the address, never the address itself.
+          schema: { type: string, maxLength: 64 }
         - name: from
           in: query
           schema: { type: string, format: date-time }

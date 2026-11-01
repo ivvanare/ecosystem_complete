@@ -144,11 +144,12 @@ func (s *PostgresStore) ListAuditEvents(ctx context.Context, filter AuditFilter)
 		($1 = '' OR tx_event = $1)
 		AND ($2 = '' OR co_user = $2::uuid)
 		AND ($3::timestamptz IS NULL OR dt_created_at >= $3)
-		AND ($4::timestamptz IS NULL OR dt_created_at <= $4)`
+		AND ($4::timestamptz IS NULL OR dt_created_at <= $4)
+		AND ($5 = '' OR tx_email_hash = $5)`
 
 	var total int
 	if err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM seg.tb_security_event WHERE `+where,
-		filter.Event, filter.UserID, filter.From, filter.To).Scan(&total); err != nil {
+		filter.Event, filter.UserID, filter.From, filter.To, filter.EmailHash).Scan(&total); err != nil {
 		return Page[AuditEvent]{}, fmt.Errorf("counting events: %w", err)
 	}
 
@@ -158,8 +159,8 @@ func (s *PostgresStore) ListAuditEvents(ctx context.Context, filter AuditFilter)
 		FROM seg.tb_security_event
 		WHERE `+where+`
 		ORDER BY dt_created_at DESC
-		LIMIT $5 OFFSET $6`,
-		filter.Event, filter.UserID, filter.From, filter.To, limit, offset(page, limit))
+		LIMIT $6 OFFSET $7`,
+		filter.Event, filter.UserID, filter.From, filter.To, filter.EmailHash, limit, offset(page, limit))
 	if err != nil {
 		return Page[AuditEvent]{}, fmt.Errorf("selecting events: %w", err)
 	}

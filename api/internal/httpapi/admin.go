@@ -137,6 +137,9 @@ func (h *adminHandlers) auditEvents(w http.ResponseWriter, r *http.Request) {
 		Limit:  limit,
 		Event:  strings.TrimSpace(query.Get("event")),
 		UserID: strings.TrimSpace(query.Get("userId")),
+		// The stored value is an HMAC-SHA256 hex digest, so the client filters by the
+		// hash it already received; a clear address never travels here.
+		EmailHash: strings.TrimSpace(query.Get("emailHash")),
 	}
 	if raw := strings.TrimSpace(query.Get("from")); raw != "" {
 		parsed, err := time.Parse(time.RFC3339, raw)

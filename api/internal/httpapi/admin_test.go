@@ -21,6 +21,9 @@ type fakeAdminReader struct {
 	events    identity.Page[identity.AuditEvent]
 	gotRoles  []string
 	gotFilter identity.UserFilter
+	// Audit filter actually handed to the service, so a dropped query parameter
+	// fails the test instead of silently widening the query.
+	gotAuditFilter identity.AuditFilter
 }
 
 func (f *fakeAdminReader) Users(_ context.Context, filter identity.UserFilter) (identity.Page[identity.UserSummary], error) {
@@ -37,7 +40,8 @@ func (f *fakeAdminReader) SetRoles(_ context.Context, _, _ string, roles []strin
 	return roles, f.setErr
 }
 
-func (f *fakeAdminReader) AuditEvents(context.Context, identity.AuditFilter) (identity.Page[identity.AuditEvent], error) {
+func (f *fakeAdminReader) AuditEvents(_ context.Context, filter identity.AuditFilter) (identity.Page[identity.AuditEvent], error) {
+	f.gotAuditFilter = filter
 	return f.events, nil
 }
 
@@ -165,6 +169,26 @@ func TestAdminAuditEventsLists(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"reason":"wrong_password"`) {
 		t.Errorf("metadata lost: %s", rec.Body.String())
+	}
+}
+
+func TestAdminAuditEventsForwardsEveryFilter(t *testing.T) {
+	reader := &fakeAdminReader{}
+
+	adminRequest(t, adminHandler(t, reader), http.MethodGet,
+		"/v1/admin/audit-events?event=role.assigned&userId=9f1c&emailHash=abc123&from=2026-03-15T00:00:00Z&to=2026-03-16T23:59:59Z", "")
+
+	if reader.gotAuditFilter.Event != "role.assigned" {
+		t.Errorf("event = %q", reader.gotAuditFilter.Event)
+	}
+	if reader.gotAuditFilter.UserID != "9f1c" {
+		t.Errorf("userId = %q", reader.gotAuditFilter.UserID)
+	}
+	if reader.gotAuditFilter.EmailHash != "abc123" {
+		t.Errorf("emailHash = %q, want it forwarded", reader.gotAuditFilter.EmailHash)
+	}
+	if reader.gotAuditFilter.From == nil || reader.gotAuditFilter.To == nil {
+		t.Errorf("range lost: from=%v to=%v", reader.gotAuditFilter.From, reader.gotAuditFilter.To)
 	}
 }
 

@@ -60,8 +60,11 @@ type AuditFilter struct {
 	Limit  int
 	Event  string
 	UserID string
-	From   *time.Time
-	To     *time.Time
+	// EmailHash narrows to the events an address produced. The log stores only an
+	// HMAC (never the address), so this is the only way to follow one mailbox.
+	EmailHash string
+	From      *time.Time
+	To        *time.Time
 }
 
 // AdminStore is the administration surface.

@@ -307,7 +307,7 @@ Todas requieren `admin.access`; sin él → `403 permission_denied`.
 | `PATCH` | `/v1/admin/users/{userId}/roles` | **reemplaza** el set de roles |
 | `GET` | `/v1/admin/roles` | catálogo con los permisos de cada rol |
 | `GET` | `/v1/admin/permissions` | catálogo, ordenado por módulo |
-| `GET` | `/v1/admin/audit-events?page&limit&event&userId&from&to` | bitácora, más reciente primero |
+| `GET` | `/v1/admin/audit-events?page&limit&event&userId&emailHash&from&to` | bitácora, más reciente primero |
 
 ```http
 PATCH /v1/admin/users/9f1c.../roles
@@ -320,6 +320,9 @@ unknown`) — la capacidad nunca queda a medio aplicar. Cada cambio se audita co
 a quién.
 
 `from` y `to` son RFC 3339; un valor inválido → `422`.
+
+`emailHash` es el HMAC-SHA256 que devuelve cada evento en `email_hash`, no la dirección: la
+bitácora nunca guarda el email en claro, así que esa es la única forma de seguir un buzón.
 
 ### El primer administrador
 
