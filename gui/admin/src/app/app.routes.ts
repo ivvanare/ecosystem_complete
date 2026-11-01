@@ -23,6 +23,11 @@ export const routes: Routes = [
     loadComponent: () => import('./auth/login').then((m) => m.Login),
   },
   {
+    path: 'registro',
+    title: 'Create an account — melZone',
+    loadComponent: () => import('./auth/signup').then((m) => m.Signup),
+  },
+  {
     // Authenticated but without `admin.access`: outside the panel chrome on
     // purpose, so the sidebar never appears for a session that cannot use it.
     path: 'no-access',

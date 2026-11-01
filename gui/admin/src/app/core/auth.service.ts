@@ -106,6 +106,32 @@ export class AuthService {
   }
 
   /**
+   * Step one of a registration: the API answers 202 and mails a six-digit code. No
+   * session exists yet — the account is created by `verifySignup`.
+   *
+   * The answer is the same whether the address is free or already registered, so the
+   * screen must not read it as "you may continue, nobody has this email".
+   */
+  async startSignup(name: string, email: string, password: string): Promise<void> {
+    await firstValueFrom(
+      this.http.post<void>(`${this.apiUrl}/auth/signup`, { name, email, password }, {
+        withCredentials: true,
+      }),
+    );
+  }
+
+  /** Step two: proves the address, creates the account and opens the session. */
+  async verifySignup(email: string, code: string): Promise<void> {
+    const pair = await firstValueFrom(
+      this.http.post<TokenPairResponse>(`${this.apiUrl}/auth/signup/verify`, { email, code }, {
+        withCredentials: true,
+      }),
+    );
+    this.applyTokenPair(pair);
+    await this.me();
+  }
+
+  /**
    * Revokes the family server-side and always clears the local state, even when the
    * call fails: the panel must not keep credentials it can no longer exercise.
    */
