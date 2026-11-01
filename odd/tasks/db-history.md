@@ -52,11 +52,11 @@ S8. `database/diagram_base.txt` is the canonical spec and stays the source of tr
 
 ## Tasks
 
-- T1 · S1, S2, S7 — Structural checks in `verify_base_model.sql` (observe RED) · inline · C1
-- T2 · S2, S8 — `07-history-tables.sql` + diagram tables/enum · inline · C1
-- T3 · S2, S4, S7 — `08-history-triggers.sql` + behavioral checks (RED → GREEN) · inline · C2
-- T4 · S4 — Apply 07/08 to the dev database with matching ledger rows · inline · C2
-- T5 · S1..S8 — Full verify + `go test ./...` + commit slices · inline · C1, C2
+- T1 · S1, S2, S7 — Structural checks in `verify_base_model.sql` (observe RED) · inline · d2c214e
+- T2 · S2, S8 — `07-history-tables.sql` + diagram tables/enum · inline · d2c214e
+- T3 · S2, S4, S7 — `08-history-triggers.sql` + behavioral checks (RED → GREEN) · inline · 18759a5
+- T4 · S4 — Apply 07/08 to the dev database with matching ledger rows · inline · 18759a5
+- T5 · S1..S8 — Full verify + `go test ./...` + commit slices · inline · d2c214e, 18759a5
 - T6 · S5 — Tell the `api` session history is additive and trigger-owned · inline · —
 
 ## Log
@@ -78,3 +78,29 @@ its HEAD or its uncommitted work.
 L6 (decision): intervals use `now()` and `CHECK (dt_valid_to >= dt_valid_from)` so a
 same-transaction change still closes and opens at the same instant with no gap and no
 constraint violation. Zero-length intervals are accepted and documented.
+
+L7 (evidence, RED then GREEN): the structural checks failed with "S15 FAIL: missing
+history tables" before 07 existed; the behavioral checks then failed with "S16 FAIL:
+tb_place insert not recorded" before 08 existed. After each file was applied the drift
+check printed "ALL CHECKS PASSED — base model matches database/diagram_base.txt".
+
+L8 (defect found by the checks, fixed): the DELETE branch first inserted rows with
+`dt_valid_to` NULL, so a physically deleted schedule or bridge still had an OPEN
+interval and looked alive in the current state. "S16 FAIL: deleted bridge still has an
+open interval" caught it; every DELETE row is now born closed
+(`dt_valid_from = dt_valid_to = v_ts`).
+
+L9 (evidence, upgrade path): 07 and 08 were applied to the dev database `melia`, which
+already had 02..06 recorded, and the ledger now lists 02..08.
+
+L10 (evidence, fresh path): on a throwaway database, 02..08 applied in lexical order
+with no error, the six guard triggers existed, and one insert plus one update produced
+two intervals with exactly one open. The scratch database was dropped afterwards.
+
+L11 (evidence, no regression): `go build ./...`, `go vet ./...` and `go test ./...` pass
+in `api/` — 19 packages, no failures. No Go file changed in this feature.
+
+L12 (limits, deliberate): history is not exposed through the API yet; retention may
+DELETE old intervals in bulk (the guard only blocks rewriting a closed interval, not
+removing it); `co_actor_user` stays NULL until the service announces
+`app.current_user_id` per transaction.
