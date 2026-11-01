@@ -26,6 +26,7 @@ const (
 	EventLoginFailed        = "auth.login.failed"
 	EventLoginLocked        = "auth.login.locked"
 	EventRolesChanged       = "rbac.roles.changed"
+	EventUserUpdated        = "admin.user.updated"
 
 	EventPasswordResetRequested = "auth.password.reset_requested"
 	EventPasswordReset          = "auth.password.reset"

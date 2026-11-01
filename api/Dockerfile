@@ -31,6 +31,10 @@ COPY --from=build /out/bootstrap /usr/local/bin/bootstrap
 # Canonical schema. Copied in, never bind-mounted: a host directory the container user
 # cannot read (mode 700, other uid) would otherwise abort startup.
 COPY database/init /app/database/init
+# Ledger files must be readable by the unprivileged runtime user whatever the checkout's
+# umask produced. `a+rX` adds read for everyone and execute only where it is a directory,
+# so the tree stays traversable — a blanket --chmod=644 on COPY breaks that.
+RUN chmod -R a+rX /app/database/init
 
 USER app
 EXPOSE 8080

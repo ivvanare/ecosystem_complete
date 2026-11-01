@@ -37,7 +37,14 @@ type UserFilter struct {
 	Limit  int
 	Query  string
 	Status string
+	// Scope narrows by capability, never by a stored type (diagram_base.txt:54-58):
+	// "admin" is a user whose active roles grant admin.access, "app" is one who has
+	// no such role, and "none" is a user with no active role at all.
+	Scope string
 }
+
+// Scopes accepted by UserFilter.Scope.
+var UserScopes = []string{"admin", "app", "none"}
 
 // AuditEvent is one row of the security log.
 type AuditEvent struct {
@@ -60,15 +67,42 @@ type AuditFilter struct {
 	Limit  int
 	Event  string
 	UserID string
-	From   *time.Time
-	To     *time.Time
+	// EmailHash narrows to the events an address produced. The log stores only an
+	// HMAC (never the address), so this is the only way to follow one mailbox.
+	EmailHash string
+	From      *time.Time
+	To        *time.Time
 }
 
 // AdminStore is the administration surface.
 type AdminStore interface {
 	ListUsers(ctx context.Context, filter UserFilter) (Page[UserSummary], error)
+	UpdateUser(ctx context.Context, userID string, name *string, status *string) (UserSummary, error)
 	SetRoles(ctx context.Context, userID string, roles []string) ([]string, error)
 	ListAuditEvents(ctx context.Context, filter AuditFilter) (Page[AuditEvent], error)
+}
+
+// UpdateUser edits the fields an administrator owns — name and status — and audits the
+// change. The email is deliberately absent: it is proven before the row exists
+// (diagram_base.txt:74), so an admin-side change would skip verification.
+func (s *Service) UpdateUser(ctx context.Context, actorID, userID string, name, status *string, meta audit.Event) (UserSummary, error) {
+	updated, err := s.Admin.UpdateUser(ctx, userID, name, status)
+	if err != nil {
+		return UserSummary{}, err
+	}
+
+	if s.Auditor != nil {
+		event := meta
+		event.Name = audit.EventUserUpdated
+		event.UserID = userID
+		event.ActorID = actorID
+		event.Metadata = map[string]any{"name": updated.Name, "status": updated.Status}
+		if err := s.Auditor.Record(ctx, event); err != nil && s.Logger != nil {
+			s.Logger.Warn("audit write failed", "event", event.Name, "error", err.Error())
+		}
+	}
+
+	return updated, nil
 }
 
 // SetRoles replaces the roles of a user and audits the change.

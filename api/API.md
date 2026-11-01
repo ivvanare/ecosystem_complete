@@ -59,7 +59,11 @@ Set-Cookie: refresh_token=<opaco>; HttpOnly; Secure; SameSite=Lax; Path=/v1/auth
 Set-Cookie: csrf_token=<aleatorio>; Secure; SameSite=Lax; Path=/v1/auth
 ```
 
-`csrf_token` es legible por JavaScript a propósito: es la mitad del double-submit.
+`csrf_token` es legible por JavaScript a propósito: es la mitad del double-submit. Pero la
+cookie vive con `Path=/v1/auth`, así que un documento servido desde la raíz de la SPA no
+puede leerla (y desde otro host no se lee ninguna cookie). Por eso el cuerpo de login y
+refresh la repite en el campo `csrf_token`: el panel la toma de ahí, no de la cookie. Solo
+lo recibe el panel; para el móvil el campo no existe.
 
 ### Reglas del panel (CSRF)
 
@@ -67,11 +71,12 @@ Set-Cookie: csrf_token=<aleatorio>; Secure; SameSite=Lax; Path=/v1/auth
 viene de la cookie, hay que mandar el header:
 
 ```
-X-CSRF-Token: <valor de la cookie csrf_token>
+X-CSRF-Token: <csrf_token del cuerpo del login o del último refresh>
 ```
 
 Sin él, o si no coincide → `403 csrf_invalid`. El móvil no necesita CSRF porque manda el token
-explícito en el cuerpo.
+explícito en el cuerpo. El valor rota con cada refresh: hay que guardar el `csrf_token` nuevo
+del cuerpo y descartar el anterior.
 
 ### Rotación y reuso
 
@@ -149,7 +154,9 @@ POST /v1/auth/login
 {"email": "ana@melia.test", "password": "una-clave-larga-123", "device": "iPhone de Ana"}
 ```
 
-→ `200` con el par. `device` es opcional y es la etiqueta que verá el usuario.
+→ `200` con el par. `device` es opcional y es la etiqueta que verá el usuario. Si el cliente
+es el panel, el cuerpo incluye además `csrf_token` (§2) y el refresh token le llega solo como
+cookie.
 
 | Error | Cuándo |
 |---|---|
@@ -165,7 +172,8 @@ POST /v1/auth/refresh
                                   # panel: sin cuerpo, con cookie + X-CSRF-Token
 ```
 
-→ `200` con par nuevo. Errores: `401 refresh_invalid` (desconocido o vencido) y
+→ `200` con par nuevo. Para el panel el cuerpo trae también el `csrf_token` rotado: hay que
+reemplazar el guardado por el nuevo. Errores: `401 refresh_invalid` (desconocido o vencido) y
 `401 refresh_reused` (reuso detectado, familia revocada).
 
 ### 5.4 Logout
@@ -176,6 +184,11 @@ POST /v1/auth/logout
 ```
 
 → `204` **siempre**, incluso con un token desconocido. Revoca la familia.
+
+Si el token vino de la cookie, la misma respuesta vence `refresh_token` y `csrf_token`
+(`Max-Age=0`). Si vino de la cookie y falta o no coincide `X-CSRF-Token`, responde
+`403 csrf_invalid` y no revoca nada. No lleva `Authorization`: el token presentado es la
+prueba, y un access token vencido no debe impedir cerrar la sesión.
 
 ### 5.5 Cambio y recuperación de contraseña
 
@@ -290,11 +303,36 @@ Todas requieren `admin.access`; sin él → `403 permission_denied`.
 
 | Método | Ruta | Qué hace |
 |---|---|---|
-| `GET` | `/v1/admin/users?page&limit&q&status` | lista paginada; `q` busca en nombre o email |
+| `GET` | `/v1/admin/users?page&limit&q&status&scope` | lista paginada; `q` busca en nombre o email |
+| `PATCH` | `/v1/admin/users/{userId}` | edita `name` y `status` (nunca el email) |
+| `POST` | `/v1/admin/users/invitations` | envía una invitación al panel a esa dirección |
+| `POST` | `/v1/admin/users/{userId}/password-reset` | envía el código de reseteo al dueño |
 | `PATCH` | `/v1/admin/users/{userId}/roles` | **reemplaza** el set de roles |
 | `GET` | `/v1/admin/roles` | catálogo con los permisos de cada rol |
 | `GET` | `/v1/admin/permissions` | catálogo, ordenado por módulo |
-| `GET` | `/v1/admin/audit-events?page&limit&event&userId&from&to` | bitácora, más reciente primero |
+| `GET` | `/v1/admin/audit-events?page&limit&event&userId&emailHash&from&to` | bitácora, más reciente primero |
+
+`scope` no es un tipo guardado: `admin` son los usuarios con un rol activo que otorga
+`admin.access`, `app` los que no lo tienen, y `none` los que no tienen ningún rol activo. Un
+valor desconocido → `422` (`field: scope`).
+
+```http
+PATCH /v1/admin/users/9f1c...
+{"name": "Ana María", "status": "SUSPENDED"}
+```
+
+→ `200` con el usuario. **El email no se edita acá**: la dirección se prueba antes de que exista
+la fila, así que un cambio desde el panel saltearía la verificación. Suspender no invalida las
+sesiones vivas: expiran solas.
+
+```http
+POST /v1/admin/users/invitations
+{"email": "nueva@melia.test", "name": "Nueva"}
+```
+
+→ `202`. **No crea nada**: la persona se registra y prueba la dirección con el código, y
+recién después se le asigna el rol. El administrador nunca fija la contraseña de otro: para
+eso existe `/password-reset`, que manda el código al dueño de la cuenta.
 
 ```http
 PATCH /v1/admin/users/9f1c.../roles
@@ -307,6 +345,9 @@ unknown`) — la capacidad nunca queda a medio aplicar. Cada cambio se audita co
 a quién.
 
 `from` y `to` son RFC 3339; un valor inválido → `422`.
+
+`emailHash` es el HMAC-SHA256 que devuelve cada evento en `email_hash`, no la dirección: la
+bitácora nunca guarda el email en claro, así que esa es la única forma de seguir un buzón.
 
 ### El primer administrador
 

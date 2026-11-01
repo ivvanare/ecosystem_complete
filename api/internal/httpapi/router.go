@@ -31,6 +31,7 @@ type Options struct {
 	Authorizer         Authorizer
 	Identity           IdentityReader
 	Admin              AdminReader
+	Invitations        InvitationSender
 	Password           PasswordService
 	EmailChange        EmailChangeService
 	Social             SocialAuthenticator
@@ -121,8 +122,21 @@ func New(opts Options) http.Handler {
 			mux.HandleFunc("GET /v1/admin/permissions", admin(identityHandler.permissions))
 
 			if opts.Admin != nil {
-				adminHandler := &adminHandlers{reader: opts.Admin}
+				adminHandler := &adminHandlers{
+					reader:      opts.Admin,
+					password:    opts.Password,
+					invitations: opts.Invitations,
+				}
 				mux.HandleFunc("GET /v1/admin/users", admin(adminHandler.users))
+				mux.HandleFunc("PATCH /v1/admin/users/{userId}", admin(adminHandler.updateUser))
+				// Both routes need the broker to deliver a message, so they are absent
+				// rather than accepted-and-dropped when it is not configured.
+				if opts.Invitations != nil {
+					mux.HandleFunc("POST /v1/admin/users/invitations", admin(adminHandler.inviteUser))
+				}
+				if opts.Password != nil {
+					mux.HandleFunc("POST /v1/admin/users/{userId}/password-reset", admin(adminHandler.resetUserPassword))
+				}
 				mux.HandleFunc("PATCH /v1/admin/users/{userId}/roles", admin(adminHandler.setRoles))
 				mux.HandleFunc("GET /v1/admin/audit-events", admin(adminHandler.auditEvents))
 			}

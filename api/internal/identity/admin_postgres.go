@@ -3,22 +3,51 @@ package identity
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // ListUsers returns one page of active users with their roles.
 func (s *PostgresStore) ListUsers(ctx context.Context, filter UserFilter) (Page[UserSummary], error) {
 	page, limit := normalizePaging(filter.Page, filter.Limit)
 
-	const where = `
+	// `scope` is capability, resolved by joining roles and permissions — there is no
+	// user type column, by design (diagram_base.txt:54-58).
+	const adminAccess = `
+		EXISTS (
+			SELECT 1
+			FROM seg.tb_user_role ur
+			JOIN seg.tb_role r ON r.co_role = ur.co_role
+			                   AND r.tx_status = 'ACTIVE' AND r.dt_deleted_at IS NULL
+			JOIN seg.tb_role_permission rp ON rp.co_role = r.co_role
+			JOIN seg.tb_permission p ON p.co_permission = rp.co_permission
+			                        AND p.tx_code = 'admin.access' AND p.dt_deleted_at IS NULL
+			WHERE ur.co_user = u.co_user
+		)`
+	const anyRole = `
+		EXISTS (
+			SELECT 1
+			FROM seg.tb_user_role ur
+			JOIN seg.tb_role r ON r.co_role = ur.co_role
+			                   AND r.tx_status = 'ACTIVE' AND r.dt_deleted_at IS NULL
+			WHERE ur.co_user = u.co_user
+		)`
+
+	where := `
 		u.dt_deleted_at IS NULL
 		AND ($1 = '' OR u.tx_email ILIKE '%' || $1 || '%' OR COALESCE(u.tx_name, '') ILIKE '%' || $1 || '%')
-		AND ($2 = '' OR u.tx_status::text = $2)`
+		AND ($2 = '' OR u.tx_status::text = $2)
+		AND ($3 = ''
+		     OR ($3 = 'admin' AND ` + adminAccess + `)
+		     OR ($3 = 'app' AND NOT ` + adminAccess + `)
+		     OR ($3 = 'none' AND NOT ` + anyRole + `))`
 
 	var total int
 	if err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM seg.tb_user u WHERE `+where,
-		filter.Query, filter.Status).Scan(&total); err != nil {
+		filter.Query, filter.Status, filter.Scope).Scan(&total); err != nil {
 		return Page[UserSummary]{}, fmt.Errorf("counting users: %w", err)
 	}
 
@@ -34,8 +63,8 @@ func (s *PostgresStore) ListUsers(ctx context.Context, filter UserFilter) (Page[
 		WHERE `+where+`
 		GROUP BY u.co_user, u.tx_name, u.tx_email, u.tx_status, u.dt_email_verified_at, u.dt_created_at
 		ORDER BY u.dt_created_at DESC
-		LIMIT $3 OFFSET $4`,
-		filter.Query, filter.Status, limit, offset(page, limit))
+		LIMIT $4 OFFSET $5`,
+		filter.Query, filter.Status, filter.Scope, limit, offset(page, limit))
 	if err != nil {
 		return Page[UserSummary]{}, fmt.Errorf("selecting users: %w", err)
 	}
@@ -55,6 +84,53 @@ func (s *PostgresStore) ListUsers(ctx context.Context, filter UserFilter) (Page[
 	}
 
 	return Page[UserSummary]{Data: data, Page: page, Limit: limit, Total: total}, nil
+}
+
+// User returns one active user with its active roles, or ErrNotFound.
+func (s *PostgresStore) User(ctx context.Context, userID string) (UserSummary, error) {
+	var user UserSummary
+	err := s.Pool.QueryRow(ctx, `
+		SELECT u.co_user::text, u.tx_name, u.tx_email, u.tx_status::text,
+		       u.dt_email_verified_at, u.dt_created_at,
+		       COALESCE(array_agg(r.tx_name ORDER BY r.tx_name)
+		                FILTER (WHERE r.tx_name IS NOT NULL), '{}')
+		FROM seg.tb_user u
+		LEFT JOIN seg.tb_user_role ur ON ur.co_user = u.co_user
+		LEFT JOIN seg.tb_role r ON r.co_role = ur.co_role
+		                        AND r.tx_status = 'ACTIVE' AND r.dt_deleted_at IS NULL
+		WHERE u.co_user = $1::uuid AND u.dt_deleted_at IS NULL
+		GROUP BY u.co_user, u.tx_name, u.tx_email, u.tx_status, u.dt_email_verified_at, u.dt_created_at`,
+		userID).
+		Scan(&user.ID, &user.Name, &user.Email, &user.Status,
+			&user.EmailVerifiedAt, &user.CreatedAt, &user.Roles)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return UserSummary{}, ErrNotFound
+	}
+	if err != nil {
+		return UserSummary{}, fmt.Errorf("selecting user: %w", err)
+	}
+	return user, nil
+}
+
+// UpdateUser edits the name and/or status and returns the refreshed summary.
+//
+// A nil pointer means "leave it alone", so a request touching only the status never
+// rewrites the name with a stale value.
+func (s *PostgresStore) UpdateUser(ctx context.Context, userID string, name *string, status *string) (UserSummary, error) {
+	updated, err := s.Pool.Exec(ctx, `
+		UPDATE seg.tb_user
+		SET tx_name = COALESCE($2, tx_name),
+		    tx_status = COALESCE($3::public.suspendable_status, tx_status),
+		    dt_updated_at = now()
+		WHERE co_user = $1::uuid AND dt_deleted_at IS NULL`,
+		userID, name, status)
+	if err != nil {
+		return UserSummary{}, fmt.Errorf("updating user: %w", err)
+	}
+	if updated.RowsAffected() == 0 {
+		return UserSummary{}, ErrNotFound
+	}
+	return s.User(ctx, userID)
 }
 
 // SetRoles replaces the complete role set of a user and returns the effective names.
@@ -144,11 +220,12 @@ func (s *PostgresStore) ListAuditEvents(ctx context.Context, filter AuditFilter)
 		($1 = '' OR tx_event = $1)
 		AND ($2 = '' OR co_user = $2::uuid)
 		AND ($3::timestamptz IS NULL OR dt_created_at >= $3)
-		AND ($4::timestamptz IS NULL OR dt_created_at <= $4)`
+		AND ($4::timestamptz IS NULL OR dt_created_at <= $4)
+		AND ($5 = '' OR tx_email_hash = $5)`
 
 	var total int
 	if err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM seg.tb_security_event WHERE `+where,
-		filter.Event, filter.UserID, filter.From, filter.To).Scan(&total); err != nil {
+		filter.Event, filter.UserID, filter.From, filter.To, filter.EmailHash).Scan(&total); err != nil {
 		return Page[AuditEvent]{}, fmt.Errorf("counting events: %w", err)
 	}
 
@@ -158,8 +235,8 @@ func (s *PostgresStore) ListAuditEvents(ctx context.Context, filter AuditFilter)
 		FROM seg.tb_security_event
 		WHERE `+where+`
 		ORDER BY dt_created_at DESC
-		LIMIT $5 OFFSET $6`,
-		filter.Event, filter.UserID, filter.From, filter.To, limit, offset(page, limit))
+		LIMIT $6 OFFSET $7`,
+		filter.Event, filter.UserID, filter.From, filter.To, filter.EmailHash, limit, offset(page, limit))
 	if err != nil {
 		return Page[AuditEvent]{}, fmt.Errorf("selecting events: %w", err)
 	}

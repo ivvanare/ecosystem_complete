@@ -244,9 +244,13 @@ paths:
       tags: [Auth]
       operationId: logout
       summary: End the current session
-      description: Revokes the refresh family of the presented refresh token.
-      security:
-        - bearerAuth: []
+      description: |
+        Revokes the refresh family of the presented refresh token.
+
+        Deliberately unauthenticated: the caller proves possession with the refresh token
+        itself (body or cookie), and an expired access token must not stop it from ending a
+        session. Always answers `204`, even for an unknown token, because the desired state
+        is reached either way and an error would confirm whether the token existed.
       parameters:
         - name: refresh_token
           in: cookie
@@ -255,6 +259,7 @@ paths:
         - name: X-CSRF-Token
           in: header
           required: false
+          description: Required when the refresh token comes from the cookie (double submit).
           schema: { type: string }
       requestBody:
         required: false
@@ -266,9 +271,15 @@ paths:
                 refresh_token: { type: string }
       responses:
         "204":
-          description: Session revoked. Idempotent.
-        "401":
-          $ref: "#/components/responses/Unauthorized"
+          description: |
+            Family revoked. When the refresh token came from the cookie, both cookies are
+            expired in the same response. Idempotent.
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+              description: '`refresh_token` and `csrf_token` emptied with `Max-Age=0`. Sent only for the cookie transport.'
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /v1/auth/password/forgot:
     post:
@@ -486,6 +497,13 @@ paths:
         - name: status
           in: query
           schema: { $ref: "#/components/schemas/UserStatus" }
+        - name: scope
+          in: query
+          description: |
+            Narrows by capability, never by a stored type: `admin` is a user whose active
+            roles grant `admin.access`, `app` is one without such a role, and `none` is a
+            user with no active role at all.
+          schema: { type: string, enum: [admin, app, none] }
       responses:
         "200":
           description: Page of users.
@@ -503,6 +521,105 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+
+  /v1/admin/users/invitations:
+    post:
+      tags: [Admin]
+      operationId: inviteUser
+      summary: Invite an address to the panel
+      description: |
+        Requires `admin.access`. Queues an invitation email. Nothing is created and no
+        role is granted: the person registers and proves the address with the code, and the
+        administrator assigns the role afterwards. The answer is always `202`, so the
+        endpoint cannot be used to learn whether an address already has an account.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+                name: { type: string, maxLength: 120 }
+      responses:
+        "202":
+          description: Invitation queued.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /v1/admin/users/{userId}/password-reset:
+    post:
+      tags: [Admin]
+      operationId: requestUserPasswordReset
+      summary: Send the reset code to a user
+      description: |
+        Requires `admin.access`. Sends the account's reset code to its owner. An administrator
+        never sets another account's password: the code proves the address, which keeps
+        ownership with the user.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "202":
+          description: Reset code queued.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/admin/users/{userId}:
+    patch:
+      tags: [Admin]
+      operationId: updateUser
+      summary: Edit a user's name or status
+      description: |
+        Requires `admin.access`. Edits only what an administrator owns: the display name and
+        the account status. The email is deliberately absent — it is proven before the row
+        exists, so changing it here would skip verification. The change is audited.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                name: { type: string, maxLength: 120 }
+                status: { $ref: "#/components/schemas/UserStatus" }
+      responses:
+        "200":
+          description: User updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserSummary" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /v1/admin/users/{userId}/roles:
     patch:
@@ -616,6 +733,12 @@ paths:
         - name: userId
           in: query
           schema: { type: string, format: uuid }
+        - name: emailHash
+          in: query
+          description: |
+            Exact `email_hash` of the events to return. The log stores only an HMAC-SHA256
+            of the address, never the address itself.
+          schema: { type: string, maxLength: 64 }
         - name: from
           in: query
           schema: { type: string, format: date-time }
@@ -777,6 +900,15 @@ components:
         refresh_expires_in:
           type: integer
           example: 2592000
+        csrf_token:
+          type: string
+          description: |
+            Browser only. Same value as the readable `csrf_token` cookie, repeated in the
+            body because that cookie is scoped to `Path=/v1/auth` and a document served
+            from the SPA root (or any other host) cannot read it. The client must echo it
+            as the `X-CSRF-Token` header on `/v1/auth/refresh` and `/v1/auth/logout`
+            (double submit). Absent for non-browser clients: they hold the refresh token
+            in the body and pass no CSRF check.
 
     Readiness:
       type: object

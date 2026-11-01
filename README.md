@@ -67,10 +67,9 @@ melZone/
 │   └── README.md      # service documentation
 ├── database/          # PostgreSQL schema: canonical DBML + init scripts
 │   ├── diagram_base.txt
-│   ├── init/          # 02..06 SQL, applied by the service
+│   ├── init/          # 02..14 SQL, applied by the service
 │   ├── provision/     # 01: manual database bootstrap, never applied automatically
 │   └── verify_base_model.sql
-├── gui/admin/         # Angular admin SPA
 ├── tests/k6/          # Contract and load tests (k6)
 ├── openspec/          # Change proposals, specs and task logs
 ├── docker-compose.yml # Multi-service orchestration
@@ -151,12 +150,15 @@ anything, `signup.js` measures the write path and the Argon2id cost. See
 
 ## CI and branch protection
 
-`master` is protected: **no direct pushes**. Every change goes through a branch and a pull
-request, and the merge stays blocked until both CI jobs pass.
+`prod` is protected: **no direct pushes**. Every change goes through a branch and a pull
+request against `dev`, and the promotion to `prod` stays blocked until the three CI jobs pass.
+
+Branches promote in one direction: `dev` → `quality` → `prod`. `prod` is the default branch.
 
 | Job | What it verifies | Warm run |
 |---|---|---|
 | `test` | `gofmt`, a tidy `go.mod`, `go vet`, `go test -race ./...` | ~25 s |
+| `admin` | the Angular workspace: `crud-maker`, `crud-maker-zorro`, the SPA suite and its build | ~60 s |
 | `image` | that `api/Dockerfile` still builds | ~15 s |
 
 The test job includes `api/internal/contract`, which fails when a route, an error code or an
