@@ -1,5 +1,5 @@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
-import { inject, Injectable, signal } from '@angular/core';
+import { computed, inject, Injectable, signal } from '@angular/core';
 import { firstValueFrom, timeout } from 'rxjs';
 import { API_URL } from './api-url.token';
 
@@ -68,6 +68,14 @@ export class AuthService {
   readonly csrfToken = this.csrfTokenState.asReadonly();
   readonly user = this.userState.asReadonly();
   readonly status = this.statusState.asReadonly();
+  /**
+   * Effective permission codes from `GET /v1/me`. The panel renders from these,
+   * never from role names (`api/API.md` §6), so a role change is visible on the
+   * next profile load without the panel knowing any role.
+   */
+  readonly permissions = computed<readonly string[]>(
+    () => this.userState()?.permissions ?? [],
+  );
 
   /** The one in-flight rotation every concurrent caller shares (S3). */
   private refreshInFlight: Promise<string> | null = null;

@@ -1,59 +1,49 @@
-# Admin
+# melZone admin (SPA)
 
-This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 22.2.4.
+Angular 22 admin panel for melZone: the public landing, the panel sign-in, and the
+backoffice screens. See `../../AGENTS.md` for the repository rules and the sibling
+`crud-maker` checkout this workspace links.
+
+## Routes
+
+| Route | Screen | Access |
+|-------|--------|--------|
+| `/` | Public landing | anonymous |
+| `/login` | Sign in (accounts are provisioned, never self-registered) | anonymous |
+| `/no-access` | Signed in but without `admin.access` | session |
+| `/panel` | Overview: live totals, recent audit events, module status | `admin.access` |
+| `/panel/users` | Users, search, role assignment | `admin.access` |
+| `/panel/roles` | Roles and the permission catalogue | `admin.access` |
+| `/panel/audit` | Audit log, filter by exact event name | `admin.access` |
+| `/panel/account` | Profile and sign out | `admin.access` |
+| `/panel/faqs` | `crud-maker` demo over a memory transport | `admin.access` |
+| `/panel/places`, `/panel/menus`, `/panel/reviews`, `/panel/routes` | "Coming soon" structure: no API yet | `admin.access` |
+| `/account`, `/faqs` | Redirect to the panel routes above | — |
+
+Navigation is data-driven from `src/app/panel/panel-nav.ts`: a module is listed only
+when the session holds its `permission`, so the sidebar can never offer a screen the
+API would answer with `403 permission_denied`.
+
+## Session
+
+The panel uses the browser transport (`../../api/API.md` §2): the refresh token lives
+in an httpOnly cookie, the CSRF value in `sessionStorage`, and the access token in
+memory only. `AuthService` rotates the session through one shared in-flight request,
+because the API revokes the whole family when a rotated token is replayed.
+
+## Design
+
+Visual directions for this panel live in `design/admin-dashboard/` (static artboards,
+`design.json` manifest). `design/system.md` does not exist yet; the implementation
+tokens are the CSS variables at the top of `src/styles.css`.
 
 ## Development server
 
-To start a local development server, run:
-
 ```bash
-ng serve
+npx ng serve          # http://localhost:4200
+npx ng test admin --watch=false
+npx ng build
 ```
 
-Once the server is running, open your browser and navigate to `http://localhost:4200/`. The application will automatically reload whenever you modify any of the source files.
-
-## Code scaffolding
-
-Angular CLI includes powerful code scaffolding tools. To generate a new component, run:
-
-```bash
-ng generate component component-name
-```
-
-For a complete list of available schematics (such as `components`, `directives`, or `pipes`), run:
-
-```bash
-ng generate --help
-```
-
-## Building
-
-To build the project run:
-
-```bash
-ng build
-```
-
-This will compile your project and store the build artifacts in the `dist/` directory. By default, the production build optimizes your application for performance and speed.
-
-## Running unit tests
-
-To execute unit tests with the [Vitest](https://vitest.dev/) test runner, use the following command:
-
-```bash
-ng test
-```
-
-## Running end-to-end tests
-
-For end-to-end (e2e) testing, run:
-
-```bash
-ng e2e
-```
-
-Angular CLI does not come with an end-to-end testing framework by default. You can choose one that suits your needs.
-
-## Additional Resources
-
-For more information on using the Angular CLI, including detailed command references, visit the [Angular CLI Overview and Command Reference](https://angular.dev/tools/cli) page.
+The dev build points at `http://localhost:9000/v1` through the `API_URL` injection
+token; `docker compose up -d` in the repository root starts the API and its services.

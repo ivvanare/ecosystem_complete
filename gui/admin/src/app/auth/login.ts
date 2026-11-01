@@ -1,7 +1,7 @@
 import { HttpErrorResponse } from '@angular/common/http';
 import { Component, inject, signal } from '@angular/core';
 import { form, FormField, required } from '@angular/forms/signals';
-import { ActivatedRoute, Router } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { AuthService } from '../core/auth.service';
 
 interface LoginFormModel {
@@ -9,8 +9,8 @@ interface LoginFormModel {
   password: string;
 }
 
-/** Landing after a successful sign-in that has no returnUrl to honour. */
-const DEFAULT_RETURN_URL = '/faqs';
+/** Landing after a successful sign-in that has no returnUrl to honour: the panel. */
+const DEFAULT_RETURN_URL = '/panel';
 
 /**
  * Extracts the machine-readable code from the API error envelope
@@ -35,7 +35,7 @@ function apiErrorCode(error: unknown): string {
  */
 @Component({
   selector: 'app-login',
-  imports: [FormField],
+  imports: [FormField, RouterLink],
   templateUrl: './login.html',
   styleUrl: './login.css',
 })

@@ -122,7 +122,7 @@ describe('Login', () => {
     http.expectOne(`${API}/me`).flush(ME);
     await tick();
 
-    expect(router.navigateByUrl).toHaveBeenCalledWith('/faqs');
+    expect(router.navigateByUrl).toHaveBeenCalledWith('/panel');
   });
 
   it('signs in and lands on the returnUrl the guard bounced from', async () => {
@@ -144,7 +144,7 @@ describe('Login', () => {
     submitForm();
     await flushSuccessfulLogin();
 
-    expect(router.navigateByUrl).toHaveBeenCalledWith('/faqs');
+    expect(router.navigateByUrl).toHaveBeenCalledWith('/panel');
   });
 
   it("shows the API's error.code — never the message — on a rejected login", async () => {
