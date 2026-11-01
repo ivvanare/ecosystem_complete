@@ -92,6 +92,10 @@ type Service struct {
 	Auditor   audit.Recorder
 	Logger    *slog.Logger
 
+	// Origin is the SPA address, used to tell the person where the code is entered.
+	// Empty degrades the text: the code still works, it just has no link.
+	Origin string
+
 	Now            func() time.Time
 	GenerateCode   func() (string, error)
 	HashPassword   func(string) (string, error)
@@ -174,9 +178,7 @@ func (s *Service) RequestReset(ctx context.Context, email string) error {
 	if err := s.publish(ctx, mailer.Message{
 		To:      email,
 		Subject: "Recuperá tu contraseña",
-		Text: fmt.Sprintf("Tu código para cambiar la contraseña es %s.\n"+
-			"Vence en 10 minutos y sirve una sola vez. Si no lo pediste, ignorá este mensaje: "+
-			"tu contraseña actual sigue funcionando.", code),
+		Text:    resetText(code, s.Origin),
 	}); err != nil {
 		return err
 	}
@@ -282,6 +284,18 @@ func (s *Service) Change(ctx context.Context, userID, currentPassword, newPasswo
 
 	s.record(ctx, audit.Event{Name: audit.EventPasswordChanged, UserID: userID})
 	return nil
+}
+
+// resetText is the mail body. The link is the part that was missing: a code with no
+// screen to spend it on is a dead end (the registration flow had the same hole).
+func resetText(code, origin string) string {
+	text := fmt.Sprintf("Tu código para cambiar la contraseña es %s.\n"+
+		"Vence en 10 minutos y sirve una sola vez. Si no lo pediste, ignorá este mensaje: "+
+		"tu contraseña actual sigue funcionando.", code)
+	if trimmed := strings.TrimRight(strings.TrimSpace(origin), "/"); trimmed != "" {
+		text += fmt.Sprintf("\n\nIngresalo en %s/recuperar", trimmed)
+	}
+	return text
 }
 
 func (s *Service) publish(ctx context.Context, message mailer.Message) error {

@@ -122,7 +122,11 @@ func run() error {
 	if cfg.RabbitMQURL != "" {
 		passwordPublisher := queue.NewAMQP(cfg.RabbitMQURL, cfg.MailQueue)
 		defer func() { _ = passwordPublisher.Close() }()
-		passwordService = password.New(password.NewPostgresStore(pool), passwordPublisher, auditor, logger)
+		recovery := password.New(password.NewPostgresStore(pool), passwordPublisher, auditor, logger)
+		if len(cfg.CORSOrigins) > 0 {
+			recovery.Origin = cfg.CORSOrigins[0]
+		}
+		passwordService = recovery
 	} else {
 		logger.Warn("RABBITMQ_URL is empty: password recovery is disabled because codes cannot be delivered")
 	}
