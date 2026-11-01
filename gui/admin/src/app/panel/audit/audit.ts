@@ -1,4 +1,4 @@
-import { Component, inject } from '@angular/core';
+import { Component, computed, inject } from '@angular/core';
 import { CrudController, defineCrudConfig } from 'crud-maker';
 import { CrudListScreen } from 'crud-maker-zorro';
 import { AdminTransport } from '../../core/admin-transport';
@@ -75,6 +75,11 @@ export class Audit {
   protected readonly crud = new CrudController<Record<string, unknown>>(
     AUDIT_CONFIG,
     inject(AdminTransport),
+  );
+
+  /** One derived string, recomputed only when the total changes. */
+  protected readonly subtitle = computed(
+    () => `${this.crud.total()} events · append-only, newest first · emails are never stored in clear`,
   );
 
   constructor() {

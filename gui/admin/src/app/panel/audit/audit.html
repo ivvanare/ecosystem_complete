@@ -1,12 +1,8 @@
-<section class="screen" aria-labelledby="audit-title">
-  <header class="pagehead">
-    <div>
-      <h1 id="audit-title">Audit log</h1>
-      <p>
-        {{ crud.total() }} events · append-only, newest first · emails are never stored in clear
-      </p>
-    </div>
-  </header>
-
-  <crud-list-screen [config]="config" [controller]="crud" />
+<section class="screen">
+  <crud-list-screen
+    [config]="config"
+    [controller]="crud"
+    title="Audit log"
+    [subtitle]="subtitle()"
+  />
 </section>

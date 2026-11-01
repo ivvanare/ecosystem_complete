@@ -1,4 +1,4 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, computed, inject, signal } from '@angular/core';
 import { CrudController, defineCrudConfig } from 'crud-maker';
 import { CrudListScreen } from 'crud-maker-zorro';
 import { NzButtonModule } from 'ng-zorro-antd/button';
@@ -61,6 +61,15 @@ export class Users {
 
   protected readonly config = USERS_CONFIG;
   protected readonly crud = new CrudController<UserSummary>(USERS_CONFIG, inject(AdminTransport));
+
+  /**
+   * The header line reads the controller's `total` signal inside a `computed`, so it
+   * recomputes only when the total changes — never once per change-detection pass.
+   */
+  protected readonly subtitle = computed(() => {
+    const total = this.crud.total();
+    return `${total} ${total === 1 ? 'account' : 'accounts'} · roles are replaced, never merged`;
+  });
 
   protected readonly roles = signal<readonly Role[]>([]);
   protected readonly editingUser = signal<UserSummary | null>(null);

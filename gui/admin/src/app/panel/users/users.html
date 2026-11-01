@@ -1,17 +1,16 @@
-<section class="screen" aria-labelledby="users-title">
-  <header class="pagehead">
-    <div>
-      <h1 id="users-title">Users</h1>
-      <p>{{ crud.total() }} {{ crud.total() === 1 ? 'account' : 'accounts' }} · roles are replaced, never merged</p>
-    </div>
-  </header>
-
+<section class="screen">
   <!-- Declared before the screen so the projection input sees the reference. -->
   <ng-template #rolesAction let-row>
     <button nz-button nzSize="small" type="button" (click)="openRoles(row)">Roles</button>
   </ng-template>
 
-  <crud-list-screen [config]="config" [controller]="crud" [rowActions]="rolesAction" />
+  <crud-list-screen
+    [config]="config"
+    [controller]="crud"
+    title="Users"
+    [subtitle]="subtitle()"
+    [rowActions]="rolesAction"
+  />
 
   <nz-modal
     [nzVisible]="rolesModalOpen()"
