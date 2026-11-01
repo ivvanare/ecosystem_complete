@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdminApi, type Role, type UserSummary } from '../../core/admin-api';
 import { AdminTransport } from '../../core/admin-transport';
 import { Users } from './users';
@@ -53,6 +53,24 @@ describe('Users', () => {
     });
   });
 
+  afterEach(() => {
+    // The overlay lives outside the fixture; leaving it behind leaks into the next test.
+    document.body.querySelectorAll('.cdk-overlay-container, .ant-modal-root').forEach((node) => node.remove());
+  });
+
+  // The dialog is portalled to <body>, so its content is not inside the fixture.
+  function inDialog<T extends Element>(selector: string): NodeListOf<T> {
+    return document.body.querySelectorAll<T>(selector);
+  }
+
+  function dialogButton(text: string): HTMLButtonElement {
+    const found = [...inDialog<HTMLButtonElement>('button')].find(
+      (button) => button.textContent?.trim() === text,
+    );
+    if (!found) throw new Error(`no dialog button labelled "${text}"`);
+    return found;
+  }
+
   async function render(): Promise<{ element: HTMLElement; fixture: ReturnType<typeof TestBed.createComponent<Users>> }> {
     const fixture = TestBed.createComponent(Users);
     fixture.detectChanges();
@@ -80,18 +98,19 @@ describe('Users', () => {
   });
 
   it('replaces the whole role set from the row action', async () => {
-    const { element } = await render();
+    const { element, fixture } = await render();
 
     buttonByText(element, 'Roles').click();
+    fixture.detectChanges();
     await tick();
 
-    const checkboxes = [...element.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
+    const checkboxes = [...inDialog<HTMLInputElement>('input[type="checkbox"]')];
     expect(checkboxes).toHaveLength(ROLES.length);
     const admin = checkboxes[1]!;
     admin.checked = true;
     admin.dispatchEvent(new Event('change'));
 
-    buttonByText(element, 'Save roles').click();
+    dialogButton('Save roles').click();
     await tick();
 
     // The endpoint is a replacement: unchecked EDITOR would be sent too if the
@@ -107,16 +126,19 @@ describe('Users', () => {
         error: { error: { code: 'permission_denied', message: 'Nope.' } },
       }),
     );
-    const { element } = await render();
+    const { element, fixture } = await render();
 
     buttonByText(element, 'Roles').click();
+    fixture.detectChanges();
     await tick();
-    buttonByText(element, 'Save roles').click();
+    dialogButton('Save roles').click();
     await tick();
     await tick();
+    fixture.detectChanges();
 
-    const alert = element.querySelector('[role="alert"]');
-    expect(alert?.textContent).toContain('permission_denied');
-    expect(alert?.textContent).not.toContain('Nope.');
+    const alert = inDialog<HTMLElement>('[role="alert"]');
+    expect(alert.length).toBeGreaterThan(0);
+    expect(alert[0]!.textContent).toContain('permission_denied');
+    expect(alert[0]!.textContent).not.toContain('Nope.');
   });
 });

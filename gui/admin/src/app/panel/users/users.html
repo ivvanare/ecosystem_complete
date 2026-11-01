@@ -13,52 +13,58 @@
 
   <crud-list-screen [config]="config" [controller]="crud" [rowActions]="rolesAction" />
 
-  @if (editingUser(); as user) {
-    <section class="editor" aria-labelledby="roles-editor-title">
-      <header>
-        <h2 id="roles-editor-title">Roles for {{ user.email ?? user.id }}</h2>
-        <button nz-button type="button" (click)="closeRoles()">Close</button>
-      </header>
+  <nz-modal
+    [nzVisible]="rolesModalOpen()"
+    nzTitle="Roles"
+    nzOkText="Save roles"
+    nzCancelText="Cancel"
+    [nzOkLoading]="saving()"
+    [nzOkDisabled]="!roles().length"
+    nzWidth="440px"
+    (nzOnCancel)="closeRoles()"
+    (nzOnOk)="saveRoles()"
+  >
+    <ng-container *nzModalContent>
+      @if (editingUser(); as user) {
+        <p class="modal-lead">
+          {{ user.email ?? user.id }}
+        </p>
 
-      @if (!roles().length) {
-        <p class="muted">The role catalogue could not be loaded.</p>
-      } @else {
-        <fieldset>
-          <legend class="sr-only">Roles</legend>
-          @for (role of roles(); track role.name) {
-            <label class="check">
-              <input
-                type="checkbox"
-                [checked]="isChecked(role)"
-                [disabled]="saving()"
-                (change)="toggleRole(role)"
-              />
-              <span>
-                <strong>{{ role.name }}</strong>
-                @if (role.description) {
-                  <span class="muted"> — {{ role.description }}</span>
-                }
-              </span>
-            </label>
+        @if (!roles().length) {
+          <p class="muted">The role catalogue could not be loaded.</p>
+        } @else {
+          <fieldset>
+            <legend class="sr-only">Roles</legend>
+            @for (role of roles(); track role.name) {
+              <label class="check">
+                <input
+                  type="checkbox"
+                  [checked]="isChecked(role)"
+                  [disabled]="saving()"
+                  (change)="toggleRole(role)"
+                />
+                <span>
+                  <strong>{{ role.name }}</strong>
+                  @if (role.description) {
+                    <span class="muted"> — {{ role.description }}</span>
+                  }
+                </span>
+              </label>
+            }
+          </fieldset>
+
+          @if (saveErrorCode(); as code) {
+            <p class="save-error" role="alert">
+              The role change was rejected: <code>{{ code }}</code>
+            </p>
           }
-        </fieldset>
 
-        @if (saveErrorCode(); as code) {
-          <p class="save-error" role="alert">
-            The role change was rejected: <code>{{ code }}</code>
-          </p>
-        }
-
-        <footer>
-          <button nz-button nzType="primary" type="button" [disabled]="saving()" (click)="saveRoles()">
-            {{ saving() ? 'Saving…' : 'Save roles' }}
-          </button>
           <p class="hint">
             The set replaces the current one: a role left unchecked is removed. Saving writes an
             audit event.
           </p>
-        </footer>
+        }
       }
-    </section>
-  }
+    </ng-container>
+  </nz-modal>
 </section>

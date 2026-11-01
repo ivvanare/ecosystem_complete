@@ -2,6 +2,7 @@ import { Component, inject, signal } from '@angular/core';
 import { CrudController, defineCrudConfig } from 'crud-maker';
 import { CrudListScreen } from 'crud-maker-zorro';
 import { NzButtonModule } from 'ng-zorro-antd/button';
+import { NzModalModule } from 'ng-zorro-antd/modal';
 import { AdminApi, type Role, type UserSummary } from '../../core/admin-api';
 import { AdminTransport } from '../../core/admin-transport';
 import { apiErrorCode } from '../../core/api-error';
@@ -51,7 +52,7 @@ const USERS_CONFIG = defineCrudConfig({
  */
 @Component({
   selector: 'app-users',
-  imports: [CrudListScreen, NzButtonModule],
+  imports: [CrudListScreen, NzButtonModule, NzModalModule],
   templateUrl: './users.html',
   styleUrl: './users.css',
 })
@@ -63,6 +64,7 @@ export class Users {
 
   protected readonly roles = signal<readonly Role[]>([]);
   protected readonly editingUser = signal<UserSummary | null>(null);
+  protected readonly rolesModalOpen = signal(false);
   protected readonly draftRoles = signal<readonly string[]>([]);
   protected readonly saving = signal(false);
   protected readonly saveErrorCode = signal<string | null>(null);
@@ -76,9 +78,11 @@ export class Users {
     this.saveErrorCode.set(null);
     this.editingUser.set(user);
     this.draftRoles.set([...user.roles]);
+    this.rolesModalOpen.set(true);
   }
 
   protected closeRoles(): void {
+    this.rolesModalOpen.set(false);
     this.editingUser.set(null);
     this.saveErrorCode.set(null);
   }
@@ -105,7 +109,7 @@ export class Users {
     try {
       await this.api.setUserRoles(user.id, [...this.draftRoles()]);
       await this.crud.load();
-      this.editingUser.set(null);
+      this.closeRoles();
     } catch (error) {
       this.saveErrorCode.set(apiErrorCode(error));
     } finally {
