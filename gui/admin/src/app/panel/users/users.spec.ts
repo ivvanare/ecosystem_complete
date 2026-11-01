@@ -27,6 +27,8 @@ describe('Users', () => {
   const listRoles = vi.fn();
   const setUserRoles = vi.fn();
   const updateUser = vi.fn();
+  const inviteUser = vi.fn();
+  const requestPasswordReset = vi.fn();
 
   beforeEach(() => {
     TestBed.resetTestingModule();
@@ -34,6 +36,8 @@ describe('Users', () => {
     listRoles.mockReset().mockResolvedValue(ROLES);
     setUserRoles.mockReset().mockResolvedValue({ ...USER, roles: ['EDITOR', 'ADMIN'] });
     updateUser.mockReset().mockResolvedValue({ ...USER, name: 'Ana María' });
+    inviteUser.mockReset().mockResolvedValue(undefined);
+    requestPasswordReset.mockReset().mockResolvedValue(undefined);
 
     TestBed.configureTestingModule({
       imports: [Users],
@@ -50,7 +54,7 @@ describe('Users', () => {
             remove: vi.fn(),
           },
         },
-        { provide: AdminApi, useValue: { listRoles, setUserRoles, updateUser } },
+        { provide: AdminApi, useValue: { listRoles, setUserRoles, updateUser, inviteUser, requestPasswordReset } },
       ],
     });
   });
@@ -142,6 +146,35 @@ describe('Users', () => {
     expect(updateUser).toHaveBeenCalledWith('u1', { name: 'Ana María', status: 'SUSPENDED' });
     // The email has no control in the dialog: changing it goes through the verified flow.
     expect(inDialog('#profile-email')).toHaveLength(0);
+  });
+
+  it('invites an address from the header action, creating nothing', async () => {
+    const { element, fixture } = await render();
+
+    buttonByText(element, 'Invite user').click();
+    fixture.detectChanges();
+    await tick();
+
+    const email = inDialog<HTMLInputElement>('#invite-email')[0]!;
+    email.value = 'nueva@melia.test';
+    email.dispatchEvent(new Event('input'));
+
+    dialogButton('Send invitation').click();
+    await tick();
+    fixture.detectChanges();
+
+    expect(inviteUser).toHaveBeenCalledWith('nueva@melia.test', undefined);
+    // 202 means "queued", never "they now have access".
+    expect(document.body.textContent).toContain('Invitation queued');
+  });
+
+  it('sends the reset code to the user from the row action', async () => {
+    const { element } = await render();
+
+    buttonByText(element, 'Send reset').click();
+    await tick();
+
+    expect(requestPasswordReset).toHaveBeenCalledWith('u1');
   });
 
   it('shows the API code when the role change is rejected', async () => {

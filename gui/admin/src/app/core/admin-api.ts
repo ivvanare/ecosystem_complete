@@ -121,6 +121,26 @@ export class AdminApi {
     );
   }
 
+  /**
+   * Queues an invitation to an address. Nothing is created: the person registers and
+   * proves the address, and the role is granted afterwards.
+   */
+  inviteUser(email: string, name?: string): Promise<void> {
+    return firstValueFrom(
+      this.http.post<void>(`${this.baseUrl}/admin/users/invitations`, { email, name }),
+    );
+  }
+
+  /** Sends the account's reset code to its owner. An admin never sets a password. */
+  requestPasswordReset(userId: string): Promise<void> {
+    return firstValueFrom(
+      this.http.post<void>(
+        `${this.baseUrl}/admin/users/${encodeURIComponent(userId)}/password-reset`,
+        {},
+      ),
+    );
+  }
+
   /** Replaces the whole role set: a role left out of `roles` is removed. */
   setUserRoles(userId: string, roles: string[]): Promise<UserSummary> {
     return firstValueFrom(

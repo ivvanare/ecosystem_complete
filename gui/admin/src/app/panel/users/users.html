@@ -2,6 +2,22 @@
   <!-- Declared before the screen so the projection input sees the reference. -->
   <ng-template #rolesAction let-row>
     <button nz-button nzSize="small" type="button" (click)="openRoles(row)">Roles</button>
+    <button
+      nz-button
+      nzSize="small"
+      type="button"
+      [disabled]="resettingId() !== null"
+      [title]="'Send the reset code to ' + (row.email ?? 'this user')"
+      (click)="sendReset(row)"
+    >
+      @if (resettingId() === row.id) {
+        Sending…
+      } @else if (resetSentId() === row.id) {
+        Code sent
+      } @else {
+        Send reset
+      }
+    </button>
   </ng-template>
 
   <crud-list-screen
@@ -11,7 +27,15 @@
     [subtitle]="subtitle()"
     [rowActions]="rolesAction"
     (edit)="openProfile($event)"
-  />
+  >
+    <button crudActions nz-button type="button" (click)="openInvite()">Invite user</button>
+  </crud-list-screen>
+
+  @if (resetErrorCode(); as code) {
+    <p class="save-error" role="alert">
+      The reset code could not be sent: <code>{{ code }}</code>
+    </p>
+  }
 
   <nz-modal
     [nzVisible]="rolesModalOpen()"
@@ -64,6 +88,59 @@
             audit event.
           </p>
         }
+      }
+    </ng-container>
+  </nz-modal>
+
+  <nz-modal
+    [nzVisible]="inviteModalOpen()"
+    nzTitle="Invite a user"
+    nzOkText="Send invitation"
+    nzCancelText="Close"
+    [nzOkLoading]="inviting()"
+    nzWidth="460px"
+    (nzOnCancel)="closeInvite()"
+    (nzOnOk)="sendInvite()"
+  >
+    <ng-container *nzModalContent>
+      <p class="modal-lead">
+        The invitation creates nothing: the person registers, proves the address with the
+        code, and you grant the role afterwards.
+      </p>
+
+      <div class="field">
+        <label for="invite-email">Email</label>
+        <input
+          id="invite-email"
+          nz-input
+          type="email"
+          autocomplete="off"
+          [value]="inviteEmail()"
+          [disabled]="inviting() || inviteSent()"
+          (input)="onInviteEmail($any($event.target).value)"
+        />
+      </div>
+
+      <div class="field">
+        <label for="invite-name">Name <span class="muted">(optional)</span></label>
+        <input
+          id="invite-name"
+          nz-input
+          type="text"
+          [value]="inviteName()"
+          [disabled]="inviting() || inviteSent()"
+          (input)="onInviteName($any($event.target).value)"
+        />
+      </div>
+
+      @if (inviteSent()) {
+        <p class="invite-sent">Invitation queued. The message is in the mail outbox.</p>
+      }
+
+      @if (inviteErrorCode(); as code) {
+        <p class="save-error" role="alert">
+          The invitation was rejected: <code>{{ code }}</code>
+        </p>
       }
     </ng-container>
   </nz-modal>

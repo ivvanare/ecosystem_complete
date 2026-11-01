@@ -100,6 +100,71 @@ export class Users {
   protected readonly profileSaving = signal(false);
   protected readonly profileErrorCode = signal<string | null>(null);
   protected readonly statuses: readonly UserStatus[] = ['ACTIVE', 'INACTIVE', 'SUSPENDED'];
+
+  protected readonly inviteModalOpen = signal(false);
+  protected readonly inviteEmail = signal('');
+  protected readonly inviteName = signal('');
+  protected readonly inviting = signal(false);
+  protected readonly inviteErrorCode = signal<string | null>(null);
+  protected readonly inviteSent = signal(false);
+
+  /** Per-row feedback for the reset trigger: idle, sending, sent, or the API code. */
+  protected readonly resettingId = signal<string | null>(null);
+  protected readonly resetSentId = signal<string | null>(null);
+  protected readonly resetErrorCode = signal<string | null>(null);
+
+  protected openInvite(): void {
+    this.inviteErrorCode.set(null);
+    this.inviteSent.set(false);
+    this.inviteEmail.set('');
+    this.inviteName.set('');
+    this.inviteModalOpen.set(true);
+  }
+
+  protected closeInvite(): void {
+    this.inviteModalOpen.set(false);
+    this.inviteErrorCode.set(null);
+    this.inviteSent.set(false);
+  }
+
+  protected onInviteEmail(value: string): void {
+    this.inviteEmail.set(value);
+  }
+
+  protected onInviteName(value: string): void {
+    this.inviteName.set(value);
+  }
+
+  protected async sendInvite(): Promise<void> {
+    if (this.inviting()) return;
+    this.inviting.set(true);
+    this.inviteErrorCode.set(null);
+    try {
+      await this.api.inviteUser(this.inviteEmail().trim(), this.inviteName().trim() || undefined);
+      // The answer is 202 even when the address already has an account: the panel must
+      // not become an oracle, so the confirmation is the same either way.
+      this.inviteSent.set(true);
+    } catch (error) {
+      this.inviteErrorCode.set(apiErrorCode(error));
+    } finally {
+      this.inviting.set(false);
+    }
+  }
+
+  protected async sendReset(user: UserSummary): Promise<void> {
+    if (this.resettingId() !== null) return;
+    this.resettingId.set(user.id);
+    this.resetErrorCode.set(null);
+    this.resetSentId.set(null);
+    try {
+      await this.api.requestPasswordReset(user.id);
+      this.resetSentId.set(user.id);
+    } catch (error) {
+      this.resetErrorCode.set(apiErrorCode(error));
+    } finally {
+      this.resettingId.set(null);
+    }
+  }
   protected readonly draftRoles = signal<readonly string[]>([]);
   protected readonly saving = signal(false);
   protected readonly saveErrorCode = signal<string | null>(null);
