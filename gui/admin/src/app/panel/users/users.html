@@ -116,7 +116,7 @@
           type="email"
           autocomplete="off"
           [value]="inviteEmail()"
-          [disabled]="inviting() || inviteSent()"
+          [disabled]="inviting()"
           (input)="onInviteEmail($any($event.target).value)"
         />
       </div>
@@ -128,14 +128,10 @@
           nz-input
           type="text"
           [value]="inviteName()"
-          [disabled]="inviting() || inviteSent()"
+          [disabled]="inviting()"
           (input)="onInviteName($any($event.target).value)"
         />
       </div>
-
-      @if (inviteSent()) {
-        <p class="invite-sent">Invitation queued. The message is in the mail outbox.</p>
-      }
 
       @if (inviteErrorCode(); as code) {
         <p class="save-error" role="alert">

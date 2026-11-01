@@ -2,6 +2,7 @@ import { Component, computed, inject, signal } from '@angular/core';
 import { CrudController, defineCrudConfig } from 'crud-maker';
 import { CrudListScreen } from 'crud-maker-zorro';
 import { NzButtonModule } from 'ng-zorro-antd/button';
+import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzModalModule } from 'ng-zorro-antd/modal';
 import { AdminApi, type Role, type UserStatus, type UserSummary } from '../../core/admin-api';
 import { AdminTransport } from '../../core/admin-transport';
@@ -76,6 +77,7 @@ const USERS_CONFIG = defineCrudConfig({
 })
 export class Users {
   private readonly api = inject(AdminApi);
+  private readonly messages = inject(NzMessageService);
 
   protected readonly config = USERS_CONFIG;
   protected readonly crud = new CrudController<UserSummary>(USERS_CONFIG, inject(AdminTransport));
@@ -106,7 +108,6 @@ export class Users {
   protected readonly inviteName = signal('');
   protected readonly inviting = signal(false);
   protected readonly inviteErrorCode = signal<string | null>(null);
-  protected readonly inviteSent = signal(false);
 
   /** Per-row feedback for the reset trigger: idle, sending, sent, or the API code. */
   protected readonly resettingId = signal<string | null>(null);
@@ -115,7 +116,6 @@ export class Users {
 
   protected openInvite(): void {
     this.inviteErrorCode.set(null);
-    this.inviteSent.set(false);
     this.inviteEmail.set('');
     this.inviteName.set('');
     this.inviteModalOpen.set(true);
@@ -124,7 +124,6 @@ export class Users {
   protected closeInvite(): void {
     this.inviteModalOpen.set(false);
     this.inviteErrorCode.set(null);
-    this.inviteSent.set(false);
   }
 
   protected onInviteEmail(value: string): void {
@@ -140,11 +139,14 @@ export class Users {
     this.inviting.set(true);
     this.inviteErrorCode.set(null);
     try {
-      await this.api.inviteUser(this.inviteEmail().trim(), this.inviteName().trim() || undefined);
-      // The answer is 202 even when the address already has an account: the panel must
-      // not become an oracle, so the confirmation is the same either way.
-      this.inviteSent.set(true);
+      const email = this.inviteEmail().trim();
+      await this.api.inviteUser(email, this.inviteName().trim() || undefined);
+      // 202 means "queued", never "they now have access", and the answer is identical
+      // when the address already has an account — the panel is not an oracle.
+      this.closeInvite();
+      this.messages.success(`Invitation queued for ${email}`);
     } catch (error) {
+      // Stay open with the code visible: closing would lose what was typed.
       this.inviteErrorCode.set(apiErrorCode(error));
     } finally {
       this.inviting.set(false);
@@ -159,6 +161,7 @@ export class Users {
     try {
       await this.api.requestPasswordReset(user.id);
       this.resetSentId.set(user.id);
+      this.messages.success(`Reset code sent to ${user.email ?? 'the user'}`);
     } catch (error) {
       this.resetErrorCode.set(apiErrorCode(error));
     } finally {
@@ -221,6 +224,7 @@ export class Users {
       });
       await this.crud.load();
       this.closeProfile();
+      this.messages.success('User updated');
     } catch (error) {
       this.profileErrorCode.set(apiErrorCode(error));
     } finally {
@@ -251,6 +255,7 @@ export class Users {
       await this.api.setUserRoles(user.id, [...this.draftRoles()]);
       await this.crud.load();
       this.closeRoles();
+      this.messages.success('Roles updated');
     } catch (error) {
       this.saveErrorCode.set(apiErrorCode(error));
     } finally {
