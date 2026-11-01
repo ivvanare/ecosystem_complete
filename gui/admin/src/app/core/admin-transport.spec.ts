@@ -62,6 +62,17 @@ describe('AdminTransport', () => {
     await pending;
   });
 
+  it('maps the users scope filter', async () => {
+    const pending = transport.list('admin/users', query({ filters: { scope_eq: 'admin' } }));
+    const req = http.expectOne((r) => r.url === `${API}/admin/users`);
+
+    expect(req.request.params.get('scope')).toBe('admin');
+    expect(req.request.params.has('scope_eq')).toBe(false);
+
+    req.flush({ data: [], page: 1, limit: 20, total: 0 });
+    await pending;
+  });
+
   it('maps the user and email-hash filters to the API parameters', async () => {
     const pending = transport.list(
       'admin/audit-events',

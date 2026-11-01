@@ -29,7 +29,7 @@ import { API_URL } from './api-url.token';
  * with no entry is dropped: sending a parameter the API ignores hides the mistake.
  */
 const FILTER_PARAMS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
-  'admin/users': { status: 'status' },
+  'admin/users': { status: 'status', scope: 'scope' },
   'admin/audit-events': {
     event: 'event',
     user_id: 'userId',

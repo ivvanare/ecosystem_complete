@@ -41,6 +41,21 @@ const USERS_CONFIG = defineCrudConfig({
       cell: { render: 'tag', variantMap: { ACTIVE: 'green', INACTIVE: 'default', SUSPENDED: 'orange' } },
     },
     { name: 'roles', label: 'Roles', sortable: false },
+    {
+      // Not a column: the API answers `scope` from the roles' permissions, so it can
+      // only narrow the list. `detail: true` keeps the validator happy about having a
+      // view, while the flag stays out of the form.
+      name: 'scope',
+      label: 'Scope',
+      sortable: false,
+      in: { list: false, form: false, detail: true },
+      filters: ['eq'],
+      options: [
+        { label: 'Panel access', value: 'admin' },
+        { label: 'App users', value: 'app' },
+        { label: 'No role', value: 'none' },
+      ],
+    },
     { name: 'created_at', label: 'Created', type: 'datetime', sortable: false },
   ],
 });
