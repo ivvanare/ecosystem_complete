@@ -39,7 +39,8 @@ func TestInvitePointsAtTheRegistrationPage(t *testing.T) {
 	if !strings.Contains(message.Text, "https://panel.test/registro") {
 		t.Errorf("text does not point at the registration page: %s", message.Text)
 	}
-	if !strings.Contains(message.Text, "six-digit code") {
+	// Spanish, like the rest of the product's mail: four of the five messages already were.
+	if !strings.Contains(message.Text, "código de seis dígitos") {
 		t.Errorf("text does not explain the code: %s", message.Text)
 	}
 }

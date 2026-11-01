@@ -46,33 +46,33 @@ func (s *Service) Invite(ctx context.Context, email, name string) error {
 		return fmt.Errorf("invitation: no publisher configured")
 	}
 
-	greeting := "Hello"
+	greeting := "Hola"
 	if trimmed := strings.TrimSpace(name); trimmed != "" {
-		greeting = "Hello " + trimmed
+		greeting = "Hola " + trimmed
 	}
 	where := s.Origin + "/registro"
 	if s.Origin == "" {
-		where = "the melZone registration page"
+		where = "la página de registro de melZone"
 	}
 
 	text := fmt.Sprintf(`%s,
 
-An administrator invited you to the melZone panel.
+Un administrador te invitó al panel de melZone.
 
-If you do not have an account with this address yet, register with it here: %s
+Si todavía no tenés cuenta con esta dirección, registrate acá: %s
 
-We will email you a six-digit code to confirm the address; the account is created only
-after you enter it.
+Te vamos a mandar un código de seis dígitos para confirmar la dirección; la cuenta se crea
+recién cuando lo ingreses.
 
-If you already have an account, sign in at the same address. The administrator will grant
-you the access you need; invitations do not grant anything by themselves.
+Si ya tenés cuenta, iniciá sesión con la misma dirección. El administrador te va a dar el
+acceso que necesites: la invitación por sí sola no otorga nada.
 
-If you were not expecting this message, you can ignore it.
+Si no esperabas este mensaje, podés ignorarlo.
 `, greeting, where)
 
 	payload, err := json.Marshal(mailer.Message{
 		To:      email,
-		Subject: "You have been invited to the melZone panel",
+		Subject: "Te invitaron al panel de melZone",
 		Text:    text,
 	})
 	if err != nil {
