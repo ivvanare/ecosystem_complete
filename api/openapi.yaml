@@ -989,7 +989,13 @@ components:
         country: { type: [string, "null"], description: ISO 3166-1 alpha-2 derived from the IP. }
         city: { type: [string, "null"] }
         user_agent: { type: [string, "null"] }
-        metadata: { type: [object, "null"] }
+        metadata:
+          type: [object, "null"]
+          additionalProperties: true
+          description: |
+            Free-form JSON whose shape depends on the event. Declared open on purpose: a bare
+            `object` reads as a closed empty record in generators, which is not what the API
+            stores.
         created_at: { type: string, format: date-time }
 
     Page:
