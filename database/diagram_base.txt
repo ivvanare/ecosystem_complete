@@ -101,6 +101,26 @@
 //      guarda un HMAC; y NO lleva FK a tb_user, porque la auditoría tiene que sobrevivir
 //      al borrado del usuario.
 //
+//   12. ZONA HORARIA, PAÍS Y MONEDA (LOCALE).
+//      Todas las columnas timestamp guardan UTC y la convención se hace cumplir a
+//      nivel de BASE DE DATOS (ALTER DATABASE ... SET timezone = 'UTC'), no del rol
+//      ni de la suerte del servidor: toda sesión nueva hereda UTC. La zona horaria
+//      que da sentido a los horarios y a los cortes de reporte es propiedad de la
+//      FILA (core.tb_place.tx_timezone, nombre IANA), nunca del servidor: multi-país
+//      no significa multi-base.
+//      tx_country (ISO 3166-1 alpha-2) es para agrupar y reportar. El precio lleva
+//      su moneda (co_currency): un precio sin moneda es un número sin significado,
+//      y nu_decimals del catálogo es lo que permite formatearlo. El CHECK de
+//      tx_timezone valida la FORMA; la validación real contra pg_timezone_names
+//      ocurre en el borde de la aplicación, porque un CHECK no puede consultarla.
+//
+//   13. COMENTARIOS DE BASE DE DATOS (COMMENT ON).
+//      Toda tabla y toda columna de seg y core lleva un COMMENT en la base, y cada
+//      enum de public lleva COMMENT ON TYPE. Los comentarios son PARTE DEL MODELO,
+//      no decoración: los escribe 13-comments.sql y el drift check
+//      (verify_base_model.sql, S24) exige cobertura total — una tabla, columna o
+//      enum sin comentario ES drift.
+//
 // CONTEXTO DE ESTA ITERACIÓN
 //   - Laravel (api-core) se da de baja: contiene solo un andamio y un demo de
 //     RabbitMQ/Redis, sin código de producto. Go pasa a ser el único servicio dueño
@@ -165,6 +185,13 @@ Enum identity_provider {
 Enum user_token_purpose {
   PASSWORD_RESET
   EMAIL_CHANGE
+}
+
+// Operación que originó una fila de historia (ver sección HISTORIA).
+Enum change_operation {
+  INSERT
+  UPDATE
+  DELETE
 }
 
 // ==============================================================================
@@ -400,13 +427,58 @@ Table seg.tb_security_event {
 // ESQUEMA core — DOMINIO
 // ==============================================================================
 
+// ---- Catálogos de negocio (regla 12) ----
+
+// Categoría de lugar: dato de negocio administrado desde el panel, mismo patrón que
+// seg.tb_permission. No es un enum de PostgreSQL: crecer no debe obligar a migrar el tipo.
+Table core.tb_place_category {
+  co_place_category uuid [pk]
+  tx_code varchar [not null, note: 'Clave estable: hotel, arepera, parque, ...']
+  tx_name varchar [not null, note: 'Nombre visible: Hotel, Arepera, Parque']
+  tx_description text
+  tx_status activatable_status [not null, default: 'ACTIVE']
+  dt_created_at timestamp [not null]
+  dt_updated_at timestamp [not null]
+  dt_deleted_at timestamp
+
+  Indexes {
+    // [PARTIAL UNIQUE] En SQL: UNIQUE (tx_code) WHERE dt_deleted_at IS NULL.
+    (tx_code) [unique, name: 'ux_tb_place_category_code_active']
+  }
+}
+
+// Moneda ISO 4217. Un precio sin moneda es un número sin significado, y nu_decimals
+// es lo que permite formatearlo (2 en USD, VES y COP).
+Table core.tb_currency {
+  co_currency uuid [pk]
+  tx_code char(3) [not null, check: `tx_code ~ '^[A-Z]{3}$'`, note: 'Código ISO 4217: USD, VES, COP']
+  tx_name varchar [not null]
+  nu_decimals smallint [not null, check: `nu_decimals BETWEEN 0 AND 4`, note: 'Decimales al formatear un precio en esta moneda']
+  tx_status activatable_status [not null, default: 'ACTIVE']
+  dt_created_at timestamp [not null]
+  dt_updated_at timestamp [not null]
+  dt_deleted_at timestamp
+
+  Indexes {
+    // [PARTIAL UNIQUE] En SQL: UNIQUE (tx_code) WHERE dt_deleted_at IS NULL.
+    (tx_code) [unique, name: 'ux_tb_currency_code_active']
+  }
+}
+
 Table core.tb_place {
   co_place uuid [pk, note: 'UUID del lugar (Ej. Información como MELIA)']
   co_owner_user uuid [note: 'Dueño del lugar. NULL en lugares curados por el backoffice']
   tx_name varchar [not null, note: 'Nombre real/legal']
   tx_title varchar [not null, note: 'Nombre comercial para la App']
   tx_description text
-  tx_category varchar [not null, note: 'Hotel, Arepera, Parque, etc.']
+  // tx_category varchar [REMOVIDA en la migración 12, 12-drop-legacy-place-category.sql]:
+  // el texto libre heredado fue reemplazado por co_place_category. Convivir con el
+  // catálogo rompía la paridad con tb_place_history (un UPDATE solo de tx_category
+  // grababa un intervalo cuyo payload no mostraba cambio) y reintroducía el
+  // agrupamiento por strings que el catálogo vino a terminar.
+  co_place_category uuid [not null, note: 'Categoría formal del lugar (FK al catálogo). Sin default: toda escritura la declara explícitamente. Reemplaza al tx_category de texto libre removido en la migración 12']
+  tx_country char(2) [not null, check: `tx_country ~ '^[A-Z]{2}$'`, note: 'ISO 3166-1 alpha-2. Para agrupar y reportar']
+  tx_timezone varchar [not null, check: `tx_timezone ~ '^[A-Za-z]+/[A-Za-z_]+$'`, note: 'Nombre IANA (America/Caracas): es lo que hace interpretables los horarios. El CHECK valida la forma; la validación real contra pg_timezone_names ocurre en el borde de la aplicación']
   nu_latitude decimal(9,6) [not null, check: `nu_latitude BETWEEN -90 AND 90`]
   nu_longitude decimal(9,6) [not null, check: `nu_longitude BETWEEN -180 AND 180`]
   tx_address varchar
@@ -418,6 +490,7 @@ Table core.tb_place {
 
   Indexes {
     co_owner_user
+    co_place_category
   }
 }
 
@@ -476,6 +549,7 @@ Table core.tb_menu_item {
   tx_name varchar [not null]
   tx_description text
   nu_price decimal(10,2) [not null, check: `nu_price >= 0`]
+  co_currency uuid [not null, note: 'Moneda del precio. Sin ella el número no significa nada; nu_decimals del catálogo es lo que lo formatea. Sin default: toda escritura la declara']
   tx_status activatable_status [not null, default: 'ACTIVE']
   dt_created_at timestamp [not null]
   dt_updated_at timestamp [not null]
@@ -483,6 +557,7 @@ Table core.tb_menu_item {
 
   Indexes {
     co_menu
+    co_currency
   }
 }
 
@@ -540,6 +615,181 @@ Table core.tb_route_place {
 }
 
 // ==============================================================================
+// HISTORIA (point-in-time) — seis entidades con valor analítico
+// ==============================================================================
+//
+// POR QUÉ EXISTE
+//   Un OLTP normalizado guarda el ESTADO ACTUAL; no guarda el pasado. Las filas
+//   de negocio se actualizan y los puentes y horarios se borran físicamente, así
+//   que preguntas como "qué precio tenía este plato cuando se escribió esta
+//   reseña" o "quién era ADMIN el día X" eran irrecuperables.
+//
+// POR QUÉ SON TABLAS APARTE Y NO COLUMNAS EN LA ENTIDAD
+//   Agregar dt_valid_from/dt_valid_to a la entidad metería la historia dentro de
+//   la tabla operativa: toda consulta necesitaría WHERE dt_valid_to IS NULL y
+//   todo modelo del API tendría que crecer. Acá la historia vive al lado y la
+//   escriben triggers, sin tocar una sola columna existente.
+//
+// POR QUÉ NO LLEVAN FK A LA ENTIDAD
+//   tb_place_schedule, tb_user_role y tb_role_permission se borran FÍSICAMENTE
+//   por diseño (regla 3). Una FK prohibiría ese borrado o lo cascadearía
+//   destruyendo justo la historia que tiene que conservar. Misma razón por la que
+//   tb_security_event no lleva FK a tb_user (regla 11). co_actor_user tampoco
+//   lleva FK: la auditoría sobrevive al borrado del usuario.
+//
+// RELACIÓN CON tb_security_event
+//   No se solapan. El evento dice QUIÉN hizo QUÉ y CUÁNDO; estas tablas dicen
+//   CUÁL ERA EL ESTADO en un instante. Si se mezclan hay dos fuentes de verdad.
+//
+// FORMA DE UNA FILA
+//   co_<entidad>_history  id de la fila de historia
+//   co_<entidad>          entidad que describe el intervalo
+//   payload               atributos necesarios para interpretar el intervalo
+//   tx_operation          INSERT | UPDATE | DELETE (el borrado lógico de una
+//                         entidad llega como UPDATE del origen)
+//   co_actor_user         quién lo cambió, cuando el servicio lo anuncia con
+//                         set_config('app.current_user_id', ...); si no, NULL
+//   dt_valid_from         instante en que el estado empezó a ser cierto
+//   dt_valid_to           instante en que dejó de serlo; NULL = sigue vigente
+//
+// REGLAS DE LA HISTORIA
+//   - Append-only: se agrega un intervalo y se CIERRA el anterior. Cerrar es la
+//     única mutación permitida y ocurre una sola vez: un intervalo cerrado es
+//     inmutable y no se reabre (lo hace cumplir el trigger de 08).
+//   - Un solo intervalo abierto por entidad (unique parcial WHERE dt_valid_to IS
+//     NULL): es lo que hace que "el estado actual" no sea ambiguo (regla 4).
+//   - Sin CHECK de negocio: la fila registra algo que ya fue validado por la
+//     entidad. Duplicar rating 1..5 o el rango de latitud haría que la historia
+//     rechace su propio pasado el día que una regla cambie.
+//   - Los triggers son nota de implementación: DBML no puede expresarlos. Viven
+//     en database/init/08-history-triggers.sql.
+//   - Los seeds ya aplicados no generan historia; es a propósito.
+
+Table core.tb_place_history {
+  co_place_history uuid [pk]
+  co_place uuid [not null]
+  co_owner_user uuid
+  tx_name varchar [not null]
+  tx_title varchar [not null]
+  tx_description text
+  co_place_category uuid [not null, note: 'Sin FK: la historia sobrevive a cambios del catálogo']
+  tx_country char(2) [not null]
+  tx_timezone varchar [not null]
+  nu_latitude decimal(9,6) [not null]
+  nu_longitude decimal(9,6) [not null]
+  tx_address varchar
+  js_social_media jsonb
+  tx_status suspendable_status [not null]
+  dt_deleted_at timestamp
+  tx_operation change_operation [not null]
+  co_actor_user uuid
+  dt_valid_from timestamp [not null]
+  dt_valid_to timestamp [note: 'NULL = estado vigente']
+
+  Indexes {
+    (co_place) [unique, name: 'ux_tb_place_history_open']
+    (co_place, dt_valid_from) [name: 'ix_tb_place_history_validity']
+  }
+}
+
+// El caso que motivó la feature: el precio es mutable y no tenía pasado.
+Table core.tb_menu_item_history {
+  co_menu_item_history uuid [pk]
+  co_menu_item uuid [not null]
+  co_menu uuid [not null, note: 'El plato puede cambiar de menú: es parte del estado']
+  tx_name varchar [not null]
+  tx_description text
+  nu_price decimal(10,2) [not null]
+  co_currency uuid [not null, note: 'Sin FK: un historial de precio sin moneda no es interpretable']
+  tx_status activatable_status [not null]
+  dt_deleted_at timestamp
+  tx_operation change_operation [not null]
+  co_actor_user uuid
+  dt_valid_from timestamp [not null]
+  dt_valid_to timestamp
+
+  Indexes {
+    (co_menu_item) [unique, name: 'ux_tb_menu_item_history_open']
+    (co_menu_item, dt_valid_from) [name: 'ix_tb_menu_item_history_validity']
+  }
+}
+
+// Se borra FÍSICAMENTE (regla 3): hoy un horario eliminado no deja rastro. El
+// payload es completo porque la fila de la entidad puede ya no existir.
+Table core.tb_place_schedule_history {
+  co_schedule_history uuid [pk]
+  co_schedule uuid [not null]
+  co_place uuid [not null]
+  nu_day_of_week int [not null]
+  dt_open_time time [not null]
+  dt_close_time time [not null]
+  tx_operation change_operation [not null]
+  co_actor_user uuid
+  dt_valid_from timestamp [not null]
+  dt_valid_to timestamp
+
+  Indexes {
+    (co_schedule) [unique, name: 'ux_tb_place_schedule_history_open']
+    (co_place, dt_valid_from) [name: 'ix_tb_place_schedule_history_validity']
+  }
+}
+
+// Habilita medir el funnel de moderación, que con una columna tx_status mutable
+// era inmedible. co_user y co_place son inmutables (una reseña por usuario y
+// lugar) y las reseñas nunca se purgan: se leen de la entidad.
+Table core.tb_review_history {
+  co_review_history uuid [pk]
+  co_review uuid [not null]
+  nu_rating int [not null]
+  tx_comment text
+  tx_status review_status [not null]
+  dt_deleted_at timestamp
+  tx_operation change_operation [not null]
+  co_actor_user uuid
+  dt_valid_from timestamp [not null]
+  dt_valid_to timestamp
+
+  Indexes {
+    (co_review) [unique, name: 'ux_tb_review_history_open']
+    (co_review, dt_valid_from) [name: 'ix_tb_review_history_validity']
+  }
+}
+
+// Puente borrado físicamente: "quién era ADMIN el día X" era irrecuperable.
+Table seg.tb_user_role_history {
+  co_user_role_history uuid [pk]
+  co_user uuid [not null]
+  co_role uuid [not null]
+  tx_operation change_operation [not null]
+  co_actor_user uuid
+  dt_valid_from timestamp [not null]
+  dt_valid_to timestamp
+
+  Indexes {
+    (co_user, co_role) [unique, name: 'ux_tb_user_role_history_open']
+    (co_user, dt_valid_from) [name: 'ix_tb_user_role_history_validity']
+    (co_role, dt_valid_from) [name: 'ix_tb_user_role_history_role']
+  }
+}
+
+// Deriva de permisos por rol: pregunta de seguridad además de analítica.
+Table seg.tb_role_permission_history {
+  co_role_permission_history uuid [pk]
+  co_role uuid [not null]
+  co_permission uuid [not null]
+  tx_operation change_operation [not null]
+  co_actor_user uuid
+  dt_valid_from timestamp [not null]
+  dt_valid_to timestamp
+
+  Indexes {
+    (co_role, co_permission) [unique, name: 'ux_tb_role_permission_history_open']
+    (co_role, dt_valid_from) [name: 'ix_tb_role_permission_history_validity']
+    (co_permission, dt_valid_from) [name: 'ix_tb_role_permission_history_permission']
+  }
+}
+
+// ==============================================================================
 // RELACIONES — todas FK reales, incluidas las que cruzan esquemas
 // ==============================================================================
 
@@ -563,10 +813,12 @@ Ref: core.tb_route.co_user > seg.tb_user.co_user
 // --- core: dominio ---
 
 // Lugares
+Ref: core.tb_place.co_place_category > core.tb_place_category.co_place_category
 Ref: core.tb_place_schedule.co_place > core.tb_place.co_place
 Ref: core.tb_place_photo.co_place > core.tb_place.co_place
 Ref: core.tb_menu.co_place > core.tb_place.co_place
 Ref: core.tb_menu_item.co_menu > core.tb_menu.co_menu
+Ref: core.tb_menu_item.co_currency > core.tb_currency.co_currency
 
 // Reseñas
 Ref: core.tb_review.co_place > core.tb_place.co_place

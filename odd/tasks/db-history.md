@@ -1,0 +1,124 @@
+# db-history — point-in-time history for the entities whose past has analytical value
+
+Adds append-only `*_history` tables with validity intervals, maintained by database
+triggers, so "what was the price when the review was written" and "who was ADMIN on
+date X" become answerable. Additive: no existing column changes, no Go model changes.
+
+Branch: `feat/api-db-history` · Worktree: `/home/ivanare/proyects/melia-worktrees/db-history`
+
+## Specs
+
+S1. Point-in-time on mutable business attributes is required. User answer to the
+    question "¿Te importa reconstruir el pasado — «qué precio tenía este plato cuando se
+    escribió esta reseña», «cómo evolucionó el rating de este lugar»?" was, verbatim:
+    "Sí → hay que agregar historia".
+
+S2. Scope is exactly six entities, the option the user selected verbatim:
+    "Recomendado: 6 entidades con valor analítico".
+    - `core.tb_menu_item` — price, name, description, status, menu, soft delete
+    - `core.tb_place` — owner, name, title, description, category, lat/long, address,
+      social media, status, soft delete
+    - `core.tb_place_schedule` — day, open, close (this table has physical deletes, so
+      today its past is destroyed outright)
+    - `core.tb_review` — rating, comment, status, soft delete
+    - `seg.tb_user_role` — user/role link (physical deletes today)
+    - `seg.tb_role_permission` — role/permission link (physical deletes today)
+
+S3. Out of scope, verbatim from the selected option: "tokens, signup y refresh (estado
+    operativo efímero, ya cubierto por `tb_security_event`); `tb_place_photo`,
+    `tb_route`, `tb_route_place` (valor analítico bajo hoy)."
+
+S4. Mechanism is trigger-maintained history tables with validity intervals, because it
+    cannot be bypassed by any future Go code path and it covers physical deletes. It is
+    additive: no existing column, index or constraint changes, so the `api` session's
+    in-flight Go models stay valid.
+
+S5. History must not duplicate `tb_security_event`. The event log records the act and
+    the actor; history tables record the resulting state at an instant. Neither replaces
+    the other.
+
+S6. No backfill is required or attempted: on the day this lands the six source tables
+    are empty (0 places, 0 menus, 0 items, 0 schedules, 0 reviews, 0 routes; the only
+    `tb_user_role` row is a dev fixture). Seeds that already ran produce no history, by
+    design.
+
+S7. `database/verify_base_model.sql` is the runnable drift check and must assert both the
+    new structure and the new behavior, and must keep rolling back so the database is
+    left untouched.
+
+S8. `database/diagram_base.txt` is the canonical spec and stays the source of truth:
+    every history table and the `change_operation` enum are declared there, with triggers
+    documented as an implementation note (DBML cannot express them).
+
+## Tasks
+
+- T1 · S1, S2, S7 — Structural checks in `verify_base_model.sql` (observe RED) · inline · d2c214e
+- T2 · S2, S8 — `07-history-tables.sql` + diagram tables/enum · inline · d2c214e
+- T3 · S2, S4, S7 — `08-history-triggers.sql` + behavioral checks (RED → GREEN) · inline · 18759a5
+- T4 · S4 — Apply 07/08 to the dev database with matching ledger rows · inline · 18759a5
+- T5 · S1..S8 — Full verify + `go test ./...` + commit slices · inline · d2c214e, 18759a5
+- T6 · S5 — Tell the `api` session history is additive and trigger-owned · inline · —
+
+## Log
+
+L1 (user, verbatim): "buenao analizando el modelo que nos falta, seria buena idea crea un modelo BI para analitics esperemos a madurar mas el modelo de datos?"
+
+L2 (user, verbatim): "Sí → hay que agregar historia"
+
+L3 (user, selection, verbatim): "Recomendado: 6 entidades con valor analítico"
+
+L4 (evidence, read-only): `database/verify_base_model.sql` against the live database
+printed "ALL CHECKS PASSED — base model matches database/diagram_base.txt" before this
+feature started, and the ledger held 02, 03, 04, 05 and 06 as applied.
+
+L5 (decision): separate worktree `feat/api-db-history` instead of switching branches in
+the main worktree, because the `api` session is actively working there and must not lose
+its HEAD or its uncommitted work.
+
+L6 (decision): intervals use `now()` and `CHECK (dt_valid_to >= dt_valid_from)` so a
+same-transaction change still closes and opens at the same instant with no gap and no
+constraint violation. Zero-length intervals are accepted and documented.
+
+L7 (evidence, RED then GREEN): the structural checks failed with "S15 FAIL: missing
+history tables" before 07 existed; the behavioral checks then failed with "S16 FAIL:
+tb_place insert not recorded" before 08 existed. After each file was applied the drift
+check printed "ALL CHECKS PASSED — base model matches database/diagram_base.txt".
+
+L8 (defect found by the checks, fixed): the DELETE branch first inserted rows with
+`dt_valid_to` NULL, so a physically deleted schedule or bridge still had an OPEN
+interval and looked alive in the current state. "S16 FAIL: deleted bridge still has an
+open interval" caught it; every DELETE row is now born closed
+(`dt_valid_from = dt_valid_to = v_ts`).
+
+L9 (evidence, upgrade path): 07 and 08 were applied to the dev database `melia`, which
+already had 02..06 recorded, and the ledger now lists 02..08.
+
+L10 (evidence, fresh path): on a throwaway database, 02..08 applied in lexical order
+with no error, the six guard triggers existed, and one insert plus one update produced
+two intervals with exactly one open. The scratch database was dropped afterwards.
+
+L11 (evidence, no regression): `go build ./...`, `go vet ./...` and `go test ./...` pass
+in `api/` — 19 packages, no failures. No Go file changed in this feature.
+
+L12 (limits, deliberate): history is not exposed through the API yet; retention may
+DELETE old intervals in bulk (the guard only blocks rewriting a closed interval, not
+removing it); `co_actor_user` stays NULL until the service announces
+`app.current_user_id` per transaction.
+
+L13 (evidence, independent verification): `gentle-ai-verify` reviewed the branch
+read-only and returned PASS on 8/8 items — scope, exclusions, additivity (1133
+insertions, 0 deletions, `02..06` untouched), the interval model driven at runtime,
+trigger delta risk (lock ordering, recursion, transaction timestamps, failure
+isolation), composite-key isolation, non-vacuous assertions, and diagram/ledger
+consistency. It left three advisories, all resolved in `aae2a89`: the guard assertion
+caught any error and is now pinned to SQLSTATE 23001 plus the exact message (A1); the
+`tb_review_history` immutability assumption is now documented in `07` (A2); the header
+now names the `HISTORIA` section (A3). The behaviors it proved by hand are now committed
+as S17 (composite keys), S18 (actor robustness) and S19 (interval CHECK and
+open-interval unique both bite).
+
+L14 (unproven, stated not hidden): the fresh-database path cannot be proven from inside
+an authorized read-only review (`CREATE DATABASE` cannot run in a rolled-back
+transaction), so the verifier accepted the writer's L10 observation as unreplicated; and
+true concurrent sessions were reasoned from lock ordering rather than exercised with two
+connections.
