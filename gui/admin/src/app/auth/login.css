@@ -328,3 +328,9 @@ button.primary:disabled {
     display: none;
   }
 }
+
+/* The recovery link sits between the fields and the submit button. */
+.forgot {
+  justify-self: end;
+  margin-top: -6px;
+}

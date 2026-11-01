@@ -23,6 +23,11 @@ export const routes: Routes = [
     loadComponent: () => import('./auth/login').then((m) => m.Login),
   },
   {
+    path: 'recuperar',
+    title: 'Recover your password — melZone',
+    loadComponent: () => import('./auth/recover').then((m) => m.Recover),
+  },
+  {
     path: 'registro',
     title: 'Create an account — melZone',
     loadComponent: () => import('./auth/signup').then((m) => m.Signup),

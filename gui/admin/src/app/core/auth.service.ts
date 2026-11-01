@@ -132,6 +132,33 @@ export class AuthService {
   }
 
   /**
+   * Asks the API to mail a reset code. The answer is always `202`, whether or not the
+   * account exists, so the screen cannot be used to discover registered addresses.
+   */
+  async requestPasswordReset(email: string): Promise<void> {
+    await firstValueFrom(
+      this.http.post<void>(`${this.apiUrl}/auth/password/forgot`, { email }, {
+        withCredentials: true,
+      }),
+    );
+  }
+
+  /**
+   * Spends the code and sets a new password. The API revokes every session of that
+   * user, including this one: after this call the person signs in again.
+   */
+  async resetPassword(email: string, code: string, newPassword: string): Promise<void> {
+    await firstValueFrom(
+      this.http.post<void>(
+        `${this.apiUrl}/auth/password/reset`,
+        { email, code, new_password: newPassword },
+        { withCredentials: true },
+      ),
+    );
+    this.clearSession();
+  }
+
+  /**
    * Revokes the family server-side and always clears the local state, even when the
    * call fails: the panel must not keep credentials it can no longer exercise.
    */

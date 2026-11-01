@@ -111,6 +111,8 @@
           <p class="error" role="alert">{{ code }}</p>
         }
 
+        <a class="link forgot" routerLink="/recuperar">Forgot your password?</a>
+
         <button type="submit" class="primary" [disabled]="submitting() || loginForm().invalid()">
           {{ submitting() ? 'Signing in…' : 'Sign in' }}
         </button>
