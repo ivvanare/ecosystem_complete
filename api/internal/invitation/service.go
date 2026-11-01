@@ -50,17 +50,19 @@ func (s *Service) Invite(ctx context.Context, email, name string) error {
 	if trimmed := strings.TrimSpace(name); trimmed != "" {
 		greeting = "Hello " + trimmed
 	}
-	where := s.Origin
-	if where == "" {
-		where = "the melZone panel"
+	where := s.Origin + "/registro"
+	if s.Origin == "" {
+		where = "the melZone registration page"
 	}
 
 	text := fmt.Sprintf(`%s,
 
 An administrator invited you to the melZone panel.
 
-If you do not have an account with this address yet, register with it and confirm the code
-we send you: %s
+If you do not have an account with this address yet, register with it here: %s
+
+We will email you a six-digit code to confirm the address; the account is created only
+after you enter it.
 
 If you already have an account, sign in at the same address. The administrator will grant
 you the access you need; invitations do not grant anything by themselves.
