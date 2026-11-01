@@ -2,11 +2,17 @@
 -- Go service. Use it only to bootstrap a fresh PostgreSQL server by hand:
 --
 --   psql -U <admin> -f database/provision/01-create-database.sql
+--   psql -U <admin> -d melia -c "CREATE SCHEMA IF NOT EXISTS seg; CREATE TABLE IF NOT EXISTS seg.tb_schema_migration (tx_name text PRIMARY KEY, dt_applied_at timestamptz NOT NULL DEFAULT now());"
 --   psql -U <admin> -d melia -f database/init/02-schemas-enums.sql
---   ... 03, 04, 05
+--   ... 03 to 14, in lexical order
+--
+-- The ledger step is NOT optional when applying by hand: 13-comments.sql comments
+-- seg.tb_schema_migration, so without the table 13 fails. The service creates it
+-- itself (Ledger.Ensure) before applying anything, which is why the Docker path
+-- needs nothing extra; this header is only for a manual bootstrap.
 --
 -- In Docker the database is created by POSTGRES_DB=melia and the service applies
--- 02..05 to it, recording each file in seg.tb_schema_migration.
+-- every NN-*.sql file to it, recording each one in seg.tb_schema_migration.
 --
 -- Canonical spec: database/diagram_base.txt — "UNA BASE DE DATOS, DOS ESQUEMAS".
 CREATE DATABASE melia;

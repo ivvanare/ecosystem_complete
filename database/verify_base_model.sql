@@ -729,14 +729,15 @@ BEGIN
     EXCEPTION WHEN not_null_violation THEN NULL;
     END;
 
-    -- A bad IANA shape is rejected by the CHECK, with the exact SQLSTATE.
+    -- A shape that cannot be a zone name (four levels) is rejected by the CHECK,
+    -- with the exact SQLSTATE.
     BEGIN
         INSERT INTO core.tb_place (co_place, tx_name, tx_title,
                                    nu_latitude, nu_longitude,
                                    co_place_category, tx_country, tx_timezone,
                                    dt_created_at, dt_updated_at)
         VALUES (gen_random_uuid(), 'X', 'X', 10, 10,
-                v_cat, 'VE', 'Caracas', now(), now());
+                v_cat, 'VE', 'America/Argentina/Buenos_Aires/Extra', now(), now());
         RAISE EXCEPTION 'S21 FAIL: bad IANA timezone shape admitted';
     EXCEPTION WHEN check_violation THEN NULL;
     END;
@@ -914,6 +915,39 @@ BEGIN
     IF missing IS NOT NULL THEN
         RAISE EXCEPTION 'S24 FAIL: enum types without COMMENT: %', missing;
     END IF;
+END $$;
+
+-- ---- S25: real multi-level IANA zones are accepted (regression pin for 14) --
+-- The first shape check in 11 admitted only one slash and therefore rejected 26
+-- legitimate IANA names, so a place in Argentina could not be created at all.
+DO $$
+DECLARE
+    v_cat   uuid;
+    v_place uuid := gen_random_uuid();
+BEGIN
+    SELECT co_place_category INTO v_cat FROM core.tb_place_category
+     WHERE tx_code = 'hotel' AND dt_deleted_at IS NULL;
+
+    INSERT INTO core.tb_place (co_place, tx_name, tx_title,
+                               nu_latitude, nu_longitude,
+                               co_place_category, tx_country, tx_timezone,
+                               dt_created_at, dt_updated_at)
+    VALUES (v_place, 'Buenos Aires', 'BA', -34.6, -58.4,
+            v_cat, 'AR', 'America/Argentina/Buenos_Aires', now(), now());
+
+    IF NOT EXISTS (SELECT 1 FROM core.tb_place_history
+                    WHERE co_place = v_place AND dt_valid_to IS NULL
+                      AND tx_timezone = 'America/Argentina/Buenos_Aires') THEN
+        RAISE EXCEPTION 'S25 FAIL: history lost the multi-level timezone';
+    END IF;
+
+    -- A bare IANA name is valid too (UTC and GMT exist as first-level zones).
+    INSERT INTO core.tb_place (co_place, tx_name, tx_title,
+                               nu_latitude, nu_longitude,
+                               co_place_category, tx_country, tx_timezone,
+                               dt_created_at, dt_updated_at)
+    VALUES (gen_random_uuid(), 'UTC Place', 'UTC', 0, 0,
+            v_cat, 'AR', 'UTC', now(), now());
 END $$;
 
 ROLLBACK;
