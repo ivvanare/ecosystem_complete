@@ -5,18 +5,10 @@
    state. Components read these variables, never literal hex values. */
 
 @import 'tailwindcss';
-/* ng-zorro per-component styles: the full bundle is 564 kB, so only what the
-   panel actually renders is imported. Add an entry here when a screen starts
-   using the component. */
-@import 'ng-zorro-antd/style/index.css';
-@import 'ng-zorro-antd/table/style/index.css';
-@import 'ng-zorro-antd/pagination/style/index.css';
-@import 'ng-zorro-antd/button/style/index.css';
-@import 'ng-zorro-antd/input/style/index.css';
-@import 'ng-zorro-antd/select/style/index.css';
-@import 'ng-zorro-antd/tag/style/index.css';
-@import 'ng-zorro-antd/badge/style/index.css';
-@import 'ng-zorro-antd/icon/style/index.css';
+/* ng-zorro styles. Its `exports` map exposes the full bundle and per-component
+   files, but not the base layer on its own, so the bundle is the supported way in;
+   the cost lands on every route (see L10 of odd/tasks/admin-crud-screens.md). */
+@import 'ng-zorro-antd/ng-zorro-antd.min.css';
 
 :root {
   /* surfaces */

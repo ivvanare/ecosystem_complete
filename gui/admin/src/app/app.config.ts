@@ -7,6 +7,13 @@ import {
 } from '@angular/core';
 import { provideRouter } from '@angular/router';
 import { provideNzI18n, en_US } from 'ng-zorro-antd/i18n';
+import { provideNzIcons } from 'ng-zorro-antd/icon';
+import {
+  CaretDownOutline,
+  CaretUpOutline,
+  DownOutline,
+  FilterOutline,
+} from '@ant-design/icons-angular/icons';
 import { routes } from './app.routes';
 import { authInterceptor } from './core/auth.interceptor';
 import { AuthService } from './core/auth.service';
@@ -17,6 +24,9 @@ export const appConfig: ApplicationConfig = {
     provideRouter(routes),
     // ng-zorro ships zh_CN as its fallback; the panel is English.
     provideNzI18n(en_US),
+    // Only the glyphs the table actually draws: registering the whole icon set
+    // would pull thousands of paths into the bundle for four carets.
+    provideNzIcons([CaretDownOutline, CaretUpOutline, DownOutline, FilterOutline]),
     provideHttpClient(withFetch(), withInterceptors([authInterceptor])),
     // Settle the auth status before the first navigation (S6): the silent refresh
     // either restores the session from the cookie or lands on `anonymous`, so the
