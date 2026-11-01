@@ -22,6 +22,7 @@ const AUDIT_CONFIG = defineCrudConfig({
   actions: { create: false, update: false, delete: false },
   fields: [
     { name: 'id', in: { list: false, form: false, detail: true } },
+    { name: 'event', label: 'Event', sortable: false, filters: ['eq'] },
     // A range: the toolbar renders a from/to pair and the transport splits it into
     // the API's `from`/`to`.
     {
@@ -32,7 +33,6 @@ const AUDIT_CONFIG = defineCrudConfig({
       width: 'narrow',
       filters: ['between'],
     },
-    { name: 'event', label: 'Event', sortable: false, filters: ['eq'] },
     // Who the event is about, and who caused it when they differ (an admin acting
     // on someone else's account). Both are optional: a failed login has neither.
     {
