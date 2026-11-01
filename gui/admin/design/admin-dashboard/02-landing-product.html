@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>melZone — landing producto</title>
+<style>
+  :root{
+    --ink:#0B1220; --ink-2:#111C31; --slate:#475569; --line:#E2E8F0; --canvas:#F6F8FB;
+    --accent:#4338CA; --accent-2:#0E7490; --ok:#047857; --white:#fff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--white);color:var(--ink);line-height:1.55;
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  h1,h2,h3{margin:0;letter-spacing:-.025em;font-weight:700}
+  a{color:inherit}
+  .wrap{max-width:1200px;margin:0 auto;padding:0 44px}
+  :focus-visible{outline:3px solid var(--accent);outline-offset:3px;border-radius:6px}
+
+  /* header */
+  .site{position:sticky;top:0;background:#fff;border-bottom:1px solid var(--line);z-index:10}
+  .site .wrap{display:flex;align-items:center;height:72px;gap:34px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:750;font-size:18px;text-decoration:none;letter-spacing:-.03em}
+  .mark{width:28px;height:28px;border-radius:9px;background:linear-gradient(140deg,var(--accent),var(--accent-2));display:grid;place-items:center}
+  .mark svg{display:block}
+  .nav{display:flex;gap:26px;margin-left:auto;font-size:14.5px;color:var(--slate)}
+  .nav a{text-decoration:none}
+  .nav a:hover{color:var(--ink)}
+  .btn{display:inline-flex;align-items:center;gap:9px;text-decoration:none;font-weight:650;font-size:14.5px;
+    padding:11px 18px;border-radius:10px;border:1px solid transparent;transition:background .16s,transform .16s}
+  .btn.primary{background:var(--accent);color:#fff}
+  .btn.primary:hover{background:#372FB0;transform:translateY(-1px)}
+  .btn.quiet{background:#fff;border-color:var(--line);color:var(--ink)}
+  .btn.quiet:hover{border-color:#CBD5E1}
+
+  /* hero */
+  .hero{background:linear-gradient(180deg,#0B1220,#121E33);color:#F8FAFC;padding:74px 0 96px;position:relative;overflow:hidden}
+  .hero::after{content:"";position:absolute;width:620px;height:620px;right:-160px;top:-220px;border-radius:50%;
+    background:radial-gradient(circle at 30% 30%,rgba(67,56,202,.55),transparent 62%)}
+  .hero .wrap{display:grid;grid-template-columns:1fr .92fr;gap:60px;align-items:center;position:relative;z-index:1}
+  .pill{display:inline-flex;align-items:center;gap:9px;background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.16);
+    padding:6px 14px;border-radius:999px;font-size:12.5px;color:#C7D2E1;margin-bottom:24px}
+  .pill i{width:6px;height:6px;border-radius:50%;background:#34D399;display:block}
+  .hero h1{font-size:clamp(40px,4vw,58px);line-height:1.06}
+  .hero h1 span{background:linear-gradient(90deg,#8B87F8,#4FD1C5);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .hero p{color:#C3CEDE;font-size:18px;margin:22px 0 0;max-width:45ch}
+  .hero .cta{display:flex;gap:12px;margin-top:32px;flex-wrap:wrap}
+  .hero .btn.quiet{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.2);color:#fff}
+  .trust{margin-top:34px;font-size:13px;color:#93A3B8;display:flex;gap:22px;flex-wrap:wrap}
+  .trust b{color:#E2E8F0;font-weight:650}
+
+  /* phone mock */
+  .phone{width:322px;margin-left:auto;background:#0E1729;border:1px solid rgba(255,255,255,.16);border-radius:34px;padding:14px;
+    box-shadow:0 44px 80px -40px rgba(0,0,0,.85)}
+  .phone .screen{background:#F8FAFC;border-radius:24px;overflow:hidden;color:#0B1220}
+  .phone .bar{display:flex;justify-content:space-between;align-items:center;padding:14px 16px 8px;font-size:11px;color:#64748B}
+  .phone .search{margin:0 14px 12px;background:#EEF2F7;border-radius:10px;padding:9px 12px;font-size:12px;color:#64748B;display:flex;gap:8px;align-items:center}
+  .phone .map{height:104px;margin:0 14px 12px;border-radius:12px;position:relative;overflow:hidden;
+    background:linear-gradient(140deg,#DCE7F1,#C3D6E6)}
+  .phone .map .pin{position:absolute;width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 4px rgba(67,56,202,.22)}
+  .phone .map .pin.p2{background:var(--accent-2);box-shadow:0 0 0 4px rgba(14,116,144,.2);left:64%;top:52%}
+  .phone .map .pin.p3{background:#059669;box-shadow:0 0 0 4px rgba(5,150,105,.2);left:28%;top:64%}
+  .phone .row{display:flex;gap:10px;padding:0 14px 12px}
+  .phone .card{flex:1;background:#fff;border:1px solid #E6ECF3;border-radius:12px;padding:10px}
+  .phone .card .thumb{height:46px;border-radius:8px;margin-bottom:8px}
+  .phone .th1{background:linear-gradient(135deg,#FDE7C8,#F0B27A)}
+  .phone .th2{background:linear-gradient(135deg,#CFE9D6,#7FB694)}
+  .phone .card h4{margin:0;font-size:11.5px;font-weight:700}
+  .phone .card p{margin:2px 0 0;font-size:10px;color:#64748B}
+  .phone .foot{padding:0 14px 16px;display:flex;gap:8px}
+  .phone .foot .chip{flex:1;border-radius:8px;background:#111C31;color:#fff;text-align:center;font-size:10.5px;padding:8px 0;font-weight:650}
+
+  /* features */
+  .section{padding:76px 0}
+  .head{max-width:56ch;margin-bottom:44px}
+  .head h2{font-size:clamp(28px,2.6vw,38px)}
+  .head p{color:var(--slate);margin:12px 0 0;font-size:16.5px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:22px}
+  .feat{border:1px solid var(--line);border-radius:14px;padding:24px;background:#fff}
+  .feat .ico{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;background:#EEF0FE;color:var(--accent);margin-bottom:16px}
+  .feat.two .ico{background:#E6F4F6;color:var(--accent-2)}
+  .feat.three .ico{background:#E9F5EE;color:var(--ok)}
+  .feat h3{font-size:18px}
+  .feat p{margin:8px 0 0;color:var(--slate);font-size:14.5px}
+
+  /* metrics band */
+  .metrics{background:var(--canvas);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .metrics .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:28px}
+  .metrics strong{display:block;font-size:34px;letter-spacing:-.03em;line-height:1.1}
+  .metrics span{color:var(--slate);font-size:13.5px}
+
+  /* panel teaser */
+  .teaser{display:grid;grid-template-columns:1.02fr .98fr;gap:56px;align-items:center}
+  .teaser .shot{border:1px solid var(--line);border-radius:16px;overflow:hidden;background:#fff;box-shadow:0 34px 60px -46px rgba(11,18,32,.6)}
+  .teaser .shot .top{display:flex;gap:6px;padding:10px 12px;border-bottom:1px solid var(--line);background:#FAFBFD}
+  .teaser .shot .top i{width:9px;height:9px;border-radius:50%;background:#DDE3EC;display:block}
+  .teaser .shot .inner{display:grid;grid-template-columns:150px 1fr;min-height:212px}
+  .teaser .side{background:#111C31;padding:16px 12px;display:grid;gap:8px;align-content:start}
+  .teaser .side span{display:block;height:9px;border-radius:999px;background:rgba(255,255,255,.18)}
+  .teaser .side span:first-child{background:rgba(255,255,255,.55);width:64%}
+  .teaser .side span.active{background:#8B87F8;width:82%}
+  .teaser .main{padding:16px;display:grid;gap:12px;align-content:start;background:#F8FAFC}
+  .teaser .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .teaser .kpi{background:#fff;border:1px solid #E6ECF3;border-radius:10px;padding:10px}
+  .teaser .kpi b{display:block;font-size:16px}
+  .teaser .kpi i{display:block;height:7px;width:60%;border-radius:999px;background:#EDF1F6;margin-top:6px}
+  .teaser .bars{display:flex;align-items:flex-end;gap:7px;height:74px;padding:0 2px}
+  .teaser .bars span{flex:1;background:linear-gradient(180deg,#8B87F8,#4338CA);border-radius:4px 4px 0 0;opacity:.9}
+  .teaser ul{list-style:none;margin:20px 0 0;padding:0;display:grid;gap:12px}
+  .teaser ul li{display:flex;gap:11px;font-size:15px;color:var(--slate)}
+  .teaser ul svg{flex:none;margin-top:3px;color:var(--ok)}
+
+  /* cta final */
+  .final{background:var(--ink);color:#fff;border-radius:18px;padding:48px 52px;display:flex;align-items:center;justify-content:space-between;gap:40px}
+  .final h2{font-size:clamp(24px,2.2vw,32px)}
+  .final p{margin:10px 0 0;color:#B8C4D6;max-width:48ch;font-size:15px}
+  .final .btn.primary{background:#fff;color:var(--ink)}
+  .final .btn.primary:hover{background:#E9EEF6}
+
+  footer{border-top:1px solid var(--line);margin-top:72px;padding:34px 0 48px;font-size:13.5px;color:var(--slate)}
+  footer .wrap{display:flex;justify-content:space-between;gap:28px;flex-wrap:wrap}
+  footer nav{display:flex;gap:20px;flex-wrap:wrap}
+  footer a{text-decoration:none}
+
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap">
+    <a class="brand" href="#top">
+      <span class="mark" aria-hidden="true">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M4 12.5 12 5l8 7.5V20H4z" stroke="#fff" stroke-width="2.1" stroke-linejoin="round"/></svg>
+      </span>
+      melZone
+    </a>
+    <nav class="nav" aria-label="Navegación principal">
+      <a href="#producto">Producto</a>
+      <a href="#panel">Panel</a>
+      <a href="#lugares">Para lugares</a>
+    </nav>
+    <a class="btn quiet" href="#acceso">Acceso al panel</a>
+  </div>
+</header>
+
+<main id="top">
+
+  <section class="hero">
+    <div class="wrap">
+      <div>
+        <p class="pill"><i aria-hidden="true"></i> 418 lugares verificados en Melia</p>
+        <h1>Lugares, cartas y rutas.<br><span>Todo en un mapa.</span></h1>
+        <p>melZone reúne los lugares de la ciudad con sus horarios, sus cartas y sus reseñas reales. Explorá, guardá y armá el recorrido de tu día.</p>
+        <div class="cta">
+          <a class="btn primary" href="#producto">Probar la app</a>
+          <a class="btn quiet" href="#panel">Ver el panel</a>
+        </div>
+        <p class="trust"><span><b>Sin comisiones</b> por reserva</span><span><b>Datos al día</b> por el equipo local</span></p>
+      </div>
+
+      <div class="phone" role="img" aria-label="Vista de la app móvil con el mapa y las tarjetas de lugares">
+        <div class="screen">
+          <div class="bar"><span>9:41</span><span>Melia · Centro</span></div>
+          <div class="search">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="#64748B" stroke-width="2"/><path d="m16.5 16.5 4 4" stroke="#64748B" stroke-width="2" stroke-linecap="round"/></svg>
+            Buscar areperas, parques, hoteles
+          </div>
+          <div class="map">
+            <span class="pin" style="left:34%;top:32%"></span>
+            <span class="pin p2"></span>
+            <span class="pin p3"></span>
+          </div>
+          <div class="row">
+            <div class="card">
+              <div class="thumb th1"></div>
+              <h4>Arepera Doña Rosa</h4>
+              <p>4,8 · 132 reseñas</p>
+            </div>
+            <div class="card">
+              <div class="thumb th2"></div>
+              <h4>Parque La Estancia</h4>
+              <p>4,6 · 87 reseñas</p>
+            </div>
+          </div>
+          <div class="foot"><span class="chip">Armar ruta</span><span class="chip">Guardar</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="producto">
+    <div class="wrap">
+      <div class="head">
+        <h2>Lo que resuelve, sin vueltas</h2>
+        <p>Tres piezas: descubrir, decidir y recorrer. Cada una con datos que el equipo de melZone mantiene a mano.</p>
+      </div>
+      <div class="grid3">
+        <article class="feat">
+          <div class="ico" aria-hidden="true">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="m16.5 16.5 4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </div>
+          <h3>Buscar por lo que importa</h3>
+          <p>Filtrá por categoría, horario abierto ahora, precio y distancia. Lo cerrado no aparece primero.</p>
+        </article>
+        <article class="feat two">
+          <div class="ico" aria-hidden="true">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none"><path d="M4 6h16M4 12h11M4 18h7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </div>
+          <h3>Cartas completas</h3>
+          <p>Cada lugar con sus menús —desayuno, almuerzo, vinos— y el precio de cada plato.</p>
+        </article>
+        <article class="feat three">
+          <div class="ico" aria-hidden="true">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none"><path d="M12 21s7-5.4 7-11a7 7 0 1 0-14 0c0 5.6 7 11 7 11Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="10" r="2.6" stroke="currentColor" stroke-width="2"/></svg>
+          </div>
+          <h3>Rutas que se comparten</h3>
+          <p>Ordená paradas por cercanía y mandá el recorrido como enlace, con horarios incluidos.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="section metrics">
+    <div class="wrap">
+      <div class="grid">
+        <div><strong>418</strong><span>lugares publicados</span></div>
+        <div><strong>2.106</strong><span>platos en carta</span></div>
+        <div><strong>96</strong><span>rutas activas</span></div>
+        <div><strong>12 min</strong><span>para publicar un lugar</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="panel">
+    <div class="wrap teaser">
+      <div>
+        <h2 style="font-size:clamp(26px,2.4vw,34px)">El mismo dato, del otro lado</h2>
+        <p style="color:var(--slate);margin:14px 0 0;font-size:16.5px">El equipo opera desde un panel único: lugares, menús, reseñas, rutas y permisos. Cada cambio queda registrado en la auditoría.</p>
+        <ul>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m5 13 4 4 10-11" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Moderación de reseñas con historial</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m5 13 4 4 10-11" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Roles por permiso, no por tipo de usuario</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m5 13 4 4 10-11" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Sesión con cookie httpOnly y token corto</li>
+        </ul>
+        <a class="btn primary" href="#acceso" style="margin-top:26px">Entrar al panel</a>
+      </div>
+      <div class="shot" role="img" aria-label="Vista del panel: menú lateral, indicadores y gráfico de actividad">
+        <div class="top"><i></i><i></i><i></i></div>
+        <div class="inner">
+          <div class="side">
+            <span></span><span class="active"></span><span></span><span></span><span></span><span></span>
+          </div>
+          <div class="main">
+            <div class="kpis">
+              <div class="kpi"><b>418</b><i></i></div>
+              <div class="kpi"><b>23</b><i></i></div>
+              <div class="kpi"><b>96</b><i></i></div>
+            </div>
+            <div class="bars" aria-hidden="true">
+              <span style="height:38%"></span><span style="height:56%"></span><span style="height:44%"></span>
+              <span style="height:72%"></span><span style="height:60%"></span><span style="height:88%"></span>
+              <span style="height:66%"></span><span style="height:94%"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="wrap" id="lugares" style="padding-bottom:8px">
+    <div class="final">
+      <div>
+        <h2>Publicá tu lugar en melZone</h2>
+        <p>Cargá tu carta y tus horarios una vez. El equipo revisa y publica; vos ves las reseñas desde el panel.</p>
+      </div>
+      <a class="btn primary" href="#lugares">Pedir alta</a>
+    </div>
+  </section>
+
+</main>
+
+<footer id="acceso">
+  <div class="wrap">
+    <p style="margin:0">© 2026 melZone · Melia</p>
+    <nav aria-label="Enlaces del pie">
+      <a href="#producto">Producto</a>
+      <a href="#panel">Panel</a>
+      <a href="#lugares">Para lugares</a>
+      <a href="#acceso">Acceso al panel</a>
+    </nav>
+  </div>
+</footer>
+
+</body>
+</html>

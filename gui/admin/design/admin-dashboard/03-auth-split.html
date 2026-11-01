@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>melZone — acceso al panel</title>
+<style>
+  :root{
+    --ink:#0B1220; --ink-2:#111C31; --slate:#475569; --muted:#64748B; --line:#E2E8F0;
+    --accent:#4338CA; --teal:#0E7490; --ok:#047857; --white:#fff;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:#fff;color:var(--ink);font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.55}
+  h1,h2,p{margin:0}
+  a{color:inherit}
+  :focus-visible{outline:3px solid #8B87F8;outline-offset:3px;border-radius:8px}
+
+  .screen{display:grid;grid-template-columns:1.02fr .98fr;min-height:100vh}
+
+  /* ---------- left brand panel ---------- */
+  .brandside{position:relative;overflow:hidden;background:linear-gradient(155deg,#0B1220 12%,#141F3A 58%,#0C3B44);color:#F1F5F9;
+    padding:52px 56px;display:flex;flex-direction:column}
+  .brandside::before{content:"";position:absolute;width:560px;height:560px;right:-180px;top:-160px;border-radius:50%;
+    background:radial-gradient(circle at 32% 32%,rgba(67,56,202,.6),transparent 62%)}
+  .brandside::after{content:"";position:absolute;width:420px;height:420px;left:-140px;bottom:-190px;border-radius:50%;
+    background:radial-gradient(circle at 60% 40%,rgba(14,116,144,.5),transparent 66%)}
+  .brandside > *{position:relative;z-index:1}
+  .brand{display:flex;align-items:center;gap:11px;font-size:19px;font-weight:750;letter-spacing:-.03em;text-decoration:none}
+  .mark{width:32px;height:32px;border-radius:10px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.24);display:grid;place-items:center}
+  .brandside .mid{margin:auto 0;max-width:40ch}
+  .eyebrow{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:#8FB3BC;font-weight:700}
+  .brandside h1{font-size:clamp(30px,3vw,40px);line-height:1.14;letter-spacing:-.03em;margin-top:16px;font-weight:700}
+  .brandside h1 span{color:#8B87F8}
+  .brandside p.lead{color:#B6C4D4;margin-top:18px;font-size:15.5px}
+  .facts{list-style:none;margin:34px 0 0;padding:0;display:grid;gap:14px}
+  .facts li{display:flex;gap:12px;font-size:14px;color:#CBD5E1}
+  .facts .tick{flex:none;width:22px;height:22px;border-radius:7px;background:rgba(52,211,153,.16);color:#34D399;display:grid;place-items:center}
+  .brandside .foot{font-size:12.5px;color:#8FA2B6;display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}
+
+  /* ---------- right form ---------- */
+  .formside{display:grid;place-items:center;padding:48px 44px;background:#fff}
+  .card{width:100%;max-width:404px}
+  .back{display:inline-flex;align-items:center;gap:7px;font-size:13.5px;color:var(--muted);text-decoration:none;margin-bottom:34px}
+  .back:hover{color:var(--ink)}
+  .card h2{font-size:27px;letter-spacing:-.03em;font-weight:700}
+  .card .hint{color:var(--muted);font-size:14.5px;margin-top:8px}
+  form{margin-top:30px;display:grid;gap:18px}
+  .field{display:grid;gap:7px}
+  label{font-size:13.5px;font-weight:650;color:#1E293B}
+  .control{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:11px;padding:0 13px;background:#fff;
+    transition:border-color .15s,box-shadow .15s}
+  .control:focus-within{border-color:var(--accent);box-shadow:0 0 0 4px rgba(67,56,202,.13)}
+  .control input{border:0;outline:0;padding:12px 0;font:inherit;font-size:14.5px;flex:1;background:transparent;color:var(--ink)}
+  .control input::placeholder{color:#94A3B8}
+  .control svg{color:#94A3B8;flex:none}
+  .row-between{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:-4px}
+  .check{display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--slate)}
+  .check input{width:15px;height:15px;accent-color:var(--accent)}
+  .link{font-size:13.5px;font-weight:650;color:var(--accent);text-decoration:none}
+  .link:hover{text-decoration:underline}
+  button.submit{margin-top:6px;border:0;border-radius:11px;background:var(--accent);color:#fff;font:inherit;font-weight:650;font-size:15px;
+    padding:13px 18px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:9px;transition:background .16s}
+  button.submit:hover{background:#372FB0}
+
+  .notice{margin-top:26px;border:1px solid var(--line);background:#F8FAFC;border-radius:12px;padding:15px 16px}
+  .notice h3{margin:0;font-size:13.5px;font-weight:700;display:flex;align-items:center;gap:8px;color:#1E293B}
+  .notice p{margin:6px 0 0;font-size:13px;color:var(--muted);line-height:1.5}
+  .notice code{background:#E9EEF6;border-radius:5px;padding:1px 5px;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#334155}
+  .card .legal{margin-top:26px;font-size:12.5px;color:#94A3B8;text-align:center}
+
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="screen">
+
+  <aside class="brandside" aria-label="melZone">
+    <a class="brand" href="#">
+      <span class="mark" aria-hidden="true">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M4 12.5 12 5l8 7.5V20H4z" stroke="#fff" stroke-width="2.1" stroke-linejoin="round"/></svg>
+      </span>
+      melZone
+    </a>
+
+    <div class="mid">
+      <p class="eyebrow">Panel de operación</p>
+      <h1>Los lugares, las cartas y las reseñas <span>en un solo tablero</span>.</h1>
+      <p class="lead">Entrá con la cuenta que te asignó un administrador. La sesión vive en una cookie httpOnly: cerrá el navegador y no queda nada a mano.</p>
+      <ul class="facts">
+        <li><span class="tick" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="m5 13 4 4 10-11" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span> Lugares, menús, reseñas y rutas</li>
+        <li><span class="tick" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="m5 13 4 4 10-11" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span> Roles por permiso y auditoría de cada cambio</li>
+        <li><span class="tick" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="m5 13 4 4 10-11" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span> Acceso corto: 15 minutos, con rotación de sesión</li>
+      </ul>
+    </div>
+
+    <p class="foot"><span>© 2026 melZone · Melia</span><span>Estado del servicio: operativo</span></p>
+  </aside>
+
+  <main class="formside">
+    <div class="card">
+      <a class="back" href="#">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M19 12H6M11 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Volver al sitio
+      </a>
+
+      <h2>Acceso al panel</h2>
+      <p class="hint">Usá el email con el que te dieron de alta.</p>
+
+      <form novalidate>
+        <div class="field">
+          <label for="email">Email</label>
+          <div class="control">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.5" stroke="currentColor" stroke-width="1.8"/><path d="m4 7.5 8 5.5 8-5.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <input id="email" type="email" autocomplete="username" placeholder="nombre@melzone.app">
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="password">Contraseña</label>
+          <div class="control">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="4" y="10" width="16" height="10" rx="2.5" stroke="currentColor" stroke-width="1.8"/><path d="M8 10V7.5a4 4 0 0 1 8 0V10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <input id="password" type="password" autocomplete="current-password" placeholder="Mínimo 12 caracteres">
+          </div>
+        </div>
+
+        <div class="row-between">
+          <label class="check"><input type="checkbox"> Mantener la sesión</label>
+          <a class="link" href="#">¿Olvidaste la contraseña?</a>
+        </div>
+
+        <button class="submit" type="submit">
+          Entrar
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 12h15M13 6l6 6-6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </form>
+
+      <section class="notice" aria-labelledby="alta-title">
+        <h3 id="alta-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true" style="color:#4338CA"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.9"/><path d="M12 8v.01M11.2 11.5h1.6V16" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+          Las cuentas no se crean desde acá
+        </h3>
+        <p>El alta la hace un administrador: la persona confirma su email con un código y después un <code>SUPERADMIN</code> le asigna el rol. Si necesitás acceso, pedíselo a quien administra melZone.</p>
+      </section>
+
+      <p class="legal">Sesión protegida con cookie httpOnly y token CSRF.</p>
+    </div>
+  </main>
+
+</div>
+</body>
+</html>

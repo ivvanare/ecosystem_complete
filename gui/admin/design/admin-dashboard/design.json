@@ -1,0 +1,35 @@
+{
+  "title": "Panel administrativo melZone",
+  "brief": "Estructura del panel administrativo de melZone (app de rutas y lugares): landing pública, acceso al panel y panel con sus módulos. Sin registro: las cuentas las asigna un administrador.",
+  "feature": "odd/tasks/admin-dashboard-shell.md",
+  "artboards": [
+    {
+      "file": "01-landing-editorial.html",
+      "title": "Landing editorial",
+      "tradeoff": "Tono cálido y humano (serif, papel, terracota): vende la ciudad, no el software. Menos escaneable y más difícil de extender a landing de producto.",
+      "width": 1440,
+      "height": 2100
+    },
+    {
+      "file": "02-landing-product.html",
+      "title": "Landing producto",
+      "tradeoff": "Tono de producto SaaS (indigo, captura de la app, métricas): explica el panel y la app en la misma página. Más genérico y menos ligado a Melia.",
+      "width": 1440,
+      "height": 2100
+    },
+    {
+      "file": "03-auth-split.html",
+      "title": "Acceso al panel",
+      "tradeoff": "Mitad marca, mitad formulario: aprovecha para explicar el alta por invitación y el transporte de sesión. Ocupa más ancho y no sirve para pantallas chicas sin reescribir el layout.",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "file": "04-panel-modules.html",
+      "title": "Panel y módulos",
+      "tradeoff": "Sidebar oscura fija con jerarquía General/Administración y módulos \"pronto\" en gris: escala a muchos módulos y deja clarísimo qué existe hoy. Menos espacio útil en pantallas de 1280.",
+      "width": 1440,
+      "height": 900
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "chosen": "02-landing-product.html",
+  "handoffs": {
+    "02-landing-product.html": {
+      "status": "sent",
+      "queued": false,
+      "sentAt": "2026-11-01T00:50:19.838Z",
+      "startedAt": null,
+      "implementedAt": null,
+      "feature": "odd/tasks/admin-dashboard-shell.md"
+    }
+  }
+}
