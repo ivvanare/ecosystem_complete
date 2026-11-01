@@ -26,15 +26,18 @@ describe('AccessDenied', () => {
     TestBed.resetTestingModule();
     TestBed.configureTestingModule({
       imports: [AccessDenied],
+      // `provideRouter` builds the router's internal providers from one root
+      // route; replacing the `Router` token with a stub breaks them, so the real
+      // router is used and its navigation is spied instead (same as login.spec).
       providers: [
         provideRouter([]),
-        { provide: Router, useValue: { navigateByUrl } },
         {
           provide: AuthService,
           useValue: { user: signal(USER), permissions: signal([]), logout },
         },
       ],
     });
+    vi.spyOn(TestBed.inject(Router), 'navigateByUrl').mockImplementation(navigateByUrl);
   });
 
   it('explains the missing permission and names the session it applies to', () => {
