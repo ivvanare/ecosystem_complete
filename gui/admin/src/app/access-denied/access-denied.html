@@ -1,0 +1,29 @@
+<main class="denied">
+  <div class="card">
+    <span class="mark" aria-hidden="true">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+        <path d="M4 12.5 12 5l8 7.5V20H4z" stroke="#fff" stroke-width="2.1" stroke-linejoin="round" />
+      </svg>
+    </span>
+
+    <h1>This account has no panel access</h1>
+    <p class="lead">
+      You are signed in, but the panel needs the <code>admin.access</code> permission. Roles grant
+      it: ask an administrator to assign one that includes it.
+    </p>
+
+    <dl class="facts">
+      <dt>Signed in as</dt>
+      <dd>{{ auth.user()?.email ?? 'an account without an email' }}</dd>
+      <dt>Roles</dt>
+      <dd>{{ auth.user()?.roles.length ? auth.user()!.roles.join(', ') : 'none' }}</dd>
+      <dt>Permissions</dt>
+      <dd>{{ auth.permissions().length ? auth.permissions().join(', ') : 'none' }}</dd>
+    </dl>
+
+    <div class="actions">
+      <button type="button" class="btn primary" (click)="signOut()">Sign out</button>
+      <a class="btn secondary" routerLink="/">Back to the site</a>
+    </div>
+  </div>
+</main>

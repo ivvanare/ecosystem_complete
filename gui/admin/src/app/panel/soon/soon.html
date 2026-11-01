@@ -1,0 +1,27 @@
+<section class="soon-screen" aria-labelledby="soon-title">
+  <p class="badge">Coming soon</p>
+  <h1 id="soon-title">{{ data.title }}</h1>
+  <p class="lead">{{ data.description }}</p>
+
+  @if (bullets.length) {
+    <ul class="plan">
+      @for (bullet of bullets; track bullet) {
+        <li>{{ bullet }}</li>
+      }
+    </ul>
+  }
+
+  <p class="note">
+    The API does not expose this module yet, so there is nothing to load here. Everything below
+    the navigation is already wired: the screen lights up when the endpoints land.
+  </p>
+
+  @if (data.permission; as permission) {
+    <p class="note">
+      Access will be governed by <code>{{ permission }}</code>, the same permission already in the
+      catalogue.
+    </p>
+  }
+
+  <a class="btn secondary" routerLink="/panel/overview">Back to overview</a>
+</section>

@@ -1,0 +1,235 @@
+:host {
+  display: block;
+}
+
+.overview {
+  display: grid;
+  gap: 16px;
+}
+
+.pagehead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+h1 {
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.pagehead p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid #f3d2d2;
+  background: #fdf3f3;
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  font-size: 13px;
+  color: #8f1d1d;
+}
+
+.alert code {
+  font-family: var(--font-mono);
+  background: #f7e3e3;
+  border-radius: 5px;
+  padding: 1px 6px;
+}
+
+/* ---------- metrics ---------- */
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+
+.metric {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 15px;
+  display: grid;
+  gap: 4px;
+}
+
+.metric .label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.metric .value {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+}
+
+.metric .link {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--accent);
+}
+
+/* ---------- columns ---------- */
+.columns {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.panel > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.panel h2 {
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+.panel .link {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--accent);
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.empty {
+  padding: 16px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* ---------- recent activity ---------- */
+.events {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.events li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px;
+  border-bottom: 1px solid #f0f3f8;
+  font-size: 12.5px;
+}
+
+.events li:last-child {
+  border-bottom: 0;
+}
+
+.events .where {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.events .when {
+  margin-left: auto;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* ---------- module grid ---------- */
+.modules {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 14px;
+}
+
+.module {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 11px 12px;
+  display: grid;
+  gap: 5px;
+  background: var(--surface);
+}
+
+.module:hover {
+  border-color: #cfd8e5;
+}
+
+.module .top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.module .ic {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.module .ic.soon {
+  background: #eef1f6;
+  color: #7b8899;
+}
+
+.module h3 {
+  font-size: 12.5px;
+  font-weight: 650;
+}
+
+.module p {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.badge {
+  margin-left: auto;
+  font-size: 9.5px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: #8592a6;
+  background: #f1f4f9;
+  border-radius: var(--radius-pill);
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .columns {
+    grid-template-columns: 1fr;
+  }
+}

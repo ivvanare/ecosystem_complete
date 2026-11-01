@@ -1,0 +1,106 @@
+<section class="overview" aria-labelledby="overview-title">
+  <header class="pagehead">
+    <div>
+      <h1 id="overview-title">Welcome back, {{ greetingName() }}</h1>
+      <p>Signed in as {{ auth.user()?.roles.join(', ') || 'no role' }}. Everything below is live data.</p>
+    </div>
+    <button type="button" class="btn secondary" (click)="load()" [disabled]="loading()">
+      {{ loading() ? 'Refreshing…' : 'Refresh' }}
+    </button>
+  </header>
+
+  @if (errorCode(); as code) {
+    <div class="alert" role="alert">
+      <p>
+        The panel could not load its numbers: <code>{{ code }}</code>
+      </p>
+      <button type="button" class="btn secondary" (click)="load()">Try again</button>
+    </div>
+  }
+
+  <div class="metrics">
+    <article class="metric">
+      <p class="label">Users</p>
+      <p class="value">{{ usersTotal() ?? '—' }}</p>
+      <a class="link" routerLink="/panel/users">Search and assign roles</a>
+    </article>
+    <article class="metric">
+      <p class="label">Roles</p>
+      <p class="value">{{ rolesTotal() ?? '—' }}</p>
+      <a class="link" routerLink="/panel/roles">See what each grants</a>
+    </article>
+    <article class="metric">
+      <p class="label">Permissions</p>
+      <p class="value">{{ permissionsTotal() ?? '—' }}</p>
+      <a class="link" routerLink="/panel/roles">Read the catalogue</a>
+    </article>
+    <article class="metric">
+      <p class="label">Audit events</p>
+      <p class="value">{{ eventsTotal() ?? '—' }}</p>
+      <a class="link" routerLink="/panel/audit">Open the log</a>
+    </article>
+  </div>
+
+  <div class="columns">
+    <section class="panel" aria-labelledby="activity-title">
+      <header>
+        <h2 id="activity-title">Recent activity</h2>
+        <a class="link" routerLink="/panel/audit">Full audit log</a>
+      </header>
+
+      @if (loading()) {
+        <p class="empty">Loading the log…</p>
+      } @else if (!recent().length) {
+        <p class="empty">Nothing recorded yet.</p>
+      } @else {
+        <ul class="events">
+          @for (event of recent(); track event.id) {
+            <li>
+              <span class="tag" [class.danger]="event.event.includes('failed')" [class.info]="!event.event.includes('failed')">
+                {{ event.event }}
+              </span>
+              <span class="where">
+                {{ event.actor_user_id ? 'actor ' + event.actor_user_id.slice(0, 8) : 'system' }}
+                @if (event.country) {
+                  · {{ event.country }}
+                }
+              </span>
+              <time class="when" [attr.datetime]="event.created_at">{{ formatDateTime(event.created_at) }}</time>
+            </li>
+          }
+        </ul>
+      }
+    </section>
+
+    <section class="panel" aria-labelledby="modules-title">
+      <header>
+        <h2 id="modules-title">Modules</h2>
+        <p class="hint">{{ modules().length }} visible to this session</p>
+      </header>
+      <div class="modules">
+        @for (module of modules(); track module.path) {
+          <a class="module" [routerLink]="['/panel', module.path]">
+            <span class="top">
+              <span class="ic" [class.soon]="module.status === 'soon'" aria-hidden="true">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                  <path
+                    [attr.d]="icons[module.icon]"
+                    stroke="currentColor"
+                    stroke-width="2.1"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </span>
+              <h3>{{ module.label }}</h3>
+              @if (module.status === 'soon') {
+                <span class="badge">Coming soon</span>
+              }
+            </span>
+            <p>{{ module.description }}</p>
+          </a>
+        }
+      </div>
+    </section>
+  </div>
+</section>
