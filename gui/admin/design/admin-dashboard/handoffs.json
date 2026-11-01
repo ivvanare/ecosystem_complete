@@ -3,12 +3,14 @@
   "chosen": "02-landing-product.html",
   "handoffs": {
     "02-landing-product.html": {
-      "status": "sent",
+      "status": "implemented",
       "queued": false,
       "sentAt": "2026-11-01T00:50:19.838Z",
       "startedAt": null,
-      "implementedAt": null,
-      "feature": "odd/tasks/admin-dashboard-shell.md"
+      "implementedAt": "2026-11-01T01:22:55.047Z",
+      "feature": "odd/tasks/admin-dashboard-shell.md",
+      "note": "82/82: landing, login y panel implementados; 71/71 tests verdes y build limpio. La app vive en localhost:4200.",
+      "previewUrl": "http://localhost:4200/"
     }
   }
 }
