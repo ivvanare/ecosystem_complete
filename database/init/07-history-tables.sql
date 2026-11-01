@@ -1,6 +1,6 @@
 -- ============================================================================
 -- HISTORY — point-in-time record for the six entities whose past has
--- analytical value. Spec: database/diagram_base.txt (section "HISTORY").
+-- analytical value. Spec: database/diagram_base.txt (section "HISTORIA").
 -- Feature: odd/tasks/db-history.md
 --
 -- WHY HISTORY TABLES AND NOT COLUMNS ON THE ENTITY
@@ -153,6 +153,9 @@ CREATE INDEX ix_tb_place_schedule_history_validity
 -- MODERATED, and how the rating moved. One review per user and place means
 -- co_user and co_place are immutable, so they are not duplicated here; join the
 -- entity (reviews are soft deleted, never purged).
+-- Documented assumption: that immutability holds in practice, but the database
+-- does not forbid an UPDATE that re-parents co_user or co_place; such an update
+-- would record an interval with an unchanged payload.
 -- ---------------------------------------------------------------------------
 CREATE TABLE core.tb_review_history (
     co_review_history uuid PRIMARY KEY,

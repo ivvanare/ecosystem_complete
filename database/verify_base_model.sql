@@ -325,7 +325,8 @@ DECLARE
     v_before int;
     v_open   int;
     v_price  numeric;
-    v_guard  boolean := false;
+    v_state  text;
+    v_msg    text;
 BEGIN
     INSERT INTO seg.tb_user (co_user, tx_email, dt_created_at, dt_updated_at)
     VALUES (v_user, 'history2@test.dev', now(), now());
@@ -371,16 +372,23 @@ BEGIN
         RAISE EXCEPTION 'S16 FAIL: a no-op update created history noise';
     END IF;
 
-    -- A closed interval is immutable: rewriting it must be rejected.
+    -- A closed interval is immutable: rewriting it must be rejected by the guard,
+    -- with its own SQLSTATE and message. Asserting the exact rejection keeps this
+    -- from passing on any unrelated error.
     BEGIN
         UPDATE core.tb_menu_item_history
            SET dt_valid_to = dt_valid_to + interval '1 day'
          WHERE co_menu_item = v_item AND dt_valid_to IS NOT NULL;
+        v_state := 'admitted';
     EXCEPTION WHEN others THEN
-        v_guard := true;
+        GET STACKED DIAGNOSTICS v_state = RETURNED_SQLSTATE, v_msg = MESSAGE_TEXT;
     END;
-    IF NOT v_guard THEN
-        RAISE EXCEPTION 'S16 FAIL: a closed interval was rewritten';
+    IF v_state <> '23001' THEN
+        RAISE EXCEPTION 'S16 FAIL: closed interval not rejected by the guard (sqlstate=%, msg=%)',
+            v_state, v_msg;
+    END IF;
+    IF v_msg <> 'history interval of tb_menu_item_history is closed and cannot be rewritten' THEN
+        RAISE EXCEPTION 'S16 FAIL: wrong rejection message (%)', v_msg;
     END IF;
 END $$;
 
@@ -436,6 +444,130 @@ BEGIN
          WHERE co_user = v_user AND co_role = v_role AND dt_valid_to IS NULL) <> 0 THEN
         RAISE EXCEPTION 'S16 FAIL: deleted bridge still has an open interval';
     END IF;
+END $$;
+
+-- ---- S17: composite-key triggers cannot mis-close a different pair -----------
+DO $$
+DECLARE
+    v_u1 uuid := gen_random_uuid();
+    v_u2 uuid := gen_random_uuid();
+    v_r1 uuid := gen_random_uuid();
+    v_r2 uuid := gen_random_uuid();
+    v_pm uuid := gen_random_uuid();
+BEGIN
+    -- Fresh fixtures: this block shares the transaction with every other check,
+    -- so nothing here may rely on rows another block inserted.
+    INSERT INTO seg.tb_user (co_user, tx_email, dt_created_at, dt_updated_at)
+    VALUES (v_u1, 'pair1@test.dev', now(), now()),
+           (v_u2, 'pair2@test.dev', now(), now());
+    INSERT INTO seg.tb_role (co_role, tx_name, dt_created_at, dt_updated_at)
+    VALUES (v_r1, 'VERIFY_PAIR_1', now(), now()),
+           (v_r2, 'VERIFY_PAIR_2', now(), now());
+    INSERT INTO seg.tb_permission (co_permission, tx_code, tx_module, tx_name,
+                                   dt_created_at, dt_updated_at)
+    VALUES (v_pm, 'verify.pair', 'VERIFY', 'Verify pair', now(), now());
+
+    INSERT INTO seg.tb_user_role (co_user, co_role, dt_created_at, dt_updated_at)
+    VALUES (v_u1, v_r1, now(), now()), (v_u2, v_r1, now(), now());
+    INSERT INTO seg.tb_role_permission (co_role, co_permission, dt_created_at, dt_updated_at)
+    VALUES (v_r1, v_pm, now(), now()), (v_r2, v_pm, now(), now());
+
+    -- Delete (u1,r1): the trigger must close exactly that pair, not the sibling.
+    DELETE FROM seg.tb_user_role WHERE co_user = v_u1 AND co_role = v_r1;
+    IF (SELECT count(*) FROM seg.tb_user_role_history
+         WHERE co_user = v_u2 AND co_role = v_r1 AND dt_valid_to IS NULL) <> 1 THEN
+        RAISE EXCEPTION 'S17 FAIL: deleting (u1,r1) mis-closed (u2,r1)';
+    END IF;
+    IF (SELECT count(*) FROM seg.tb_user_role_history
+         WHERE co_user = v_u1 AND co_role = v_r1 AND tx_operation = 'DELETE'
+           AND dt_valid_from = dt_valid_to) <> 1 THEN
+        RAISE EXCEPTION 'S17 FAIL: (u1,r1) delete not a single born-closed DELETE row';
+    END IF;
+
+    -- PK-change update: (u2,r1) -> (u2,r2) closes the OLD pair, opens the NEW one.
+    UPDATE seg.tb_user_role SET co_role = v_r2, dt_updated_at = now()
+     WHERE co_user = v_u2 AND co_role = v_r1;
+    IF (SELECT count(*) FROM seg.tb_user_role_history
+         WHERE co_user = v_u2 AND co_role = v_r1 AND dt_valid_to IS NULL) <> 0
+       OR (SELECT count(*) FROM seg.tb_user_role_history
+            WHERE co_user = v_u2 AND co_role = v_r2 AND dt_valid_to IS NULL
+              AND tx_operation = 'UPDATE') <> 1 THEN
+        RAISE EXCEPTION 'S17 FAIL: PK-change update closed/opened the wrong pair';
+    END IF;
+
+    -- Same for role_permission: delete (r1,pm), (r2,pm) must stay open.
+    DELETE FROM seg.tb_role_permission WHERE co_role = v_r1 AND co_permission = v_pm;
+    IF (SELECT count(*) FROM seg.tb_role_permission_history
+         WHERE co_role = v_r2 AND co_permission = v_pm AND dt_valid_to IS NULL) <> 1 THEN
+        RAISE EXCEPTION 'S17 FAIL: deleting (r1,pm) mis-closed (r2,pm)';
+    END IF;
+END $$;
+
+-- ---- S18: a malformed actor never aborts a business write --------------------
+DO $$
+DECLARE
+    v_place uuid := gen_random_uuid();
+    v_menu  uuid := gen_random_uuid();
+    v_item  uuid := gen_random_uuid();
+    v_actor uuid;
+BEGIN
+    INSERT INTO core.tb_place (co_place, tx_name, tx_title, tx_category,
+                               nu_latitude, nu_longitude, dt_created_at, dt_updated_at)
+    VALUES (v_place, 'Actor Place', 'Actor Place', 'Hotel', -34.6, -58.4, now(), now());
+    INSERT INTO core.tb_menu (co_menu, co_place, tx_name, dt_created_at, dt_updated_at)
+    VALUES (v_menu, v_place, 'Carta', now(), now());
+
+    -- Garbage in the GUC degrades to NULL, never to an aborted business write.
+    PERFORM set_config('app.current_user_id', 'not-a-uuid', true);
+    INSERT INTO core.tb_menu_item (co_menu_item, co_menu, tx_name, nu_price,
+                                   dt_created_at, dt_updated_at)
+    VALUES (v_item, v_menu, 'Item', 9.99, now(), now());
+    SELECT co_actor_user INTO v_actor FROM core.tb_menu_item_history
+     WHERE co_menu_item = v_item;
+    IF v_actor IS NOT NULL THEN
+        RAISE EXCEPTION 'S18 FAIL: malformed actor leaked into history';
+    END IF;
+
+    -- A well-formed actor is recorded exactly.
+    PERFORM set_config('app.current_user_id', '11111111-1111-1111-1111-111111111111', true);
+    UPDATE core.tb_menu_item SET nu_price = 10.50, dt_updated_at = now()
+     WHERE co_menu_item = v_item;
+    SELECT co_actor_user INTO v_actor FROM core.tb_menu_item_history
+     WHERE co_menu_item = v_item AND dt_valid_to IS NULL;
+    IF v_actor IS DISTINCT FROM '11111111-1111-1111-1111-111111111111'::uuid THEN
+        RAISE EXCEPTION 'S18 FAIL: announced actor not recorded (got %)', v_actor;
+    END IF;
+
+    -- Leave the GUC clean so the blocks that follow are unaffected.
+    PERFORM set_config('app.current_user_id', '', true);
+END $$;
+
+-- ---- S19: the interval CHECK and the open-interval unique both bite ----------
+DO $$
+DECLARE
+    v_place uuid := gen_random_uuid();
+BEGIN
+    -- An inverted interval (dt_valid_to < dt_valid_from) must be rejected.
+    BEGIN
+        INSERT INTO core.tb_review_history (co_review_history, co_review, nu_rating,
+            tx_status, tx_operation, dt_valid_from, dt_valid_to)
+        VALUES (gen_random_uuid(), gen_random_uuid(), 4, 'ACTIVE', 'INSERT',
+                now(), now() - interval '1 hour');
+        RAISE EXCEPTION 'S19 FAIL: inverted interval admitted';
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+
+    -- The trigger opens one interval on insert; a second open one cannot coexist.
+    INSERT INTO core.tb_place (co_place, tx_name, tx_title, tx_category,
+                               nu_latitude, nu_longitude, dt_created_at, dt_updated_at)
+    VALUES (v_place, 'Unique Place', 'Unique Place', 'Hotel', -34.6, -58.4, now(), now());
+    BEGIN
+        INSERT INTO core.tb_place_history (co_place_history, co_place, tx_name, tx_title,
+            tx_category, nu_latitude, nu_longitude, tx_status, tx_operation, dt_valid_from)
+        VALUES (gen_random_uuid(), v_place, 'X', 'X', 'Hotel', 0, 0, 'ACTIVE', 'INSERT', now());
+        RAISE EXCEPTION 'S19 FAIL: second open interval admitted';
+    EXCEPTION WHEN unique_violation THEN NULL;
+    END;
 END $$;
 
 -- ---- S12: inserts route to the right monthly partition / default -------------
