@@ -299,7 +299,8 @@
 
 .final .btn.primary {
   background: #fff;
-  color: var(--ink);
+  /* The closing band is dark in both themes, so the text is fixed too. */
+  color: #0b1220;
 }
 
 .final .btn.primary:hover {

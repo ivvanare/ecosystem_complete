@@ -65,12 +65,12 @@ footer {
 .save-error {
   margin: 10px 0 0;
   font-size: 13px;
-  color: #991b1b;
+  color: var(--tag-danger-ink);
 }
 
 .save-error code {
   font-family: var(--font-mono);
-  background: #fdecec;
+  background: var(--tag-danger-bg);
   border-radius: 5px;
   padding: 1px 6px;
 }

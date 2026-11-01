@@ -3,6 +3,7 @@ import { Component, inject, signal } from '@angular/core';
 import { form, FormField, required } from '@angular/forms/signals';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { AuthService } from '../core/auth.service';
+import { ThemeService } from '../core/theme.service';
 
 interface LoginFormModel {
   email: string;
@@ -40,6 +41,13 @@ function apiErrorCode(error: unknown): string {
   styleUrl: './login.css',
 })
 export class Login {
+  private readonly theme = inject(ThemeService);
+  protected readonly isDark = this.theme.isDark;
+
+  protected toggleTheme(): void {
+    this.theme.toggle();
+  }
+
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
   private readonly route = inject(ActivatedRoute);

@@ -4,7 +4,7 @@
 
 code {
   background: var(--accent-soft);
-  color: #3730a3;
+  color: var(--tag-info-ink);
   border-radius: 5px;
   padding: 1px 6px;
   font-family: var(--font-mono);

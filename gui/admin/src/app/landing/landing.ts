@@ -1,5 +1,6 @@
-import { Component } from '@angular/core';
+import { Component, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
+import { ThemeService } from '../core/theme.service';
 import { AppPreview } from './app-preview';
 import { PanelPreview } from './panel-preview';
 
@@ -18,4 +19,11 @@ import { PanelPreview } from './panel-preview';
   templateUrl: './landing.html',
   styleUrl: './landing.css',
 })
-export class Landing {}
+export class Landing {
+  private readonly theme = inject(ThemeService);
+  protected readonly isDark = this.theme.isDark;
+
+  protected toggleTheme(): void {
+    this.theme.toggle();
+  }
+}

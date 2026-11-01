@@ -1,9 +1,10 @@
 import { DOCUMENT } from '@angular/common';
-import { Component, computed, inject } from '@angular/core';
+import { Component, computed, effect, inject } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { filter, map, startWith } from 'rxjs';
 import { AuthService } from '../core/auth.service';
+import { ThemeService } from '../core/theme.service';
 import {
   CaretDownOutline,
   CaretUpOutline,
@@ -60,13 +61,31 @@ export class PanelLayout {
   private readonly document = inject(DOCUMENT);
   private readonly iconService = inject(NzIconService);
   private readonly i18n = inject(NzI18nService);
+  private readonly theme = inject(ThemeService);
+
+  protected readonly isDark = this.theme.isDark;
 
   constructor() {
     // ng-zorro lives only inside the panel: its stylesheet is an asset fetched on
     // entry (not a global import, which cost the landing 570 kB of CSS) and its
     // services are injected here rather than provided in `app.config`, which kept
     // 90 kB of zorro core in the initial bundle.
-    this.loadZorro();
+    //
+    // The stylesheet follows the theme: the dark bundle replaces the light one
+    // rather than layering on top, so only one vendor stylesheet is ever loaded.
+    effect(() => this.applyZorroStylesheet(this.theme.isDark()));
+
+    // Only the glyphs the table draws: registering the whole set would pull
+    // thousands of paths into the bundle for four carets.
+    for (const icon of [CaretDownOutline, CaretUpOutline, DownOutline, FilterOutline]) {
+      this.iconService.addIcon(icon);
+    }
+    // ng-zorro falls back to zh_CN; the panel is English.
+    this.i18n.setLocale(en_US);
+  }
+
+  protected toggleTheme(): void {
+    this.theme.toggle();
   }
 
   protected readonly initials = computed(() => {
@@ -81,21 +100,19 @@ export class PanelLayout {
 
   protected readonly roleLabel = computed(() => this.auth.user()?.roles.join(', ') ?? 'no role');
 
-  private loadZorro(): void {
-    if (!this.document.querySelector('link[data-zorro-styles]')) {
-      const link = this.document.createElement('link');
+  /** First call creates the link; later theme changes only repoint it. */
+  private applyZorroStylesheet(dark: boolean): void {
+    let link = this.document.querySelector<HTMLLinkElement>('link[data-zorro-styles]');
+    if (!link) {
+      link = this.document.createElement('link');
       link.rel = 'stylesheet';
-      link.href = 'ng-zorro-antd.min.css';
       link.setAttribute('data-zorro-styles', '');
       this.document.head.appendChild(link);
     }
-    // Only the glyphs the table draws: registering the whole set would pull
-    // thousands of paths into the bundle for four carets.
-    for (const icon of [CaretDownOutline, CaretUpOutline, DownOutline, FilterOutline]) {
-      this.iconService.addIcon(icon);
+    const href = dark ? 'ng-zorro-antd.dark.min.css' : 'ng-zorro-antd.min.css';
+    if (link.getAttribute('href') !== href) {
+      link.setAttribute('href', href);
     }
-    // ng-zorro falls back to zh_CN; the panel is English.
-    this.i18n.setLocale(en_US);
   }
 
   protected async signOut(): Promise<void> {

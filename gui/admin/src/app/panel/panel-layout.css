@@ -131,7 +131,8 @@
   place-items: center;
   font-size: 11.5px;
   font-weight: 750;
-  color: var(--ink);
+  /* The avatar keeps a dark ink: its gradient is light in both themes. */
+  color: #0b1220;
   flex: none;
 }
 

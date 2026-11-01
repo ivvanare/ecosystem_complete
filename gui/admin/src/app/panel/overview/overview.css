@@ -30,17 +30,17 @@ h1 {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  border: 1px solid #f3d2d2;
-  background: #fdf3f3;
+  border: 1px solid var(--alert-line);
+  background: var(--alert-bg);
   border-radius: var(--radius);
   padding: 12px 14px;
   font-size: 13px;
-  color: #8f1d1d;
+  color: var(--alert-ink);
 }
 
 .alert code {
   font-family: var(--font-mono);
-  background: #f7e3e3;
+  background: var(--alert-code-bg);
   border-radius: 5px;
   padding: 1px 6px;
 }
@@ -137,7 +137,7 @@ h1 {
   align-items: center;
   gap: 10px;
   padding: 9px 16px;
-  border-bottom: 1px solid #f0f3f8;
+  border-bottom: 1px solid var(--line-soft);
   font-size: 12.5px;
 }
 
@@ -197,8 +197,8 @@ h1 {
 }
 
 .module .ic.soon {
-  background: #eef1f6;
-  color: #7b8899;
+  background: var(--pill-bg);
+  color: var(--pill-ink);
 }
 
 .module h3 {
@@ -217,8 +217,8 @@ h1 {
   letter-spacing: 0.07em;
   text-transform: uppercase;
   font-weight: 700;
-  color: #8592a6;
-  background: #f1f4f9;
+  color: var(--pill-ink);
+  background: var(--pill-bg);
   border-radius: var(--radius-pill);
   padding: 2px 6px;
   white-space: nowrap;

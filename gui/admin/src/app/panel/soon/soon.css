@@ -14,8 +14,8 @@
   letter-spacing: 0.1em;
   text-transform: uppercase;
   font-weight: 700;
-  color: #5a6779;
-  background: #eef1f6;
+  color: var(--pill-ink);
+  background: var(--pill-bg);
   border-radius: var(--radius-pill);
   padding: 3px 10px;
 }
@@ -51,7 +51,7 @@ h1 {
 
 .note code {
   background: var(--accent-soft);
-  color: #3730a3;
+  color: var(--tag-info-ink);
   border-radius: 5px;
   padding: 1px 6px;
   font-family: var(--font-mono);

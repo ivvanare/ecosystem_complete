@@ -39,6 +39,29 @@
   --shadow-sm: 0 1px 2px rgba(11, 18, 32, 0.06);
   --shadow-lg: 0 34px 60px -46px rgba(11, 18, 32, 0.6);
 
+  /* soft surfaces, separators and pills */
+  --surface-2: #f8fafc;
+  --line-soft: #f0f3f8;
+  --pill-bg: #eef1f6;
+  --pill-ink: #5a6779;
+
+  /* state pills and alerts, so a theme swap never touches a component */
+  --tag-ok-bg: #e9f5ee;
+  --tag-ok-ink: #046c4e;
+  --tag-warn-bg: #fdf3e3;
+  --tag-warn-ink: #8a5008;
+  --tag-info-bg: var(--accent-soft);
+  --tag-info-ink: #3730a3;
+  --tag-neutral-bg: #eef1f6;
+  --tag-neutral-ink: #5a6779;
+  --tag-danger-bg: #fdecec;
+  --tag-danger-ink: #991b1b;
+  --alert-bg: #fdf3f3;
+  --alert-line: #f3d2d2;
+  --alert-ink: #8f1d1d;
+  --alert-code-bg: #f7e3e3;
+  --on-accent: #ffffff;
+
   /* type */
   --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -111,28 +134,28 @@ button {
 }
 
 .tag.ok {
-  background: #e9f5ee;
-  color: #046c4e;
+  background: var(--tag-ok-bg);
+  color: var(--tag-ok-ink);
 }
 
 .tag.warn {
-  background: #fdf3e3;
-  color: #8a5008;
+  background: var(--tag-warn-bg);
+  color: var(--tag-warn-ink);
 }
 
 .tag.info {
-  background: var(--accent-soft);
-  color: #3730a3;
+  background: var(--tag-info-bg);
+  color: var(--tag-info-ink);
 }
 
 .tag.neutral {
-  background: #eef1f6;
-  color: #5a6779;
+  background: var(--tag-neutral-bg);
+  color: var(--tag-neutral-ink);
 }
 
 .tag.danger {
-  background: #fdecec;
-  color: #991b1b;
+  background: var(--tag-danger-bg);
+  color: var(--tag-danger-ink);
 }
 
 /* Shared primary/secondary buttons; screens add layout, not colour. */
@@ -155,7 +178,7 @@ button {
 
 .btn.primary {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .btn.primary:hover:not(:disabled) {
@@ -270,7 +293,7 @@ button {
   text-align: left;
   padding: 9px 16px;
   font-size: 12.5px;
-  border-bottom: 1px solid #f0f3f8;
+  border-bottom: 1px solid var(--line-soft);
   vertical-align: middle;
 }
 
@@ -321,18 +344,95 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  border: 1px solid #f3d2d2;
-  background: #fdf3f3;
+  border: 1px solid var(--alert-line);
+  background: var(--alert-bg);
   border-radius: var(--radius);
   padding: 12px 14px;
   margin-bottom: 14px;
   font-size: 13px;
-  color: #8f1d1d;
+  color: var(--alert-ink);
 }
 
 .alert code {
   font-family: var(--font-mono);
-  background: #f7e3e3;
+  background: var(--alert-code-bg);
   border-radius: 5px;
   padding: 1px 6px;
+}
+
+/* --------------------------------------------------------------------------
+   Dark theme. Only tokens change here: a component that reads a variable gets
+   the dark value for free, which is why the literals had to become tokens.
+   `color-scheme` makes form controls and scrollbars follow.
+   -------------------------------------------------------------------------- */
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --ink: #e6edf6;
+  --ink-2: #0f1826;
+  --nav: #0a1220;
+  --nav-2: #142030;
+  --canvas: #0b1220;
+  --surface: #121c2b;
+  --surface-muted: #16202f;
+
+  --slate: #b3c2d4;
+  --muted: #93a4b8;
+
+  --line: #22304a;
+  --line-soft: rgba(255, 255, 255, 0.07);
+  --pill-bg: #1e2c40;
+  --pill-ink: #9fb0c4;
+
+  --accent: #5a52e0;
+  --accent-hover: #6b63f5;
+  --accent-soft: rgba(124, 116, 255, 0.18);
+  --accent-ring: #8b87f8;
+
+  --teal: #22a5bd;
+  --ok: #34d399;
+  --warn: #f0b429;
+  --danger: #f87171;
+
+  --tag-ok-bg: rgba(52, 211, 153, 0.16);
+  --tag-ok-ink: #6ee7b7;
+  --tag-warn-bg: rgba(240, 180, 41, 0.18);
+  --tag-warn-ink: #fcd34d;
+  --tag-info-bg: rgba(124, 116, 255, 0.2);
+  --tag-info-ink: #c7c4ff;
+  --tag-neutral-bg: rgba(255, 255, 255, 0.08);
+  --tag-neutral-ink: #b3c2d4;
+  --tag-danger-bg: rgba(248, 113, 113, 0.18);
+  --tag-danger-ink: #fca5a5;
+
+  --alert-bg: rgba(248, 113, 113, 0.12);
+  --alert-line: rgba(248, 113, 113, 0.35);
+  --alert-ink: #fca5a5;
+  --alert-code-bg: rgba(248, 113, 113, 0.2);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 34px 60px -46px rgba(0, 0, 0, 0.9);
+}
+
+/* Theme toggle, shared by the panel top bar and the public pages. */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--slate);
+  cursor: pointer;
+  transition:
+    color 0.16s ease,
+    border-color 0.16s ease;
+}
+
+.theme-toggle:hover {
+  color: var(--ink);
+  border-color: var(--accent);
 }

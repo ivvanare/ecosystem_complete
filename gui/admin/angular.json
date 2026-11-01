@@ -27,6 +27,11 @@
                 "glob": "ng-zorro-antd.min.css",
                 "input": "node_modules/ng-zorro-antd",
                 "output": "/"
+              },
+              {
+                "glob": "ng-zorro-antd.dark.min.css",
+                "input": "node_modules/ng-zorro-antd",
+                "output": "/"
               }
             ],
             "styles": [
