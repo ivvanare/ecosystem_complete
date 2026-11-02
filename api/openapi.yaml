@@ -29,6 +29,8 @@ tags:
     description: Registration, login, sessions and credential recovery.
   - name: Identity
     description: The authenticated caller's own profile.
+  - name: Discovery
+    description: Public, read-only place discovery. No authentication.
   - name: Admin
     description: Backoffice operations. Requires the `admin.access` permission.
 
@@ -478,6 +480,90 @@ paths:
               schema: { $ref: "#/components/schemas/Me" }
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /v1/places:
+    get:
+      tags: [Discovery]
+      operationId: discoverPlaces
+      summary: Discover places by radius (list) or viewport (map)
+      description: |
+        One route, two modes, decided by the locator parameter:
+
+        - **List mode** — `near=lat,long` (latitude first) with optional `radius` in
+          metres. Paginated, sortable.
+        - **Map mode** — `bbox=minLon,minLat,maxLon,maxLat` (longitude first, like
+          GeoJSON) with a required `zoom`. Returns H3 clusters instead of places.
+
+        Exactly one locator is required: sending both or neither is `422
+        validation_failed` (`{field: "bbox", code: "invalid"}` when both are present,
+        `{field: "locator", code: "required"}` when neither is). Anti-meridian
+        crossing is out of scope and rejected.
+
+        The request coordinate is evaluated and discarded: never persisted, never
+        logged, never part of a cache key.
+
+        `sort` applies to list mode only. `trending` reads the ranking the worker
+        publishes per H3 zone cell; when the zone has no ranking the API falls back
+        to `rating` and answers `degraded: true`, so a client can tell a cold
+        ranking from an unpopular place. The read path never aggregates reviews in a
+        request.
+
+        Map mode caps the viewport query at 5000 rows. An oversized bbox (over
+        100 000 km²) is rejected `422` `{field: "bbox", code: "too_long"}` rather
+        than silently truncated; if the cap is hit anyway, `truncated: true` and
+        cluster counts describe the sample, not the total. A cluster is a zone: it
+        carries counts and neutral aggregates and no administrative name.
+      parameters:
+        - name: near
+          in: query
+          description: '`lat,long`. List mode locator. Closed bounds: latitude −90..90, longitude −180..180.'
+          schema: { type: string, example: "10.4806,-66.9036" }
+        - name: radius
+          in: query
+          description: Metres. List mode only.
+          schema: { type: integer, minimum: 1, maximum: 50000, default: 2000 }
+        - name: bbox
+          in: query
+          description: '`minLon,minLat,maxLon,maxLat`. Map mode locator. Must be strictly increasing and under the area cap.'
+          schema: { type: string, example: "-66.99,10.41,-66.82,10.54" }
+        - name: zoom
+          in: query
+          description: Map mode only, required with `bbox`. Selects the cluster resolution (0–4→3, 5–7→5, 8–10→6, 11–13→7, 14–16→8, 17–21→9).
+          schema: { type: integer, minimum: 0, maximum: 21 }
+        - name: country
+          in: query
+          description: ISO 3166-1 alpha-2 filter, both modes.
+          schema: { type: string, pattern: "^[A-Z]{2}$" }
+        - name: region
+          in: query
+          description: ISO 3166-2 filter, both modes.
+          schema: { type: string, pattern: "^[A-Z]{2}-[A-Z0-9]{1,3}$" }
+        - name: category
+          in: query
+          description: Place category UUID filter, both modes.
+          schema: { type: string, format: uuid }
+        - name: sort
+          in: query
+          description: List mode only.
+          schema: { type: string, enum: [distance, trending, rating], default: distance }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: List page (list mode) or cluster map (map mode), discriminated by `mode`.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/PlaceListPage"
+                  - $ref: "#/components/schemas/ClusterMap"
+                discriminator:
+                  propertyName: mode
+                  mapping:
+                    list: "#/components/schemas/PlaceListPage"
+                    map: "#/components/schemas/ClusterMap"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /v1/admin/users:
     get:
@@ -1005,3 +1091,108 @@ components:
         page: { type: integer, minimum: 1 }
         limit: { type: integer, minimum: 1, maximum: 100 }
         total: { type: integer, minimum: 0 }
+
+    PlaceListPage:
+      type: object
+      required: [mode, page, limit, total, sortApplied, degraded, data]
+      properties:
+        mode: { type: string, const: list }
+        page: { type: integer, minimum: 1 }
+        limit: { type: integer, minimum: 1, maximum: 100 }
+        total: { type: integer, minimum: 0 }
+        sortApplied:
+          type: string
+          enum: [distance, trending, rating]
+          description: The order that actually ran, which may differ from the requested `sort`.
+        degraded:
+          type: boolean
+          description: '`true` when a requested `trending` had no zone ranking and fell back to `rating`. A cold ranking is not an error.'
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/PlaceSummary" }
+
+    PlaceSummary:
+      type: object
+      required: [coPlace, name, category, country, region, latitude, longitude, address, distanceMeters, rating]
+      properties:
+        coPlace: { type: string, format: uuid }
+        name:
+          type: string
+          description: The commercial name (`tb_place.tx_title`). The legal name (`tx_name`) and the owner are never exposed in the discovery read path.
+        category: { $ref: "#/components/schemas/PlaceCategory" }
+        country: { type: string, pattern: "^[A-Z]{2}$" }
+        region: { type: [string, "null"], pattern: "^[A-Z]{2}-[A-Z0-9]{1,3}$" }
+        latitude: { type: number, format: double }
+        longitude: { type: number, format: double }
+        address: { type: [string, "null"] }
+        distanceMeters:
+          type: integer
+          description: Whole metres from `near`. Present in list mode; never fabricated.
+        rating:
+          anyOf:
+            - $ref: "#/components/schemas/Rating"
+            - type: "null"
+          description: '`null` when the worker has published no aggregate for the place. Absence is not an error.'
+        trendingRank:
+          type: integer
+          minimum: 1
+          description: Present only when `sort=trending` and a zone ranking ordered the row.
+
+    PlaceCategory:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, example: Arepera }
+
+    Rating:
+      type: object
+      required: [average, count]
+      properties:
+        average: { type: number, format: double, example: 4.6 }
+        count: { type: integer, minimum: 0, example: 128 }
+
+    ClusterMap:
+      type: object
+      required: [mode, zoom, resolution, total, truncated, clusters]
+      properties:
+        mode: { type: string, const: map }
+        zoom: { type: integer, minimum: 0, maximum: 21 }
+        resolution:
+          type: integer
+          minimum: 0
+          maximum: 15
+          description: The H3 resolution the clusters are grouped at, derived from `zoom`.
+        total:
+          type: integer
+          minimum: 0
+          description: Places behind the clusters, not the number of clusters.
+        truncated:
+          type: boolean
+          description: '`true` when the 5000-row cap was hit: cluster counts describe the sample, never present them as totals.'
+        clusters:
+          type: array
+          items: { $ref: "#/components/schemas/Cluster" }
+
+    Cluster:
+      type: object
+      required: [cell, resolution, count, center, averageRating]
+      properties:
+        cell:
+          type: string
+          example: "872830828ffffff"
+          description: H3 index serialized as a hex string — JSON numbers lose precision above 2^53, and the index uses the full 64-bit range.
+        resolution: { type: integer, minimum: 0, maximum: 15 }
+        count: { type: integer, minimum: 1 }
+        center: { $ref: "#/components/schemas/GeoPoint" }
+        averageRating:
+          type: [number, "null"]
+          format: double
+          description: Mean of the published place ratings in the cell. `null` when unknown, never `0`. A cluster is a zone — it carries no name, district or administrative claim.
+
+    GeoPoint:
+      type: object
+      required: [latitude, longitude]
+      properties:
+        latitude: { type: number, format: double }
+        longitude: { type: number, format: double }

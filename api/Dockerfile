@@ -8,14 +8,24 @@ FROM golang:1.27-alpine AS build
 
 WORKDIR /src
 
+# github.com/uber/h3-go/v4 is a cgo binding for Uber's H3, so the build step needs a C
+# toolchain. It stays in this stage only: the binary is linked against musl statically
+# (-extldflags -static), so the runtime image remains alpine:3 with no toolchain and the
+# artifact is still a static executable — the property the previous CGO_ENABLED=0 build
+# was there to guarantee.
+RUN apk add --no-cache build-base
+
 # Dependencies first so the module cache survives source changes.
 COPY api/go.mod api/go.sum ./
 RUN go mod download
 
 COPY api/ ./
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api \
- && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/worker ./cmd/worker \
- && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/bootstrap ./cmd/bootstrap
+RUN CGO_ENABLED=1 GOOS=linux go build -trimpath \
+        -ldflags='-s -w -linkmode external -extldflags "-static"' -o /out/api ./cmd/api \
+ && CGO_ENABLED=1 GOOS=linux go build -trimpath \
+        -ldflags='-s -w -linkmode external -extldflags "-static"' -o /out/worker ./cmd/worker \
+ && CGO_ENABLED=1 GOOS=linux go build -trimpath \
+        -ldflags='-s -w -linkmode external -extldflags "-static"' -o /out/bootstrap ./cmd/bootstrap
 
 # --- Runtime stage ---
 FROM alpine:3

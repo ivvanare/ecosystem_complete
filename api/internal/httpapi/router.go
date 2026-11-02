@@ -35,6 +35,7 @@ type Options struct {
 	Password           PasswordService
 	EmailChange        EmailChangeService
 	Social             SocialAuthenticator
+	Discovery          PlaceDiscovery
 }
 
 const defaultProbeTimeout = 2 * time.Second
@@ -141,6 +142,13 @@ func New(opts Options) http.Handler {
 				mux.HandleFunc("GET /v1/admin/audit-events", admin(adminHandler.auditEvents))
 			}
 		}
+	}
+
+	// Discovery is public and read-only (S14): no auth middleware, and absent rather
+	// than accepted-and-failed when the read path is not wired.
+	if opts.Discovery != nil {
+		placesHandler := &placesHandlers{discovery: opts.Discovery, logger: logger}
+		mux.HandleFunc("GET /v1/places", placesHandler.places)
 	}
 
 	mux.HandleFunc("/", notFound)

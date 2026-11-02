@@ -24,6 +24,7 @@ import (
 	"github.com/ivvanare/ecosystem_complete/api/internal/invitation"
 	"github.com/ivvanare/ecosystem_complete/api/internal/login"
 	"github.com/ivvanare/ecosystem_complete/api/internal/password"
+	"github.com/ivvanare/ecosystem_complete/api/internal/places"
 	"github.com/ivvanare/ecosystem_complete/api/internal/probe"
 	"github.com/ivvanare/ecosystem_complete/api/internal/queue"
 	"github.com/ivvanare/ecosystem_complete/api/internal/session"
@@ -153,6 +154,12 @@ func run() error {
 		signupRequester = signup.New(signup.NewPostgresStore(pool), publisher, logger)
 	}
 
+	// Discovery read path (p1-discovery.md): the store runs the spatial predicates on
+	// co_location so the GiST index serves them. Rating aggregates and the zone ranking
+	// come from the worker in a later slice; until then both readers report "nothing
+	// published", which is a degraded answer and never an error.
+	discovery := places.NewService(places.NewPostgresStore(pool), places.NoStats{}, places.NoRanking{}, logger)
+
 	server := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: httpapi.New(httpapi.Options{
@@ -172,6 +179,7 @@ func run() error {
 			Password:           passwordService,
 			EmailChange:        emailChangeService,
 			Social:             socialService,
+			Discovery:          discovery,
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}

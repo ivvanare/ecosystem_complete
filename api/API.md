@@ -441,7 +441,114 @@ vocabulario de `code` es cerrado:
 
 ---
 
-## 11. Recetas
+## 11. Descubrimiento de lugares
+
+Lectura pública, **sin autenticación**. Una sola ruta con dos modos, decididos por el
+localizador:
+
+| Localizador | Modo | Parámetros propios |
+|---|---|---|
+| `near=lat,long` | **lista** | `radius` (metros, por defecto 2000, máximo 50000), `sort`, `page`, `limit` |
+| `bbox=minLon,minLat,maxLon,maxLat` | **mapa** | `zoom` (0–21, obligatorio con `bbox`) |
+
+`near` lleva latitud primero; `bbox` lleva longitud primero, como GeoJSON. Mandar ambos
+localizadores o ninguno → `422 validation_failed`: ninguno trae
+`{field: "locator", code: "required"}` y ambos traen `{field: "bbox", code: "invalid"}`.
+El cruce del antimeridiano está fuera de alcance y se rechaza (`bbox` inválido).
+
+Filtros en ambos modos: `country` (`^[A-Z]{2}$`), `region` (`^[A-Z]{2}-[A-Z0-9]{1,3}$`) y
+`category` (uuid). Un valor inválido → `422` con su `field`. Los parámetros ajenos al modo
+(`page` en modo mapa, `zoom` en modo lista) se ignoran.
+
+**La coordenada del pedido se evalúa y se descarta**: no se persiste, no se loguea y nunca
+es material de una clave de caché.
+
+### 11.1 Modo lista
+
+```http
+GET /v1/places?near=10.4806,-66.9036&radius=2000&sort=distance&page=1&limit=20
+```
+
+```json
+{
+  "mode": "list",
+  "page": 1, "limit": 20, "total": 42,
+  "sortApplied": "trending",
+  "degraded": false,
+  "data": [
+    {
+      "coPlace": "9f1c...", "name": "Arepera El Hatillo",
+      "category": { "id": "43c4...", "name": "Arepera" },
+      "country": "VE", "region": "VE-A",
+      "latitude": 10.480594, "longitude": -66.903606,
+      "address": "Calle 1", "distanceMeters": 940,
+      "rating": { "average": 4.6, "count": 128 }
+    }
+  ]
+}
+```
+
+- `name` es el nombre comercial (`tx_title`). El nombre legal (`tx_name`) y el dueño del
+  lugar **nunca** se exponen en esta lectura.
+- `distanceMeters` son metros enteros desde `near`; nunca se fabrica.
+- `rating` es `null` cuando el worker no publicó agregado para ese lugar; la ausencia no
+  es un error. Nunca se calcula agregando reseñas en el pedido.
+- `trendingRank` solo aparece con `sort=trending` y ranking de zona existente.
+
+`sort`: `distance` (por defecto, orden real por cercanía sobre el índice GiST), `rating`,
+`trending`. **`sortApplied` es el orden que efectivamente corrió**: si se pidió `trending`
+y la zona no tenía ranking publicado, la API cae a `rating` y responde `degraded: true` —
+así el cliente distingue un ranking frío de un lugar impopular, sin error.
+
+Un radio sin resultados es `200` con `data: []` y `total: 0`: no es un error.
+
+### 11.2 Modo mapa
+
+```http
+GET /v1/places?bbox=-66.99,10.41,-66.82,10.54&zoom=12
+```
+
+```json
+{
+  "mode": "map", "zoom": 12, "resolution": 7,
+  "total": 311, "truncated": false,
+  "clusters": [
+    {
+      "cell": "872830828ffffff", "resolution": 7, "count": 37,
+      "center": { "latitude": 10.48, "longitude": -66.9 },
+      "averageRating": 4.3
+    }
+  ]
+}
+```
+
+- `total` es la cantidad de lugares detrás de los clusters, no la cantidad de clusters.
+- Cada cluster es una **zona**: una celda H3 serializada como string hex (los números JSON
+  pierden precisión por encima de 2^53). Trae conteos y agregados neutros y **ningún
+  nombre administrativo**: no es un barrio, ni un distrito, ni un municipio.
+- `averageRating` es el promedio de los ratings publicados de la celda; es `null` cuando
+  se desconoce, nunca `0`.
+- `zoom` elige la resolución H3 según la tabla; la celda se deriva por aritmética de
+  padres, nunca hay una columna por nivel de zoom.
+
+| `zoom` | resolución H3 |
+|---|---|
+| 0–4 | 3 |
+| 5–7 | 5 |
+| 8–10 | 6 |
+| 11–13 | 7 |
+| 14–16 | 8 |
+| 17–21 | 9 |
+
+La consulta del viewport está topeada a **5000 filas**. Un bbox que supera el tope de área
+(100 000 km²) se rechaza **antes de consultar** con `422` (`field: bbox`, `code:
+too_long`), pidiendo acercar — truncar en silencio haría mentirosos los conteos. Si el
+tope se alcanza igualmente, `truncated: true` y los conteos describen la muestra, no el
+total.
+
+---
+
+## 12. Recetas
 
 **Registro completo (móvil)**
 
@@ -488,7 +595,7 @@ curl -s localhost:9000/v1/me -H "Authorization: Bearer $TOKEN" | jq '.permission
 
 ---
 
-## 12. Checklist para un cliente nuevo
+## 13. Checklist para un cliente nuevo
 
 1. Login o registro → guardar `access_token` y `refresh_token` (el panel no recibe el refresh:
    va en cookie).
