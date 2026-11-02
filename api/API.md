@@ -316,6 +316,11 @@ Todas requieren `admin.access`; sin él → `403 permission_denied`.
 `admin.access`, `app` los que no lo tienen, y `none` los que no tienen ningún rol activo. Un
 valor desconocido → `422` (`field: scope`).
 
+Los eventos de la bitácora traen `metadata` como **JSON libre**: su forma depende del evento, así
+que no está tipado y no sirve para decisiones automáticas. En el contrato está declarado con
+`additionalProperties: true` para que un cliente generado lo trate como objeto abierto y no como
+objeto vacío — que es lo que produce un `object` pelado.
+
 ```http
 PATCH /v1/admin/users/9f1c...
 {"name": "Ana María", "status": "SUSPENDED"}
