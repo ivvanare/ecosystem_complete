@@ -4,19 +4,30 @@
 --
 -- Usage (live PostgreSQL 15, e.g. docker compose up database):
 --   psql -h localhost -U admin -d melia -v ON_ERROR_STOP=1 -f database/verify_base_model.sql
+-- Against a scratch database (a throwaway proof of pending schema files):
+--   psql -h localhost -U admin -d <scratch> -v ON_ERROR_STOP=1 -v expected_db=<scratch> -f database/verify_base_model.sql
 --
 -- Every check RAISEs EXCEPTION on failure. All behavioral inserts run inside a
 -- transaction that is ROLLED BACK at the end: the database is left untouched.
 -- ============================================================================
 \set ON_ERROR_STOP on
 
+-- The S1 name guard expects melia unless the caller overrides it. psql does not
+-- expand variables inside $$ bodies, so the value travels through a custom GUC.
+\if :{?expected_db}
+\else
+\set expected_db 'melia'
+\endif
+SELECT set_config('verify.expected_db', :'expected_db', false);
+
 BEGIN;
 
 -- ---- S1: topology — one database, schemas seg + core ------------------------
 DO $$
 BEGIN
-    IF current_database() <> 'melia' THEN
-        RAISE EXCEPTION 'S1 FAIL: expected database melia, got %', current_database();
+    IF current_database() <> current_setting('verify.expected_db') THEN
+        RAISE EXCEPTION 'S1 FAIL: expected database %, got %',
+            current_setting('verify.expected_db'), current_database();
     END IF;
     IF (SELECT count(*) FROM information_schema.schemata
         WHERE schema_name IN ('seg', 'core')) <> 2 THEN
@@ -948,6 +959,134 @@ BEGIN
                                dt_created_at, dt_updated_at)
     VALUES (gen_random_uuid(), 'UTC Place', 'UTC', 0, 0,
             v_cat, 'AR', 'UTC', now(), now());
+END $$;
+
+-- ---- S26: co_location is derived from the decimals and follows them ---------
+-- Phase 0 of social discovery (D2/S16): the decimals are the contract and the
+-- geography column is a GENERATED ALWAYS projection of them.
+DO $$
+DECLARE
+    v_cat   uuid;
+    v_place uuid := gen_random_uuid();
+BEGIN
+    -- The extension is present (15-postgis-extension.sql).
+    IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'postgis') THEN
+        RAISE EXCEPTION 'S26 FAIL: postgis extension is not created';
+    END IF;
+
+    -- The column is a stored generated column on the entity.
+    IF NOT EXISTS (SELECT 1 FROM pg_attribute a
+                   JOIN pg_class c ON c.oid = a.attrelid
+                   JOIN pg_namespace n ON n.oid = c.relnamespace
+                   WHERE n.nspname = 'core' AND c.relname = 'tb_place'
+                     AND a.attname = 'co_location' AND a.attgenerated = 's'
+                     AND NOT a.attisdropped) THEN
+        RAISE EXCEPTION 'S26 FAIL: co_location is not a stored generated column';
+    END IF;
+
+    -- The GiST index serves the radius and viewport reads.
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes
+                   WHERE schemaname = 'core' AND tablename = 'tb_place'
+                     AND indexname = 'ix_tb_place_location'
+                     AND indexdef ILIKE '%USING gist%') THEN
+        RAISE EXCEPTION 'S26 FAIL: tb_place has no GiST index on co_location';
+    END IF;
+
+    SELECT co_place_category INTO v_cat FROM core.tb_place_category
+     WHERE tx_code = 'hotel' AND dt_deleted_at IS NULL;
+
+    INSERT INTO core.tb_place (co_place, tx_name, tx_title,
+                               nu_latitude, nu_longitude,
+                               co_place_category, tx_country, tx_timezone,
+                               dt_created_at, dt_updated_at)
+    VALUES (v_place, 'S26', 'S26', 10.5, -66.9,
+            v_cat, 'VE', 'America/Caracas', now(), now());
+
+    -- The derived value agrees with the decimals on insert (10.5, -66.9 would
+    -- also catch a swapped MakePoint argument order) ...
+    IF NOT (SELECT ST_Equals(co_location::geometry,
+                             ST_SetSRID(ST_MakePoint(nu_longitude, nu_latitude), 4326))
+              FROM core.tb_place WHERE co_place = v_place) THEN
+        RAISE EXCEPTION 'S26 FAIL: co_location disagrees with the decimals on insert';
+    END IF;
+
+    -- ... and follows an update of them.
+    UPDATE core.tb_place SET nu_latitude = -34.6, nu_longitude = -58.4,
+                             dt_updated_at = now()
+     WHERE co_place = v_place;
+    IF NOT (SELECT ST_Equals(co_location::geometry,
+                             ST_SetSRID(ST_MakePoint(-58.4, -34.6), 4326))
+              FROM core.tb_place WHERE co_place = v_place) THEN
+        RAISE EXCEPTION 'S26 FAIL: co_location did not follow an update of the decimals';
+    END IF;
+
+    -- A hand-written value is rejected: the column is derived, never authored.
+    BEGIN
+        UPDATE core.tb_place
+           SET co_location = ST_SetSRID(ST_MakePoint(0, 0), 4326)::geography
+         WHERE co_place = v_place;
+        RAISE EXCEPTION 'S26 FAIL: co_location accepted a hand-written value';
+    EXCEPTION WHEN generated_always THEN NULL;
+    END;
+END $$;
+
+-- ---- S27: tx_region shape, navigation index, and history mirror -------------
+-- Phase 0 of social discovery (S3/S15): region is a nullable ISO 3166-2 code,
+-- and the place history payload carries it.
+DO $$
+DECLARE
+    v_cat   uuid;
+    v_place uuid := gen_random_uuid();
+BEGIN
+    SELECT co_place_category INTO v_cat FROM core.tb_place_category
+     WHERE tx_code = 'hotel' AND dt_deleted_at IS NULL;
+
+    -- NULL is deliberate and must be admitted: the geocoder may not answer.
+    INSERT INTO core.tb_place (co_place, tx_name, tx_title,
+                               nu_latitude, nu_longitude,
+                               co_place_category, tx_country, tx_timezone,
+                               dt_created_at, dt_updated_at)
+    VALUES (v_place, 'S27', 'S27', 10.5, -66.9,
+            v_cat, 'VE', 'America/Caracas', now(), now());
+
+    -- Shape violations are rejected by the CHECK, with the exact SQLSTATE.
+    BEGIN
+        UPDATE core.tb_place SET tx_region = 've-a', dt_updated_at = now()
+         WHERE co_place = v_place;
+        RAISE EXCEPTION 'S27 FAIL: lowercase region admitted';
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+    BEGIN
+        UPDATE core.tb_place SET tx_region = 'VEA1', dt_updated_at = now()
+         WHERE co_place = v_place;
+        RAISE EXCEPTION 'S27 FAIL: region without the hyphen admitted';
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+
+    -- A valid ISO 3166-2 code is accepted and the open interval carries it.
+    UPDATE core.tb_place SET tx_region = 'VE-A', dt_updated_at = now()
+     WHERE co_place = v_place;
+    IF NOT EXISTS (SELECT 1 FROM core.tb_place_history
+                    WHERE co_place = v_place AND dt_valid_to IS NULL
+                      AND tx_operation = 'UPDATE' AND tx_region = 'VE-A') THEN
+        RAISE EXCEPTION 'S27 FAIL: place history lost tx_region';
+    END IF;
+
+    -- Navigation reads use (tx_country, tx_region) together, in that order.
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes
+                   WHERE schemaname = 'core' AND tablename = 'tb_place'
+                     AND indexname = 'ix_tb_place_country_region'
+                     AND indexdef ILIKE '%(tx_country, tx_region)%') THEN
+        RAISE EXCEPTION 'S27 FAIL: ix_tb_place_country_region missing or wrong order';
+    END IF;
+
+    -- The derived co_location stays OUT of the history payload (S16/16: the
+    -- payload already carries the decimals it derives from).
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+               WHERE table_schema = 'core' AND table_name = 'tb_place_history'
+                 AND column_name = 'co_location') THEN
+        RAISE EXCEPTION 'S27 FAIL: history payload carries the derived co_location';
+    END IF;
 END $$;
 
 ROLLBACK;

@@ -478,9 +478,14 @@ Table core.tb_place {
   // agrupamiento por strings que el catálogo vino a terminar.
   co_place_category uuid [not null, note: 'Categoría formal del lugar (FK al catálogo). Sin default: toda escritura la declara explícitamente. Reemplaza al tx_category de texto libre removido en la migración 12']
   tx_country char(2) [not null, check: `tx_country ~ '^[A-Z]{2}$'`, note: 'ISO 3166-1 alpha-2. Para agrupar y reportar']
+  tx_region varchar(6) [check: `tx_region ~ '^[A-Z]{2}-[A-Z0-9]{1,3}$'`, note: 'ISO 3166-2 (VE-A, US-CA). NULL a propósito: exigirla haría imposible insertar donde el geocodificador no responde. Se asigna por geocodificación inversa al crear el lugar, nunca a mano. Migración 17']
   tx_timezone varchar [not null, check: `tx_timezone ~ '^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}$'`, note: 'Nombre IANA (America/Caracas, America/Argentina/Buenos_Aires): es lo que hace interpretables los horarios. El CHECK valida sólo la forma y admite hasta tres niveles, porque 26 zonas IANA reales los usan; la validación real contra pg_timezone_names ocurre en el borde de la aplicación']
   nu_latitude decimal(9,6) [not null, check: `nu_latitude BETWEEN -90 AND 90`]
   nu_longitude decimal(9,6) [not null, check: `nu_longitude BETWEEN -180 AND 180`]
+  // DERIVADA, nunca escrita a mano: los decimales de arriba son el contrato y
+  // esta columna se puede dropear y reconstruir sin pérdida (D2/S16). DBML no
+  // expresa GENERATED ALWAYS ni geography(Point,4326), así que va en la nota.
+  co_location geography [note: 'DERIVADA (off-contract): GENERATED ALWAYS AS ST_SetSRID(ST_MakePoint(nu_longitude, nu_latitude), 4326)::geography STORED, geography(Point,4326). Sirve ST_DWithin (radio) y viewport (&&). Fuera del payload de historia a propósito: deriva de columnas que el payload ya lleva. Migraciones 15-16 (PostGIS)']
   tx_address varchar
   js_social_media jsonb [note: '{"instagram": "...", "web": "..."}']
   tx_status suspendable_status [not null, default: 'ACTIVE']
@@ -491,6 +496,8 @@ Table core.tb_place {
   Indexes {
     co_owner_user
     co_place_category
+    (co_location) [type: gist, name: 'ix_tb_place_location']
+    (tx_country, tx_region) [name: 'ix_tb_place_country_region']
   }
 }
 
@@ -675,6 +682,7 @@ Table core.tb_place_history {
   co_place_category uuid [not null, note: 'Sin FK: la historia sobrevive a cambios del catálogo']
   tx_country char(2) [not null]
   tx_timezone varchar [not null]
+  tx_region varchar(6) [note: 'Espejo de la entidad, sin CHECK: la historia registra lo que la entidad ya validó (migración 17)']
   nu_latitude decimal(9,6) [not null]
   nu_longitude decimal(9,6) [not null]
   tx_address varchar

@@ -240,3 +240,35 @@ func TestLoadDefaultsCookiesToSecure(t *testing.T) {
 		t.Error("COOKIE_SECURE=false was ignored")
 	}
 }
+
+func TestSchedulerIntervalIsDisabledWhenUnset(t *testing.T) {
+	interval, err := SchedulerInterval(env(map[string]string{}))
+	if err != nil {
+		t.Fatalf("SchedulerInterval returned error when unset: %v", err)
+	}
+	if interval != 0 {
+		t.Errorf("SchedulerInterval = %v, want 0 (disabled) when unset", interval)
+	}
+}
+
+func TestSchedulerIntervalParsesAPositiveDuration(t *testing.T) {
+	interval, err := SchedulerInterval(env(map[string]string{"WORKER_SCHEDULER_INTERVAL": "5m"}))
+	if err != nil {
+		t.Fatalf("SchedulerInterval returned error: %v", err)
+	}
+	if interval != 5*time.Minute {
+		t.Errorf("SchedulerInterval = %v, want 5m", interval)
+	}
+}
+
+func TestSchedulerIntervalRejectsInvalidValues(t *testing.T) {
+	for _, raw := range []string{"banana", "0s", "-5m"} {
+		_, err := SchedulerInterval(env(map[string]string{"WORKER_SCHEDULER_INTERVAL": raw}))
+		if err == nil {
+			t.Fatalf("SchedulerInterval accepted %q, want error", raw)
+		}
+		if !strings.Contains(err.Error(), "WORKER_SCHEDULER_INTERVAL") {
+			t.Errorf("error %q does not name WORKER_SCHEDULER_INTERVAL", err)
+		}
+	}
+}

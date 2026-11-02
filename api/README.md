@@ -61,6 +61,7 @@ nombrando la variable; no hay fallback silencioso a otra base.
 | `MAIL_QUEUE` | no | `melia.mail` | cola de correo |
 | `SMTP_ADDR` | no | `mailpit:1025` | destino SMTP del worker |
 | `MAIL_FROM` | no | `no-reply@melia.test` | remitente |
+| `WORKER_SCHEDULER_INTERVAL` | no | vacío (deshabilitado) | cadencia de los jobs periódicos del worker (p. ej. `5m`); vacío o inválido deja el scheduler deshabilitado con un warning, nunca aborta el arranque |
 | `GOOGLE_CLIENT_ID` | no | vacío | habilita el login social de Google |
 | `APPLE_CLIENT_ID` | no | vacío | habilita el login social de Apple |
 | `LOG_LEVEL` | no | `info` | `debug`, `info`, `warn`, `error` |
