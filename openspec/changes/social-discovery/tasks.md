@@ -340,3 +340,16 @@ Table: `core.tb_user_taste_profile`.
   ("Radar urbano en vivo", "42 planes y mesas activas a < 2 km", "Explorar mapa"), and it
   names neighbourhoods ("Malasaña", "Salamanca", "La Latina") that an H3 zone cannot yet
   name (D14).
+
+- L20 — Deferred with a concrete use case, recorded so it is not lost (2026-11-05): the admin
+  panel asked for `PUT /v1/admin/places/{coPlace}/photos` with `{photos: [{coPhoto, type,
+  order}]}` returning `204`, replacing the set without uploading files. The argument that earned
+  it: uploading another COVER resolves the cover, but **not reordering the gallery** — changing
+  the order of two existing photos today means re-uploading them, which duplicates bytes and
+  loses the original. For someone curating a place that is friction, not aesthetics.
+  Shape follows the pattern already in place for hours, attributes and menu (replace the whole
+  set), and a `coPhoto` that does not belong to the place must be `422` with field `photos`
+  instead of being ignored. Not implemented: the session closed before it, and today's
+  upload/delete path keeps the ficha usable.
+  Also recorded: the panel now resolves `git -C ../melia rev-parse origin/dev` before every sync
+  and pins that SHA, which is what ended four rounds of comparing against a stale contract.
