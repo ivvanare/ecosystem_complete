@@ -72,6 +72,9 @@ type Invitation struct {
 	// PlanName is the plan title, for the invitee's view.
 	PlanName *string
 	PlanAt   *time.Time
+	// Revealed reports whether the venue may be shown to the invitee (S26/D20). A PLAIN
+	// invitation never hides anything; a SURPRISE one hides the venue until its rule fires.
+	Revealed bool
 	// Expired reports the read predicate's verdict: a PENDING row past its expiry is already
 	// unusable, whether or not a sweeper has run (S2).
 	Expired bool
@@ -94,6 +97,12 @@ type Store interface {
 	Create(ctx context.Context, actorID, planID string, in CreateInput) (Invitation, error)
 	ListForPlan(ctx context.Context, planID string) ([]Invitation, error)
 	ListForUser(ctx context.Context, userID string) ([]Invitation, error)
+	// VenueHidden reports whether an unrevealed SURPRISE invitation still hides the venue from
+	// this caller in this plan.
+	VenueHidden(ctx context.Context, userID, planID string) (bool, error)
+	// Expire flips the stale PENDING rows to EXPIRED. It is hygiene, not enforcement: the read
+	// predicate already treats those rows as unusable.
+	Expire(ctx context.Context, now time.Time) (int64, error)
 	// Answer flips a live invitation and, when accepting, inserts the VIEWER membership in the
 	// same transaction.
 	Answer(ctx context.Context, actorID, invitationID, status string, at time.Time) error
@@ -157,6 +166,11 @@ func (s *Service) ForPlan(ctx context.Context, actorID, planID string) ([]Invita
 	return s.store.ListForPlan(ctx, planID)
 }
 
+// VenueHidden delegates the reveal rule to the store, which owns the projection.
+func (s *Service) VenueHidden(ctx context.Context, userID, planID string) (bool, error) {
+	return s.store.VenueHidden(ctx, userID, planID)
+}
+
 // Mine is the caller's own invitations — the only ones a guest may see (S5).
 func (s *Service) Mine(ctx context.Context, userID string) ([]Invitation, error) {
 	return s.store.ListForUser(ctx, userID)
@@ -177,6 +191,75 @@ func (s *Service) answer(ctx context.Context, actorID, invitationID, status stri
 }
 
 func isEmpty(value *string) bool { return value == nil || *value == "" }
+
+// VenueHidden is true when the caller holds a SURPRISE invitation for the plan that has not
+// been revealed yet. A member is never hidden from: they are already inside the plan.
+func (s *PostgresStore) VenueHidden(ctx context.Context, userID, planID string) (bool, error) {
+	const query = `
+SELECT EXISTS (
+    SELECT 1
+    FROM core.tb_plan_invitation i
+    JOIN core.tb_route r ON r.co_route = i.co_route
+    WHERE i.co_route = $2::uuid
+      AND i.co_user = $1::uuid
+      AND i.tx_status = 'PENDING'
+      AND i.tx_mode = 'SURPRISE'
+      AND NOT (i.tx_reveal = 'AT_SCHEDULED' AND r.dt_scheduled_at IS NOT NULL
+               AND now() >= r.dt_scheduled_at)
+)`
+	var hidden bool
+	if err := s.pool.QueryRow(ctx, query, userID, planID).Scan(&hidden); err != nil {
+		return false, fmt.Errorf("checking the reveal rule: %w", err)
+	}
+	return hidden, nil
+}
+
+// Expire flips stale PENDING rows to EXPIRED and reports how many it touched.
+//
+// This is hygiene, not enforcement: the read predicate already refuses to accept an expired
+// invitation. If this job never runs, invitations are still correctly unusable — the table
+// just keeps rows that claim to be pending.
+func (s *PostgresStore) Expire(ctx context.Context, now time.Time) (int64, error) {
+	const query = `
+UPDATE core.tb_plan_invitation
+   SET tx_status = 'EXPIRED', dt_responded_at = $1
+ WHERE tx_status = 'PENDING' AND dt_expires_at <= $1`
+	tag, err := s.pool.Exec(ctx, query, now)
+	if err != nil {
+		return 0, fmt.Errorf("expiring invitations: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// Sweeper is the scheduled hygiene job.
+type Sweeper struct {
+	store  Store
+	logger *slog.Logger
+	now    func() time.Time
+}
+
+// NewSweeper wires the job.
+func NewSweeper(store Store, logger *slog.Logger) *Sweeper {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Sweeper{store: store, logger: logger, now: func() time.Time { return time.Now().UTC() }}
+}
+
+// Name satisfies the worker scheduler's job contract.
+func (s *Sweeper) Name() string { return "invitation-expiry" }
+
+// Run executes one sweep. A failure is logged by the scheduler and retried on the next tick.
+func (s *Sweeper) Run(ctx context.Context) error {
+	expired, err := s.store.Expire(ctx, s.now())
+	if err != nil {
+		return err
+	}
+	if expired > 0 {
+		s.logger.Info("invitations expired", slog.Int64("count", expired))
+	}
+	return nil
+}
 
 // PostgresStore is the pgx implementation.
 type PostgresStore struct {
@@ -215,7 +298,11 @@ SELECT i.co_invitation::text, i.co_route::text, i.co_user::text, i.co_inviter::t
        i.tx_status::text, i.tx_mode::text, i.tx_message, i.tx_hint,
        i.dt_expires_at, i.dt_created_at, i.dt_responded_at,
        u.tx_name, r.tx_name, r.dt_scheduled_at,
-       (i.tx_status = 'PENDING' AND i.dt_expires_at <= now()) AS expired
+       (i.tx_status = 'PENDING' AND i.dt_expires_at <= now()) AS expired,
+       (i.tx_mode = 'PLAIN'
+        OR (i.tx_reveal = 'ON_ACCEPT' AND i.tx_status = 'ACCEPTED')
+        OR (i.tx_reveal = 'AT_SCHEDULED' AND r.dt_scheduled_at IS NOT NULL
+            AND now() >= r.dt_scheduled_at)) AS revealed
 FROM core.tb_plan_invitation i
 JOIN seg.tb_user u ON u.co_user = i.co_user
 JOIN core.tb_route r ON r.co_route = i.co_route`
@@ -338,6 +425,7 @@ func scanInvitation(row interface{ Scan(dest ...any) error }) (Invitation, error
 	err := row.Scan(&invitation.ID, &invitation.PlanID, &invitation.UserID, &invitation.InviterID,
 		&invitation.Status, &invitation.Mode, &invitation.Message, &invitation.Hint,
 		&invitation.ExpiresAt, &invitation.CreatedAt, &invitation.RespondedAt,
-		&invitation.InviteeName, &invitation.PlanName, &invitation.PlanAt, &invitation.Expired)
+		&invitation.InviteeName, &invitation.PlanName, &invitation.PlanAt,
+		&invitation.Expired, &invitation.Revealed)
 	return invitation, err
 }

@@ -35,6 +35,8 @@ func (f *fakeStore) ListForUser(context.Context, string) ([]Invitation, error) {
 	f.userListed = true
 	return []Invitation{{ID: "i1"}}, nil
 }
+func (f *fakeStore) VenueHidden(context.Context, string, string) (bool, error) { return false, nil }
+func (f *fakeStore) Expire(context.Context, time.Time) (int64, error)          { return 0, nil }
 func (f *fakeStore) Answer(_ context.Context, actorID, _, status string, _ time.Time) error {
 	f.answeredBy, f.answer = actorID, status
 	return nil
@@ -149,3 +151,54 @@ func TestADuplicateLiveInvitationIsAConflict(t *testing.T) {
 		t.Fatalf("first invitation: %v", err)
 	}
 }
+
+// fakeSweeper counts the rows the job asked to expire.
+type fakeSweeper struct {
+	expired int64
+	err     error
+	now     time.Time
+}
+
+func (f *fakeSweeper) Expire(_ context.Context, now time.Time) (int64, error) {
+	f.now = now
+	return f.expired, f.err
+}
+
+func TestSweeperExpiresForHygieneOnly(t *testing.T) {
+	// The job touches rows; it is not what makes an expired invitation unusable — the read
+	// predicate already does that, which is why a broken sweeper is harmless.
+	store := &fakeSweeper{expired: 3}
+	job := NewSweeper(&sweeperStore{fakeSweeper: store}, slog.New(slog.DiscardHandler))
+	if job.Name() != "invitation-expiry" {
+		t.Fatalf("job name = %q", job.Name())
+	}
+	if err := job.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if store.now.IsZero() {
+		t.Fatal("the sweeper did not ask the store to expire anything")
+	}
+}
+
+func TestSweeperPropagatesFailure(t *testing.T) {
+	job := NewSweeper(&sweeperStore{fakeSweeper: &fakeSweeper{err: errors.New("db down")}},
+		slog.New(slog.DiscardHandler))
+	if err := job.Run(context.Background()); err == nil {
+		t.Fatal("Run returned nil on a store failure")
+	}
+}
+
+// sweeperStore satisfies Store for the sweeper tests alone.
+type sweeperStore struct{ *fakeSweeper }
+
+func (s *sweeperStore) Role(context.Context, string, string) (string, string, error) {
+	return "", "", nil
+}
+func (s *sweeperStore) PlanVisible(context.Context, string, string) (bool, error) { return false, nil }
+func (s *sweeperStore) Create(context.Context, string, string, CreateInput) (Invitation, error) {
+	return Invitation{}, nil
+}
+func (s *sweeperStore) ListForPlan(context.Context, string) ([]Invitation, error)       { return nil, nil }
+func (s *sweeperStore) ListForUser(context.Context, string) ([]Invitation, error)       { return nil, nil }
+func (s *sweeperStore) VenueHidden(context.Context, string, string) (bool, error)       { return false, nil }
+func (s *sweeperStore) Answer(context.Context, string, string, string, time.Time) error { return nil }

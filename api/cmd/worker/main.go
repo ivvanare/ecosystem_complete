@@ -21,6 +21,7 @@ import (
 
 	"github.com/ivvanare/ecosystem_complete/api/internal/config"
 	"github.com/ivvanare/ecosystem_complete/api/internal/db"
+	"github.com/ivvanare/ecosystem_complete/api/internal/invitations"
 	"github.com/ivvanare/ecosystem_complete/api/internal/mailer"
 	"github.com/ivvanare/ecosystem_complete/api/internal/trending"
 	"github.com/ivvanare/ecosystem_complete/api/internal/worker"
@@ -174,6 +175,10 @@ func registerTrending(ctx context.Context, scheduler *worker.Scheduler, logger *
 		return nil
 	})
 	logger.Info("trending producer registered")
+
+	// Invitation expiry is hygiene, not enforcement: the read predicate already refuses an
+	// expired invitation. The job keeps the table honest.
+	scheduler.Register("invitation-expiry", invitations.NewSweeper(invitations.NewPostgresStore(pool), logger).Run)
 }
 
 // single adapts one delivery into a closed channel so the drain path reuses the same code.

@@ -1962,6 +1962,12 @@ components:
         message: { type: string, nullable: true }
         hint: { type: string, nullable: true }
         expiresAt: { type: string, format: date-time }
+        revealed:
+          type: boolean
+          description: |
+            Whether the venue may be shown to the invitee (S26/D20). A PLAIN invitation never
+            hides anything; a SURPRISE one keeps the venue hidden until its rule fires — on
+            accept, or at the plan's scheduled time.
         expired:
           type: boolean
           description: |

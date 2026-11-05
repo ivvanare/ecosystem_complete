@@ -444,6 +444,7 @@ type invitationResponse struct {
 	Hint         *string    `json:"hint"`
 	ExpiresAt    time.Time  `json:"expiresAt"`
 	Expired      bool       `json:"expired"`
+	Revealed     bool       `json:"revealed"`
 	CreatedAt    time.Time  `json:"createdAt"`
 	RespondedAt  *time.Time `json:"respondedAt"`
 	InviteeName  *string    `json:"inviteeName"`
@@ -455,6 +456,7 @@ func toInvitationResponse(i invitations.Invitation) invitationResponse {
 	return invitationResponse{
 		CoInvitation: i.ID, CoRoute: i.PlanID, CoUser: i.UserID, Status: i.Status, Mode: i.Mode,
 		Message: i.Message, Hint: i.Hint, ExpiresAt: i.ExpiresAt, Expired: i.Expired,
+		Revealed:  i.Revealed,
 		CreatedAt: i.CreatedAt, RespondedAt: i.RespondedAt,
 		InviteeName: i.InviteeName, PlanName: i.PlanName, PlanAt: i.PlanAt,
 	}

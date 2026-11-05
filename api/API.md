@@ -911,6 +911,12 @@ puede invitar**.
 - **Visibilidad asimétrica:** el anfitrión ve el estado de todos; un invitado ve solo el suyo.
   Quién rechazó no es información de la comunidad.
 - Una invitación vencida, ya respondida o ajena responden `404`, indistinguibles a propósito.
-- `SURPRISE` exige al menos `message` o `hint`: un sobre vacío no es una sorpresa. En este
-  commit el modo se guarda y se devuelve; el destape del lugar (`AT_SCHEDULED`/`ON_ACCEPT`) y el
-  sweeper de higiene llegan en el commit siguiente.
+- `SURPRISE` exige al menos `message` o `hint`: un sobre vacío no es una sorpresa.
+- **El destape** lo dice el campo `revealed`: una invitación `PLAIN` siempre lo trae en `true`;
+  una `SURPRISE` lo pasa a `true` cuando su regla se cumple — al aceptar (`ON_ACCEPT`) o a la
+  hora del plan (`AT_SCHEDULED`, el default). Mientras sea `false`, el itinerario del plan
+  responde `403` a ese invitado: el itinerario **es** el lugar, y mostrarlo antes de tiempo
+  rompe la sorpresa. Un miembro ya está adentro y nunca se le oculta nada.
+- Si el plan no tiene fecha, `AT_SCHEDULED` no puede cumplirse: el destape ocurre al aceptar.
+- El **sweeper de higiene** corre en el worker y pasa a `EXPIRED` las invitaciones vencidas.
+  Es higiene, no corrección: el predicado de lectura ya las trataba como inutilizables.

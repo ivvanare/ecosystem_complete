@@ -93,6 +93,7 @@ func (f *fakePlans) MyInvitations(context.Context, string) ([]invitations.Invita
 	f.calls++
 	return f.invitations, f.err
 }
+func (f *fakePlans) VenueHidden(context.Context, string, string) (bool, error) { return false, nil }
 func (f *fakePlans) AcceptInvitation(_ context.Context, _, id string) error {
 	f.calls++
 	f.gotAnswer = "accept:" + id

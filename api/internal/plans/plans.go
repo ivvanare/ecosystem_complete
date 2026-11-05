@@ -201,6 +201,17 @@ func (s *Service) Places(ctx context.Context, actorID, planID string) ([]PlanPla
 	if role == "" && visibility != VisibilityPublic {
 		return nil, ErrNotFound
 	}
+	// A guest invited in SURPRISE mode has not seen the venue yet: the itinerary is the venue
+	// (S26/D20). A member is already inside the plan and is never hidden from.
+	if role == "" && s.invitations != nil {
+		hidden, err := s.invitations.VenueHidden(ctx, actorID, planID)
+		if err != nil {
+			return nil, err
+		}
+		if hidden {
+			return nil, ErrForbidden
+		}
+	}
 	return s.store.Places(ctx, actorID, planID)
 }
 
@@ -269,6 +280,8 @@ type Invitations interface {
 	Mine(ctx context.Context, userID string) ([]invitations.Invitation, error)
 	Accept(ctx context.Context, actorID, invitationID string) error
 	Decline(ctx context.Context, actorID, invitationID string) error
+	// VenueHidden reports whether an unrevealed SURPRISE invitation still hides the venue.
+	VenueHidden(ctx context.Context, userID, planID string) (bool, error)
 }
 
 // SetInvitations wires the invitation lifecycle into the plan surface.
