@@ -2629,7 +2629,8 @@ components:
       type: object
       additionalProperties: false
       required: [coPlace, coOwnerUser, name, title, description, category, country, region,
-                 timezone, latitude, longitude, address, status, createdAt, updatedAt, deletedAt]
+                 timezone, latitude, longitude, address, status, rating, schedules, attributes,
+                 menus, photos, createdAt, updatedAt, deletedAt]
       properties:
         coPlace: { type: string, format: uuid }
         coOwnerUser:
@@ -2654,6 +2655,33 @@ components:
         longitude: { type: number }
         address: { type: string, nullable: true }
         status: { type: string, enum: [ACTIVE, INACTIVE, SUSPENDED] }
+        rating:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required: [average, count]
+          description: |
+            The worker-published aggregate, when there is one. Null means nothing published yet,
+            never zero: the panel must tell an unrated place from a badly rated one.
+          properties:
+            average: { type: number }
+            count: { type: integer }
+        schedules:
+          type: array
+          description: The weekly hours. Populated by the detail read, not by the listing.
+          items: { $ref: "#/components/schemas/PlaceSchedule" }
+        attributes:
+          type: array
+          description: Attribute codes present on the place.
+          items: { type: string }
+        menus:
+          type: array
+          description: The card. Populated by the detail read, not by the listing.
+          items: { $ref: "#/components/schemas/PlaceMenu" }
+        photos:
+          type: array
+          description: Images of the place, cover first.
+          items: { $ref: "#/components/schemas/PlacePhoto" }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         deletedAt: { type: string, format: date-time, nullable: true }

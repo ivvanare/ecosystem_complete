@@ -111,6 +111,7 @@ type placeResponse struct {
 	Attributes []string              `json:"attributes"`
 	Menus      []placeadmin.Menu     `json:"menus"`
 	Photos     []placeadmin.Photo    `json:"photos"`
+	Rating     *placeRating          `json:"rating"`
 	CreatedAt  time.Time             `json:"createdAt"`
 	UpdatedAt  time.Time             `json:"updatedAt"`
 	DeletedAt  *time.Time            `json:"deletedAt"`
@@ -124,6 +125,7 @@ func toPlaceResponse(place placeadmin.Place) placeResponse {
 		Latitude: place.Latitude, Longitude: place.Longitude, Address: place.Address,
 		Status: place.Status, Schedules: place.Schedules, Attributes: place.Attributes,
 		Menus: place.Menus, Photos: place.Photos,
+		Rating:    toAdminRating(place.Rating),
 		CreatedAt: place.CreatedAt, UpdatedAt: place.UpdatedAt,
 		DeletedAt: place.DeletedAt,
 	}
@@ -612,4 +614,12 @@ func (h *placesAdminHandlers) attributeCatalogue(w http.ResponseWriter, r *http.
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": data, "total": len(data)})
+}
+
+// toAdminRating maps the domain aggregate onto the documented shape.
+func toAdminRating(rating *placeadmin.Rating) *placeRating {
+	if rating == nil {
+		return nil
+	}
+	return &placeRating{Average: rating.Average, Count: rating.Count}
 }
