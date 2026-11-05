@@ -123,7 +123,7 @@ func toPlaceResponse(place placeadmin.Place) placeResponse {
 		Country: place.Country, Region: place.Region, Timezone: place.Timezone,
 		Latitude: place.Latitude, Longitude: place.Longitude, Address: place.Address,
 		Status: place.Status, Schedules: place.Schedules, Attributes: place.Attributes,
-		Menus:     place.Menus, Photos: place.Photos,
+		Menus: place.Menus, Photos: place.Photos,
 		CreatedAt: place.CreatedAt, UpdatedAt: place.UpdatedAt,
 		DeletedAt: place.DeletedAt,
 	}
