@@ -52,6 +52,7 @@ type Place struct {
 	Schedules  []Schedule
 	Attributes []string
 	Menus      []Menu
+	Photos     []Photo
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 	DeletedAt  *time.Time
@@ -80,6 +81,20 @@ type Menu struct {
 	Description *string    `json:"description"`
 	Items       []MenuItem `json:"items"`
 }
+
+// Photo is one image of a place.
+type Photo struct {
+	ID    string `json:"coPhoto"`
+	URL   string `json:"url"`
+	Type  string `json:"type"`
+	Order int    `json:"order"`
+}
+
+// Photo types mirror public.photo_kind.
+const (
+	PhotoCover   = "COVER"
+	PhotoGallery = "GALLERY"
+)
 
 // Filter narrows the listing. Every field is optional; the zero value lists every row the
 // viewer may see.
@@ -158,6 +173,10 @@ type Store interface {
 	ReplaceMenus(ctx context.Context, actorID, placeID string, menus []Menu) error
 	UnknownCurrencies(ctx context.Context, codes []string) ([]string, error)
 	AttributeCatalogue(ctx context.Context) ([]Category, error)
+	Photos(ctx context.Context, placeID string) ([]Photo, error)
+	InsertPhoto(ctx context.Context, actorID, placeID, url, photoType string, order int) (Photo, error)
+	PhotoPlace(ctx context.Context, viewer Viewer, photoID string) (string, error)
+	DeletePhoto(ctx context.Context, actorID, photoID string) error
 }
 
 // Service applies the ownership rules.
@@ -300,6 +319,53 @@ func validateSchedules(schedules []Schedule) error {
 		}
 	}
 	return nil
+}
+
+// Photos returns the images of a place.
+func (s *Service) Photos(ctx context.Context, viewer Viewer, placeID string) ([]Photo, error) {
+	if _, err := s.store.Get(ctx, viewer, placeID); err != nil {
+		return nil, err
+	}
+	return s.store.Photos(ctx, placeID)
+}
+
+// AddPhoto records an uploaded image. The bytes are already stored by the caller: this keeps the
+// row and the object in one place of authority, and the row is what a read serves.
+func (s *Service) AddPhoto(ctx context.Context, viewer Viewer, actorID, placeID, url, photoType string, order int) (Photo, error) {
+	if _, err := s.store.Get(ctx, viewer, placeID); err != nil {
+		return Photo{}, err
+	}
+	if photoType != PhotoCover && photoType != PhotoGallery {
+		return Photo{}, fmt.Errorf("placeadmin: unknown photo type %q", photoType)
+	}
+	// A cover replaces the previous one instead of competing with it: the partial unique index
+	// would reject a second live cover, and "make this the cover" is the intent a client has.
+	if photoType == PhotoCover {
+		existing, err := s.store.Photos(ctx, placeID)
+		if err != nil {
+			return Photo{}, err
+		}
+		for _, photo := range existing {
+			if photo.Type == PhotoCover {
+				if err := s.store.DeletePhoto(ctx, actorID, photo.ID); err != nil {
+					return Photo{}, err
+				}
+			}
+		}
+	}
+	return s.store.InsertPhoto(ctx, actorID, placeID, url, photoType, order)
+}
+
+// RemovePhoto retires an image, scoped by ownership: a photo the caller may not see is a miss.
+func (s *Service) RemovePhoto(ctx context.Context, viewer Viewer, actorID, photoID string) error {
+	placeID, err := s.store.PhotoPlace(ctx, viewer, photoID)
+	if err != nil {
+		return err
+	}
+	if _, err := s.store.Get(ctx, viewer, placeID); err != nil {
+		return err
+	}
+	return s.store.DeletePhoto(ctx, actorID, photoID)
 }
 
 // AttributeCatalogue returns the attribute vocabulary. It reuses the Category shape: a code, a
@@ -480,6 +546,9 @@ WHERE p.co_place = $3::uuid AND `+scopePredicate, viewer.ManageAll, uuidOrNil(vi
 		return Place{}, err
 	}
 	if place.Menus, err = s.Menus(ctx, place.ID); err != nil {
+		return Place{}, err
+	}
+	if place.Photos, err = s.Photos(ctx, place.ID); err != nil {
 		return Place{}, err
 	}
 	return place, nil
@@ -756,6 +825,74 @@ func (s *PostgresStore) AttributeCatalogue(ctx context.Context) ([]Category, err
 		result = append(result, attribute)
 	}
 	return result, rows.Err()
+}
+
+// Photos reads the live images of a place, cover first.
+func (s *PostgresStore) Photos(ctx context.Context, placeID string) ([]Photo, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT co_photo::text, tx_url, tx_type::text, nu_order
+		FROM core.tb_place_photo
+		WHERE co_place = $1::uuid AND dt_deleted_at IS NULL
+		ORDER BY (tx_type = 'COVER') DESC, nu_order, dt_created_at`, placeID)
+	if err != nil {
+		return nil, fmt.Errorf("reading photos: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]Photo, 0, 4)
+	for rows.Next() {
+		var photo Photo
+		if err := rows.Scan(&photo.ID, &photo.URL, &photo.Type, &photo.Order); err != nil {
+			return nil, fmt.Errorf("scanning photo: %w", err)
+		}
+		result = append(result, photo)
+	}
+	return result, rows.Err()
+}
+
+// InsertPhoto writes the row; the bytes live in storage.
+func (s *PostgresStore) InsertPhoto(ctx context.Context, actorID, placeID, url, photoType string, order int) (Photo, error) {
+	const query = `
+INSERT INTO core.tb_place_photo
+    (co_photo, co_place, tx_url, tx_type, nu_order, dt_created_at, dt_updated_at)
+VALUES (gen_random_uuid(), $1::uuid, $2, $3::public.photo_kind, $4, now(), now())
+RETURNING co_photo::text`
+	var photo Photo
+	err := s.withActor(ctx, actorID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, query, placeID, url, photoType, order).
+			Scan(&photo.ID)
+	})
+	if err != nil {
+		return Photo{}, fmt.Errorf("inserting photo: %w", err)
+	}
+	photo.URL, photo.Type, photo.Order = url, photoType, order
+	return photo, nil
+}
+
+// PhotoPlace resolves the place of a live photo, scoped by ownership.
+func (s *PostgresStore) PhotoPlace(ctx context.Context, viewer Viewer, photoID string) (string, error) {
+	const query = `
+SELECT p.co_place::text
+FROM core.tb_place_photo ph
+JOIN core.tb_place p ON p.co_place = ph.co_place
+WHERE ph.co_photo = $3::uuid AND ph.dt_deleted_at IS NULL AND ` + scopePredicate
+	var placeID string
+	if err := s.pool.QueryRow(ctx, query, viewer.ManageAll, uuidOrNil(viewer.UserID), photoID).Scan(&placeID); err != nil {
+		return "", ErrNotFound
+	}
+	return placeID, nil
+}
+
+// DeletePhoto retires an image logically: the row stays for whoever audits the catalogue.
+func (s *PostgresStore) DeletePhoto(ctx context.Context, actorID, photoID string) error {
+	return s.withActor(ctx, actorID, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `
+			UPDATE core.tb_place_photo SET dt_deleted_at = now(), dt_updated_at = now()
+			 WHERE co_photo = $1::uuid AND dt_deleted_at IS NULL`, photoID); err != nil {
+			return fmt.Errorf("retiring photo: %w", err)
+		}
+		return nil
+	})
 }
 
 // Menus reads the card: sections in order, items in order.

@@ -30,6 +30,8 @@ type fakePlaceAdmin struct {
 	gotStatus    string
 	menus        []placeadmin.Menu
 	gotMenus     []placeadmin.Menu
+	gotPhotoURL  string
+	gotPhotoType string
 }
 
 func (f *fakePlaceAdmin) List(_ context.Context, viewer placeadmin.Viewer, filter placeadmin.Filter, _, _ int) (placeadmin.Page, error) {
@@ -454,5 +456,48 @@ func TestAttributeCatalogueIsPublic(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"code":"terraza"`) {
 		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+// Photos: the bytes are verified, the cover replaces, and the row is what a read serves.
+
+func (f *fakePlaceAdmin) AddPhoto(_ context.Context, _ placeadmin.Viewer, _, _, url, photoType string, order int) (placeadmin.Photo, error) {
+	f.calls++
+	f.gotPhotoURL, f.gotPhotoType = url, photoType
+	return placeadmin.Photo{ID: "ph1", URL: url, Type: photoType, Order: order}, f.err
+}
+
+func (f *fakePlaceAdmin) RemovePhoto(context.Context, placeadmin.Viewer, string, string) error {
+	f.calls++
+	return f.err
+}
+
+func TestUploadRequiresAFile(t *testing.T) {
+	service := &fakePlaceAdmin{}
+	rec := bearerDo(t, backoffice(service, "owner-1", adminScope), http.MethodPost,
+		"/v1/admin/places/"+adminPlaceID+"/photos", `{}`)
+	if rec.Code != http.StatusBadRequest && rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 400 or 422", rec.Code)
+	}
+	if service.calls != 0 {
+		t.Fatal("the service was reached without a file")
+	}
+}
+
+func TestRemovePhotoAnswers404WhenInvisible(t *testing.T) {
+	service := &fakePlaceAdmin{err: placeadmin.ErrNotFound}
+	rec := bearerDo(t, backoffice(service, "owner-1", adminScope), http.MethodDelete,
+		"/v1/admin/places/"+adminPlaceID+"/photos/"+planGuestUUID, "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestRemovePhotoRejectsAMalformedID(t *testing.T) {
+	service := &fakePlaceAdmin{}
+	rec := bearerDo(t, backoffice(service, "owner-1", adminScope), http.MethodDelete,
+		"/v1/admin/places/"+adminPlaceID+"/photos/nope", "")
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rec.Code)
 	}
 }

@@ -38,6 +38,7 @@ import (
 	"github.com/ivvanare/ecosystem_complete/api/internal/session"
 	"github.com/ivvanare/ecosystem_complete/api/internal/signup"
 	"github.com/ivvanare/ecosystem_complete/api/internal/social"
+	"github.com/ivvanare/ecosystem_complete/api/internal/storage"
 )
 
 // readHeaderTimeout bounds slow-header connections without capping request bodies.
@@ -162,6 +163,13 @@ func run() error {
 		signupRequester = signup.New(signup.NewPostgresStore(pool), publisher, logger)
 	}
 
+	// Uploaded images: a local volume today, S3 later. The interface is what makes that a
+	// swap rather than a redesign.
+	mediaStore, err := storage.NewLocal(cfg.MediaDir, "/media")
+	if err != nil {
+		return fmt.Errorf("wiring media storage: %w", err)
+	}
+
 	// Notifications (S13): preferences gate a best-effort email through the mail queue the
 	// service already owns. Push waits for the mobile client. The publisher is its own so the
 	// notifier does not depend on the signup block having run; delivery failures are logged and
@@ -234,6 +242,8 @@ func run() error {
 			Blocks:             blockService,
 			Notifications:      notificationService,
 			PlanModeration:     planService,
+			MediaStorage:       mediaStore,
+			MediaDir:           cfg.MediaDir,
 			Reviews:            reviewsService,
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,

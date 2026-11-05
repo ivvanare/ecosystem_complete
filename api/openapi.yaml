@@ -761,6 +761,75 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/admin/places/{coPlace}/photos:
+    post:
+      tags: [Admin]
+      operationId: uploadPlacePhoto
+      summary: Upload an image for a place
+      description: |
+        Requires `place.update`, scoped by ownership. `multipart/form-data` with `file` (max
+        5 MB), an optional `type` (`COVER` | `GALLERY`, default `GALLERY`) and an optional
+        `order`.
+
+        The bytes are verified by content, not by the declared header: a renamed executable is
+        rejected with field `file`. Uploading a `COVER` retires the previous one, because "make
+        this the cover" is what a client means — and the database enforces a single live cover
+        anyway.
+
+        Storage is a local named volume today; the same endpoints will keep working when the
+        storage implementation becomes S3.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+                type: { type: string, enum: [COVER, GALLERY], default: GALLERY }
+                order: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "201":
+          description: Stored and recorded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlacePhoto" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/admin/places/{coPlace}/photos/{coPhoto}:
+    delete:
+      tags: [Admin]
+      operationId: removePlacePhoto
+      summary: Retire an image
+      description: |
+        Requires `place.update`, scoped by ownership. Logical: the row stays so an audit can see
+        what was published.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: coPhoto
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Retired. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/admin/places/{coPlace}/menu:
     get:
       tags: [Admin]
@@ -2509,6 +2578,15 @@ components:
           nullable: true
           description: Absent means "no date yet", which is a real state.
         partySize: { type: integer, minimum: 1, maximum: 50 }
+    PlacePhoto:
+      type: object
+      additionalProperties: false
+      required: [coPhoto, url, type, order]
+      properties:
+        coPhoto: { type: string, format: uuid }
+        url: { type: string, description: Path under the API origin, e.g. /media/places/... }
+        type: { type: string, enum: [COVER, GALLERY] }
+        order: { type: integer }
     PlaceMenu:
       type: object
       additionalProperties: false

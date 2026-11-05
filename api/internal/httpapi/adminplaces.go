@@ -27,6 +27,8 @@ type PlaceBackoffice interface {
 	Menus(ctx context.Context, viewer placeadmin.Viewer, placeID string) ([]placeadmin.Menu, error)
 	ReplaceMenus(ctx context.Context, viewer placeadmin.Viewer, actorID, placeID string, menus []placeadmin.Menu) error
 	AttributeCatalogue(ctx context.Context) ([]placeadmin.Category, error)
+	AddPhoto(ctx context.Context, viewer placeadmin.Viewer, actorID, placeID, url, photoType string, order int) (placeadmin.Photo, error)
+	RemovePhoto(ctx context.Context, viewer placeadmin.Viewer, actorID, photoID string) error
 }
 
 // Permissions the places backoffice is built from. place.create/update/delete are seeded in
@@ -44,6 +46,7 @@ const (
 
 type placesAdminHandlers struct {
 	service    PlaceBackoffice
+	storage    Storage
 	parser     TokenParser
 	authorizer Authorizer
 	logger     *slog.Logger
@@ -107,6 +110,7 @@ type placeResponse struct {
 	Schedules  []placeadmin.Schedule `json:"schedules"`
 	Attributes []string              `json:"attributes"`
 	Menus      []placeadmin.Menu     `json:"menus"`
+	Photos     []placeadmin.Photo    `json:"photos"`
 	CreatedAt  time.Time             `json:"createdAt"`
 	UpdatedAt  time.Time             `json:"updatedAt"`
 	DeletedAt  *time.Time            `json:"deletedAt"`
@@ -119,7 +123,7 @@ func toPlaceResponse(place placeadmin.Place) placeResponse {
 		Country: place.Country, Region: place.Region, Timezone: place.Timezone,
 		Latitude: place.Latitude, Longitude: place.Longitude, Address: place.Address,
 		Status: place.Status, Schedules: place.Schedules, Attributes: place.Attributes,
-		Menus:     place.Menus,
+		Menus: place.Menus, Photos: place.Photos,
 		CreatedAt: place.CreatedAt, UpdatedAt: place.UpdatedAt,
 		DeletedAt: place.DeletedAt,
 	}
