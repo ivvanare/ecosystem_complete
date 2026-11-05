@@ -1029,3 +1029,23 @@ un precio que el filtro de discovery lee y el cliente nunca ve.
 `GET /v1/place-attributes` es el vocabulario **público** de atributos — el `select` del panel y
 los filtros del móvil necesitan la misma lista, igual que con las categorías. Usá `code` en los
 filtros (`terraza`, `petfriendly`); el uuid es del catálogo y cambia entre entornos.
+
+### 14.3 Fotos
+
+```http
+POST   /v1/admin/places/{coPlace}/photos        multipart/form-data: file, type?, order?
+DELETE /v1/admin/places/{coPlace}/photos/{coPhoto}
+```
+
+Ambos requieren `place.update` y respetan el alcance por ownership.
+
+- **Máximo 5 MB** por archivo. Más grande devuelve `422` con `field: file, code: too_long`.
+- Solo se aceptan `image/jpeg`, `image/png` e `image/webp`, y **se verifica por contenido**, no
+  por el header que declara el cliente: un ejecutable renombrado es `422`.
+- `type` acepta `COVER` o `GALLERY` (default `GALLERY`). **Subir una `COVER` retira la anterior**,
+  que es lo que un cliente quiere decir con "poné esta de portada". Además la base tiene un índice
+  único parcial: dos portadas vivas son imposibles, no solo improbables.
+- El borrado es **lógico**: la fila queda para auditar qué se publicó.
+- La URL devuelta es relativa al origen del API (`/media/places/...`). Hoy los bytes viven en un
+  **volumen nombrado de Docker** (`media:/app/media`); la interfaz de storage permite pasar a S3
+  sin cambiar estos endpoints ni el contrato.

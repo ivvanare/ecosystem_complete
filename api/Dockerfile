@@ -38,6 +38,11 @@ COPY --from=build /out/api /usr/local/bin/api
 COPY --from=build /out/worker /usr/local/bin/worker
 COPY --from=build /out/bootstrap /usr/local/bin/bootstrap
 
+# Media root. It has to exist and belong to the runtime user BEFORE a named volume is mounted
+# there: an empty volume inherits the ownership of the image directory it covers, and a
+# root-owned mount is a directory this user cannot write to.
+RUN mkdir -p /app/media && chown app:app /app/media
+
 # Canonical schema. Copied in, never bind-mounted: a host directory the container user
 # cannot read (mode 700, other uid) would otherwise abort startup.
 COPY database/init /app/database/init

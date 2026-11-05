@@ -19,6 +19,9 @@ services:
       DB_INIT_DIR: /app/database/init
       # Origen del panel (Angular `ng serve` en dev). Vacío = sin CORS.
       CORS_ALLOWED_ORIGINS: http://localhost:4200
+      # Imágenes subidas: volumen nombrado, no bind mount — mismo motivo que los datos de
+      # PostgreSQL. Sirve también para los logos del panel.
+      MEDIA_DIR: /app/media
       MAIL_QUEUE: melia.mail
       SMTP_ADDR: mailpit:1025
       MAIL_FROM: no-reply@melia.test
@@ -43,6 +46,10 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
+    volumes:
+      # Images uploaded by the panel. A named volume, not a bind mount: same reason as the
+      # database data — a host directory the container user cannot read aborts startup.
+      - media:/app/media
     networks:
       - melzone_network
 
@@ -169,6 +176,9 @@ services:
 volumes:
   # Datos de PostgreSQL. Se borra con `docker compose down -v`.
   melzone_pgdata:
+  # Imágenes subidas por el panel. Sobrevive a `restart` y a recrear el contenedor; se borra
+  # sólo con `down -v`, igual que los datos.
+  media:
 
 networks:
   melzone_network:

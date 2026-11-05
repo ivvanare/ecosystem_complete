@@ -30,11 +30,14 @@ const (
 
 // Config is the fully resolved runtime configuration.
 type Config struct {
-	HTTPAddr          string
-	DatabaseURL       string
-	RedisAddr         string
-	RabbitMQURL       string
-	DBInitDir         string
+	HTTPAddr    string
+	DatabaseURL string
+	RedisAddr   string
+	RabbitMQURL string
+	DBInitDir   string
+	// MediaDir is where uploaded images are written and served from. A directory, not a bucket:
+	// the storage interface is what makes S3 a later implementation rather than a later design.
+	MediaDir          string
 	CORSOrigins       []string
 	MailQueue         string
 	SMTPAddr          string
@@ -54,6 +57,9 @@ type Config struct {
 
 // Load reads and validates the configuration. It returns an error naming the offending
 // variable instead of falling back to a default for anything that matters.
+// DefaultMediaDir is where uploaded images live inside the runtime image.
+const DefaultMediaDir = "/app/media"
+
 func Load(getenv func(string) string) (Config, error) {
 	cfg := Config{
 		HTTPAddr:          valueOr(getenv, "HTTP_ADDR", DefaultHTTPAddr),
@@ -62,6 +68,7 @@ func Load(getenv func(string) string) (Config, error) {
 		RabbitMQURL:       lookup(getenv, "RABBITMQ_URL"),
 		DBInitDir:         valueOr(getenv, "DB_INIT_DIR", DefaultDBInitDir),
 		CORSOrigins:       splitList(lookup(getenv, "CORS_ALLOWED_ORIGINS")),
+		MediaDir:          valueOr(getenv, "MEDIA_DIR", DefaultMediaDir),
 		MailQueue:         valueOr(getenv, "MAIL_QUEUE", DefaultMailQueue),
 		SMTPAddr:          valueOr(getenv, "SMTP_ADDR", DefaultSMTPAddr),
 		MailFrom:          valueOr(getenv, "MAIL_FROM", DefaultMailFrom),

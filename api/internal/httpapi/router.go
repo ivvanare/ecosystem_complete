@@ -43,6 +43,8 @@ type Options struct {
 	Blocks             Blocking
 	Notifications      NotificationPreferences
 	PlanModeration     PlanModeration
+	MediaStorage       Storage
+	MediaDir           string
 	Reviews            ReviewService
 }
 
@@ -63,6 +65,11 @@ func New(opts Options) http.Handler {
 	h := &health{probes: opts.Probes, timeout: timeout, logger: logger}
 
 	mux := http.NewServeMux()
+	// Uploaded images are served from the same origin as the API: no CORS surface for a file
+	// that a browser loads as an image.
+	if opts.MediaDir != "" {
+		mux.Handle("GET /media/", http.StripPrefix("/media/", http.FileServer(http.Dir(opts.MediaDir))))
+	}
 	mux.HandleFunc("GET /health/live", h.live)
 	mux.HandleFunc("GET /health/ready", h.ready)
 
@@ -225,7 +232,7 @@ func New(opts Options) http.Handler {
 	if opts.PlacesAdmin != nil {
 		backoffice := &placesAdminHandlers{
 			service: opts.PlacesAdmin, parser: opts.TokenParser,
-			authorizer: opts.Authorizer, logger: logger,
+			authorizer: opts.Authorizer, logger: logger, storage: opts.MediaStorage,
 		}
 		mux.HandleFunc("GET /v1/admin/places",
 			RequireAuth(opts.TokenParser,
@@ -255,6 +262,10 @@ func New(opts Options) http.Handler {
 		mux.HandleFunc("PUT /v1/admin/places/{coPlace}/menu", RequireAuth(opts.TokenParser,
 			RequirePermission(opts.Authorizer, PlaceUpdatePermission, logger, backoffice.menu)))
 		mux.HandleFunc("GET /v1/place-attributes", backoffice.attributeCatalogue)
+		mux.HandleFunc("POST /v1/admin/places/{coPlace}/photos", RequireAuth(opts.TokenParser,
+			RequirePermission(opts.Authorizer, PlaceUpdatePermission, logger, backoffice.uploadPhoto)))
+		mux.HandleFunc("DELETE /v1/admin/places/{coPlace}/photos/{coPhoto}", RequireAuth(opts.TokenParser,
+			RequirePermission(opts.Authorizer, PlaceUpdatePermission, logger, backoffice.removePhoto)))
 		mux.HandleFunc("DELETE /v1/admin/places/{coPlace}",
 			RequireAuth(opts.TokenParser,
 				RequirePermission(opts.Authorizer, PlaceDeletePermission, logger, backoffice.retire)))

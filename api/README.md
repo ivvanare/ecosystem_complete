@@ -50,6 +50,7 @@ nombrando la variable; no hay fallback silencioso a otra base.
 | `JWT_SECRET` | sí | — | clave HS256, mínimo 32 caracteres |
 | `HTTP_ADDR` | no | `:8080` | dirección de escucha |
 | `RABBITMQ_URL` | no | vacío | sin él, registro y recuperación quedan deshabilitados |
+| `MEDIA_DIR` | `/app/media` | Where uploaded place images are written and served from |
 | `DB_INIT_DIR` | no | `/app/database/init` | archivos `NN-*.sql` del esquema |
 | `DB_AUTO_MIGRATE` | no | `true` | aplica archivos pendientes al arrancar |
 | `CORS_ALLOWED_ORIGINS` | no | vacío | orígenes del panel, separados por coma; vacío = sin CORS |
