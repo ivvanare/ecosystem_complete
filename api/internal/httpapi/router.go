@@ -39,6 +39,7 @@ type Options struct {
 	Follows            SocialGraph
 	Checkins           Checkins
 	PlacesAdmin        PlaceBackoffice
+	Plans              PlanCollaboration
 	Reviews            ReviewService
 }
 
@@ -153,6 +154,18 @@ func New(opts Options) http.Handler {
 	if opts.Discovery != nil {
 		placesHandler := &placesHandlers{discovery: opts.Discovery, logger: logger}
 		mux.HandleFunc("GET /v1/places", placesHandler.places)
+	}
+
+	// Plans (P3a): the mobile consumer's collaborative planning (D21). Authorization is
+	// per-plan role, so these routes take auth but no capability permission.
+	if opts.Plans != nil {
+		plansHandler := &planHandlers{service: opts.Plans, logger: logger}
+		mux.HandleFunc("POST /v1/plans", RequireAuth(opts.TokenParser, plansHandler.create))
+		mux.HandleFunc("GET /v1/plans", RequireAuth(opts.TokenParser, plansHandler.listed))
+		mux.HandleFunc("GET /v1/plans/{coRoute}", RequireAuth(opts.TokenParser, plansHandler.read))
+		mux.HandleFunc("PATCH /v1/plans/{coRoute}", RequireAuth(opts.TokenParser, plansHandler.update))
+		mux.HandleFunc("POST /v1/plans/{coRoute}/members", RequireAuth(opts.TokenParser, plansHandler.join))
+		mux.HandleFunc("DELETE /v1/plans/{coRoute}/members/{coUser}", RequireAuth(opts.TokenParser, plansHandler.leave))
 	}
 
 	// Places backoffice (place-ownership): the catalogue is curated, so writing it is

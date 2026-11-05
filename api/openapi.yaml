@@ -761,6 +761,155 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/plans:
+    post:
+      tags: [Plans]
+      operationId: createPlan
+      summary: Create a plan
+      description: |
+        The creator becomes `OWNER` in the same transaction. `visibility` defaults to
+        `PRIVATE`: a plan must never become public by omission.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PlanWrite" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Plan" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    get:
+      tags: [Plans]
+      operationId: listPlans
+      summary: List the plans the caller belongs to
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page of plans, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data, page, limit, total]
+                properties:
+                  page: { type: integer }
+                  limit: { type: integer }
+                  total: { type: integer }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Plan" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/plans/{coRoute}:
+    get:
+      tags: [Plans]
+      operationId: getPlan
+      summary: Read one plan
+      description: |
+        Visible to a member, and to any authenticated caller when the plan is `PUBLIC`.
+        Anything else is `404` — a private plan does not confirm that it exists.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coRoute
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The plan.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Plan" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Plans]
+      operationId: updatePlan
+      summary: Update a plan
+      description: |
+        Requires `EDITOR` or `OWNER`. `visibility` is `OWNER` only: changing PRIVATE to PUBLIC
+        touches everyone already invited, and taking a public plan private hides it from the
+        people who joined. A visible plan with an insufficient role answers `403`; an invisible
+        one answers `404`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coRoute
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PlanWrite" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Plan" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/plans/{coRoute}/members:
+    post:
+      tags: [Plans]
+      operationId: joinPlan
+      summary: Join a public plan
+      description: |
+        Only a `PUBLIC` plan accepts a self-join, and it grants `VIEWER` — always. An open door
+        that hands out `EDITOR` is a plan anyone can rearrange and empty, and a festival is the
+        worst case. A private plan answers `404`, and joining twice changes nothing.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coRoute
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Member (already or newly). }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/plans/{coRoute}/members/{coUser}:
+    delete:
+      tags: [Plans]
+      operationId: leavePlan
+      summary: Leave a plan, or remove a member
+      description: |
+        A caller may remove themselves; an `OWNER` may remove anyone else. An owner cannot leave
+        by themselves — a plan without an owner is invalid. Removing a non-member is a no-op
+        `204`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coRoute
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: coUser
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: No longer a member. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/admin/places:
     get:
       tags: [Admin]
@@ -1514,6 +1663,40 @@ components:
                   - { field: password, code: too_short }
 
   schemas:
+    Plan:
+      type: object
+      additionalProperties: false
+      required: [coRoute, coUser, name, description, visibility, status, scheduledAt, partySize,
+                 viewerRole, memberCount, createdAt, updatedAt]
+      properties:
+        coRoute: { type: string, format: uuid }
+        coUser: { type: string, format: uuid, description: Creator. }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        visibility: { type: string, enum: [PRIVATE, PUBLIC] }
+        status: { type: string, enum: [ACTIVE, INACTIVE] }
+        scheduledAt: { type: string, format: date-time, nullable: true }
+        partySize: { type: integer, minimum: 1, maximum: 50, nullable: true }
+        viewerRole:
+          type: string
+          enum: [OWNER, EDITOR, VIEWER, ""]
+          description: The caller's role; empty when the plan is public and not joined.
+        memberCount: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    PlanWrite:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, maxLength: 160 }
+        description: { type: string, nullable: true, maxLength: 2000 }
+        visibility: { type: string, enum: [PRIVATE, PUBLIC] }
+        scheduledAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Absent means "no date yet", which is a real state.
+        partySize: { type: integer, minimum: 1, maximum: 50 }
     AdminPlace:
       type: object
       additionalProperties: false

@@ -28,6 +28,7 @@ import (
 	"github.com/ivvanare/ecosystem_complete/api/internal/password"
 	"github.com/ivvanare/ecosystem_complete/api/internal/placeadmin"
 	"github.com/ivvanare/ecosystem_complete/api/internal/places"
+	"github.com/ivvanare/ecosystem_complete/api/internal/plans"
 	"github.com/ivvanare/ecosystem_complete/api/internal/probe"
 	"github.com/ivvanare/ecosystem_complete/api/internal/queue"
 	"github.com/ivvanare/ecosystem_complete/api/internal/reviews"
@@ -158,6 +159,9 @@ func run() error {
 		signupRequester = signup.New(signup.NewPostgresStore(pool), publisher, logger)
 	}
 
+	// Plans (P3a): visibility is an attribute, membership carries the role.
+	planService := plans.NewService(plans.NewPostgresStore(pool), logger)
+
 	// Places backoffice (place-ownership): the ownership viewer is resolved per request
 	// from admin.access, so a owner-editor sees only their own rows.
 	placeBackoffice := placeadmin.NewService(placeadmin.NewPostgresStore(pool), logger)
@@ -202,6 +206,7 @@ func run() error {
 			Follows:            followService,
 			Checkins:           checkinService,
 			PlacesAdmin:        placeBackoffice,
+			Plans:              planService,
 			Reviews:            reviewsService,
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,

@@ -810,3 +810,35 @@ no puede verla no debe poder enumerar el catálogo por diferencia de códigos.
 Toda escritura anuncia el actor (`app.current_user_id`) en la misma transacción, así que el
 trigger de historia de `tb_place` registra `co_actor_user`. El servicio nunca escribe una fila
 de historia.
+
+---
+
+## 15. Planes colaborativos
+
+```http
+POST   /v1/plans                                    { name, description?, visibility?, scheduledAt?, partySize? }
+GET    /v1/plans?page=&limit=
+GET    /v1/plans/{coRoute}
+PATCH  /v1/plans/{coRoute}
+POST   /v1/plans/{coRoute}/members
+DELETE /v1/plans/{coRoute}/members/{coUser}
+```
+
+Un festival público y un viaje privado son la misma entidad con puertas distintas: la
+visibilidad es un atributo del plan y la membresía es una relación que lleva el rol
+(`OWNER` / `EDITOR` / `VIEWER`).
+
+**Reglas que importan:**
+
+- `visibility` arranca en `PRIVATE`. Un plan nunca se vuelve público por omisión.
+- El creador queda como `OWNER` en la misma transacción que crea el plan: un plan sin dueño es
+  inválido.
+- **El self-join a un plan público otorga `VIEWER`, siempre.** Una puerta abierta que reparte
+  `EDITOR` es un plan que cualquiera puede reordenar y vaciar, y un festival es el peor caso.
+  Promover a `EDITOR` es una acción del dueño.
+- Unirse a un plan **privado** responde `404`: no confirma que exista.
+- Un plan **visible** con rol insuficiente responde `403`: ya sabés que existe, te falta permiso.
+- Cambiar la visibilidad es **solo del `OWNER`**: pasar a público toca a todos los ya invitados.
+- El dueño no puede salir del plan por su cuenta: primero transfiere la propiedad.
+- Un plan inactivo (moderado) responde `404` a los no-owner, y sus miembros conservan la
+  lectura para no perder el itinerario.
