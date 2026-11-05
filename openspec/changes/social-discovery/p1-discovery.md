@@ -293,6 +293,7 @@ matter:
 | `PATCH` | `/v1/places/{coPlace}/reviews/{coReview}` | bearer, author | `403 permission_denied` for anyone else |
 | `DELETE` | `/v1/places/{coPlace}/reviews/{coReview}` | bearer, author only | Logical delete (`dt_deleted_at`), so the author may review again later. A moderator retires content through the admin route (S17) |
 | `PATCH` | `/v1/admin/reviews/{coReview}` | bearer, `review.moderate` | `{status: ACTIVE\|INACTIVE\|MODERATED}` |
+| `GET` | `/v1/admin/reviews` | bearer, `review.moderate` | **Pending.** Lists reviews to moderate, paginated, filters `status` (`ACTIVE`/`INACTIVE`/`MODERATED`), `placeId`, `authorId`, newest first. Without it the moderation screen has no entry point: the admin route needs a `coReview` nobody can discover |
 
 Details that are easy to get wrong and are therefore pinned:
 

@@ -145,6 +145,100 @@ returns the author's display-safe fields, and never computes a place average in 
 
 ---
 
+---
+
+# Commit 3 — search, filters and their migration
+
+The discovery surface gets the three questions a person actually asks: "what is this place
+called", "who serves this dish", and "which of these is a terrace that is open now and cheap".
+Two ledger files carry it: `18` for the attribute vocabulary and `19` for the text search.
+
+## Specs
+
+**S15 — Attributes are a governed many-to-many, categories stay one-per-place.**
+`core.tb_place_attribute` (`co_attribute`, `tx_code` unique among live rows, `tx_name`,
+`tx_description`, `tx_status`, timestamps) plus `core.tb_place_attribute_link`
+(`co_place`, `co_attribute`) with a **composite primary key** and no soft delete — the same
+reason `tb_route_place` has none. Seed the vocabulary in the migration: `terraza`,
+`petfriendly`, `frente_playa`, `aire_libre`, `musica_en_vivo`. Categories that the product
+names (`rumba`, and at most `restaurante`/`bar`) are seeded into `core.tb_place_category` by
+the **same new ledger file** — `06-seeds.sql` is already recorded and an applied migration is
+never edited.
+
+**S16 — Text search needs an immutable unaccent.** `unaccent()` is `STABLE`, so it cannot
+appear inside a `GENERATED ALWAYS AS … STORED` column: PostgreSQL rejects the expression.
+Create an `IMMUTABLE` SQL wrapper (`SELECT public.unaccent('public.unaccent', $1)`) and build
+the generated `tsvector` columns from it, so the stored vector and the query vector are
+produced by the same expression. Columns: `tb_place` on `tx_title`, `tb_menu_item` on
+`tx_name || ' ' || coalesce(tx_description,'')`. GIN index on each. Configuration `simple`,
+not `spanish`: the analyzer must not stem place and dish names into each other, and accent
+folding already happens through the wrapper.
+
+**S17 — `q` and `dish` are different questions.** `q` searches the place's commercial name.
+`dish` searches menu items and returns the **places** that carry a match, via an `EXISTS` over
+`tb_menu` → `tb_menu_item` that respects both `dt_deleted_at IS NULL` and
+`tx_status = 'ACTIVE'` on each. They are separate parameters with separate indexes; a single
+box would make one of the two questions unanswerable.
+
+**S18 — Attribute filters are conjunctive.** `attributes=terraza,petfriendly` means *both*.
+Implement it by counting the intersection against the requested cardinality — a plain
+`JOIN … IN` silently degrades to "any of them", which is a different product. An attribute
+code that is not in the catalogue is `422` with field `attributes`, code `unknown`.
+
+**S19 — `openAt` is a schedule question, not an attribute.** Answered from
+`core.tb_place_schedule` in the **place's own** `tx_timezone`, with both branches: a normal day
+and the overnight case (`dt_close_time <= dt_open_time`, where the interval belongs to the day
+it opened). Without the second branch a place open 20:00–02:00 reports closed at 23:00.
+
+**S20 — `maxPrice` is USD.** No `currency` parameter (D19). The filter matches a place with at
+least one active item under the amount, on an active menu, whose currency row is `USD`, via an
+indexed `EXISTS`. An item priced in another currency does not match, and that is documented
+behaviour.
+
+**S21 — Contract and vocabulary, no new error codes.** Every new parameter goes into
+`openapi.yaml` (English) and `API.md` (Spanish) before the code, with the closed field
+vocabulary: `q`/`dish` shorter than 2 or longer than 80 characters, `openAt` not an ISO-8601
+instant, `maxPrice` negative or non-numeric, `attributes` unknown. Filters compose with the
+spatial predicates and with each other; `q`/`dish`/`attributes`/`maxPrice`/`openAt` are valid
+in list mode and in map mode.
+
+**S22 — The drift check keeps telling the truth.** `database/diagram_base.txt` gains both
+tables and the generated columns; `database/verify_base_model.sql` gains checks for the
+attribute pair, the composite key, the immutable wrapper existing, both `tsvector` columns
+being `attgenerated = 's'`, the GIN indexes, and a real match through the wrapper. The check
+must still pass on a scratch database and on the live one.
+
+**S23 — The seed demonstrates the filters.** Extend `database/seed/` so the demo places carry
+attributes (`terraza`, `petfriendly`, `frente_playa` spread across them) and at least two menu
+items with USD prices, one under 10 and one over. Idempotent, still outside `database/init`.
+
+## Repo rules that bite here
+
+- Extensions ship in their own ledger file (`19`), with `CREATE EXTENSION IF NOT EXISTS`.
+- The immutable wrapper must live in a schema the search path reaches and must be documented
+  in the file header, because marking a function immutable when it is not is a correctness
+  decision, not a syntax one.
+- `go test ./...` must stay green without PostgreSQL: the SQL shape is asserted against the
+  recording fake, the vocabulary and validation against pure functions.
+
+## Tasks
+
+- T13 — Ledger `18-place-attributes.sql`: attribute catalogue + link table + seeds + the new
+  categories.
+- T14 — Ledger `19-place-search.sql`: `pg_trgm`, `unaccent`, the immutable wrapper, the two
+  generated `tsvector` columns and their GIN indexes.
+- T15 — `internal/places`: the new predicates in the list and map queries (`q`, `dish`,
+  attributes, `maxPrice`, `openAt`), composing with the existing ones.
+- T16 — `internal/httpapi`: parse and validate the new parameters, map them down, keep
+  `page`/`limit` behaviour unchanged.
+- T17 — `openapi.yaml` + `API.md`: the new parameters, their bounds, the field vocabulary
+  entries, and the flow in Spanish.
+- T18 — Seed update with attributes and priced menu items (idempotent).
+- T19 — Verify: suite and `internal/contract` green, drift check green on a scratch database,
+  and the SQL proven on the live database inside a transaction that rolls back.
+
+---
+
 ## Log
 
 - L1 — Human authorization, verbatim: "no pushemos todavia, hasta que se pruebe, la imagen la
@@ -158,3 +252,14 @@ returns the author's display-safe fields, and never computes a place average in 
   and the branch lacked P0, so compose recreated the database on plain postgres over a
   PostGIS volume. Both fixed.
 - L4 — Human authorization for this slice, verbatim: "si dale continuemos con el plan".
+- L5 — Commit 2 verified end to end against the running API with real signed-up users: 201,
+  409 review_already_exists, 403 permission_denied, 204 delete, 201 re-review after the
+  logical delete (the partial index proven on the real table), and 422 for rating 9. History
+  rows for the three operations carry co_actor_user. Two contradictions were corrected: §6 of
+  p1-discovery said DELETE was author-or-moderator while S17 says author-only, and the diagram
+  claimed the partial index frees moderated reviews when the predicate is only
+  dt_deleted_at IS NULL (recorded as Q7).
+- L6 — Human instruction for this slice: continue, and tell the melia-admin session the
+  endpoints exist. Done: a message went to that session with the routes, the coordinate-order
+  trap (near is lat,long; bbox is longitude-first), the MapLibre decision with the warning not
+  to use its own clustering, and the note that sort=trending still degrades.

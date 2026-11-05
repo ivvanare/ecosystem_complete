@@ -234,6 +234,25 @@ Table: `core.tb_user_taste_profile`.
   instead of the catalogue being widened for one endpoint. Result: Phase 1 introduces exactly
   one new error code, `review_already_exists`.
 
+- L14 — P1 commit 3 (search and filters) shipped as e473a17 + a4a82ad: ledger 18 seeds the
+  attribute vocabulary (terraza, petfriendly, frente_playa, aire_libre, musica_en_vivo) and the
+  categories rumba/restaurante/bar; ledger 19 ships pg_trgm, unaccent, an IMMUTABLE wrapper
+  (`unaccent()` is STABLE and cannot sit inside a GENERATED column), and two generated
+  tsvector columns with GIN indexes built from the same wrapper the query uses.
+  - Verified on the live database inside a transaction: accent- and case-insensitive name
+    search, dish search returning places through tb_menu, conjunctive attributes (count of the
+    intersection equals the requested cardinality), the overnight openAt branch (a 11:00-02:00
+    place is open at 23:00) and USD-only price matching. Rollback left no rows.
+  - **A gap the SPA session found and the plan had missed:** `PATCH /v1/admin/reviews/{coReview}`
+    existed with no way to discover a `coReview`. Moderation needs
+    `GET /v1/admin/reviews?status&placeId&authorId&page&limit` behind `review.moderate`.
+    Recorded as pending in p1-discovery.md §6; it is a read route, so it can land with the
+    trending commit.
+  - **A defect found only by driving the running binary:** the migrations were applied but the
+    container still served the previous image, so every new filter returned the same page and
+    `attributes=inventado` was silently accepted instead of 422. Unit tests and a green suite
+    cannot catch a deployment that was never rolled out — the HTTP smoke test did.
+
 - L13 — P1 commit 2 (the reviews write path) shipped as 9741b3e: five routes, the only new
   error code `review_already_exists` mapped from SQLSTATE 23505 on
   `ux_tb_review_user_place_active`, logical delete, moderation behind the existing
