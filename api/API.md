@@ -800,7 +800,7 @@ DELETE /v1/admin/places/{coPlace}
 | Ruta | Permiso | Nota |
 |---|---|---|
 | `GET /v1/admin/places` | `place.update` | Paginado, alcance por ownership. Por defecto lista el catálogo vivo; `status=DELETED` lista los retirados |
-| `GET /v1/admin/places/{coPlace}` | `place.update` | Una fila que no podés ver responde **404**, no 403 |
+| `GET /v1/admin/places/{coPlace}` | `place.update` | Una fila que no podés ver responde **404**, no 403. Trae **todo el contenido** (`schedules`, `attributes`, `menus`, `photos`) y el `rating` agregado, así el formulario se llena con una sola llamada |
 | `POST /v1/admin/places` | `place.manage_all` | Solo el backoffice crea y asigna dueño: el catálogo se cura, y el autoservicio es otra decisión |
 | `PATCH /v1/admin/places/{coPlace}` | `place.update` | Parcial: campo ausente = sin cambios; `null` explícito limpia un nullable. Solo `place.manage_all` reasigna dueño |
 | `DELETE /v1/admin/places/{coPlace}` | `place.delete` | **Borrado lógico**: la fila queda, y discovery, reseñas y check-ins dejan de servirla |

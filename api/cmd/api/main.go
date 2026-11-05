@@ -197,6 +197,9 @@ func run() error {
 	// Places backoffice (place-ownership): the ownership viewer is resolved per request
 	// from admin.access, so a owner-editor sees only their own rows.
 	placeBackoffice := placeadmin.NewService(placeadmin.NewPostgresStore(pool), logger)
+	// The backoffice reads the same published aggregates as discovery: one source for the
+	// rating, so the panel and the app can never disagree about it.
+	placeBackoffice.SetStats(places.NewRedisStats(redisClient))
 
 	// Social graph (P2): follow and check-in belong to the mobile consumer (D21); the
 	// admin panel has no counterpart for them.

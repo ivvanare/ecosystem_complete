@@ -12,6 +12,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/ivvanare/ecosystem_complete/api/internal/places"
 )
 
 // Errors the transport maps onto responses.
@@ -53,9 +55,12 @@ type Place struct {
 	Attributes []string
 	Menus      []Menu
 	Photos     []Photo
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-	DeletedAt  *time.Time
+	// Rating is the worker-published aggregate. Nil means "nothing published yet", never 0:
+	// the panel must be able to tell an unrated place from a badly rated one.
+	Rating    *Rating
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt *time.Time
 }
 
 // Schedule is one weekly opening interval. A close time at or before the open time crosses
@@ -81,6 +86,22 @@ type Menu struct {
 	Description *string    `json:"description"`
 	Items       []MenuItem `json:"items"`
 }
+
+// Rating is the aggregate the worker publishes for a place.
+type Rating struct {
+	Average float64
+	Count   int
+}
+
+// StatsReader reads the worker-published aggregates.
+type StatsReader interface {
+	PlaceStats(ctx context.Context, ids []string) (map[string]Stats, error)
+}
+
+// Stats is an alias, not a copy: the backoffice and the discovery path read the same aggregate,
+// and a duplicate type would need an adapter at the seam for no gain. The dependency is one-way
+// (places does not know the backoffice exists).
+type Stats = places.Stats
 
 // Photo is one image of a place.
 type Photo struct {
@@ -183,6 +204,7 @@ type Store interface {
 type Service struct {
 	store  Store
 	logger *slog.Logger
+	stats  StatsReader
 }
 
 // NewService wires the backoffice.
@@ -193,6 +215,10 @@ func NewService(store Store, logger *slog.Logger) *Service {
 	return &Service{store: store, logger: logger}
 }
 
+// SetStats wires the aggregate reader. Without it the detail simply reports no rating, which is
+// the same answer a place with nothing published gets.
+func (s *Service) SetStats(stats StatsReader) { s.stats = stats }
+
 // List returns the places the viewer may see (S2).
 func (s *Service) List(ctx context.Context, viewer Viewer, filter Filter, page, limit int) (Page, error) {
 	rows, total, err := s.store.List(ctx, viewer, filter, page, limit)
@@ -202,9 +228,24 @@ func (s *Service) List(ctx context.Context, viewer Viewer, filter Filter, page, 
 	return Page{Rows: rows, Total: total, Page: page, Limit: limit}, nil
 }
 
-// Get returns one place, scoped by ownership.
+// Get returns one place, scoped by ownership, with the published aggregate when there is one.
 func (s *Service) Get(ctx context.Context, viewer Viewer, placeID string) (Place, error) {
-	return s.store.Get(ctx, viewer, placeID)
+	place, err := s.store.Get(ctx, viewer, placeID)
+	if err != nil {
+		return Place{}, err
+	}
+	if s.stats != nil {
+		if published, err := s.stats.PlaceStats(ctx, []string{placeID}); err == nil {
+			if stats, ok := published[placeID]; ok {
+				place.Rating = &Rating{Average: stats.Average, Count: stats.Count}
+			}
+		} else {
+			// A cache miss is a missing rating, never a failed read: the panel is for editing,
+			// and an unavailable aggregate must not block that.
+			s.logger.Warn("place aggregate unavailable", slog.String("error", err.Error()))
+		}
+	}
+	return place, nil
 }
 
 // Create inserts a place. The transport has already required admin.access (S3); the service
