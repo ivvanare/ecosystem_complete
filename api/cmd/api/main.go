@@ -26,6 +26,7 @@ import (
 	"github.com/ivvanare/ecosystem_complete/api/internal/invitation"
 	"github.com/ivvanare/ecosystem_complete/api/internal/login"
 	"github.com/ivvanare/ecosystem_complete/api/internal/password"
+	"github.com/ivvanare/ecosystem_complete/api/internal/placeadmin"
 	"github.com/ivvanare/ecosystem_complete/api/internal/places"
 	"github.com/ivvanare/ecosystem_complete/api/internal/probe"
 	"github.com/ivvanare/ecosystem_complete/api/internal/queue"
@@ -157,6 +158,10 @@ func run() error {
 		signupRequester = signup.New(signup.NewPostgresStore(pool), publisher, logger)
 	}
 
+	// Places backoffice (place-ownership): the ownership viewer is resolved per request
+	// from admin.access, so a owner-editor sees only their own rows.
+	placeBackoffice := placeadmin.NewService(placeadmin.NewPostgresStore(pool), logger)
+
 	// Social graph (P2): follow and check-in belong to the mobile consumer (D21); the
 	// admin panel has no counterpart for them.
 	followService := follow.NewService(follow.NewPostgresStore(pool), logger)
@@ -196,6 +201,7 @@ func run() error {
 			Discovery:          discovery,
 			Follows:            followService,
 			Checkins:           checkinService,
+			PlacesAdmin:        placeBackoffice,
 			Reviews:            reviewsService,
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,

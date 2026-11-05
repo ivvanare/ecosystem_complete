@@ -38,6 +38,7 @@ type Options struct {
 	Discovery          PlaceDiscovery
 	Follows            SocialGraph
 	Checkins           Checkins
+	PlacesAdmin        PlaceBackoffice
 	Reviews            ReviewService
 }
 
@@ -152,6 +153,33 @@ func New(opts Options) http.Handler {
 	if opts.Discovery != nil {
 		placesHandler := &placesHandlers{discovery: opts.Discovery, logger: logger}
 		mux.HandleFunc("GET /v1/places", placesHandler.places)
+	}
+
+	// Places backoffice (place-ownership): the catalogue is curated, so writing it is
+	// gated by admin.access for creation and by the ownership viewer for the rest.
+	if opts.PlacesAdmin != nil {
+		backoffice := &placesAdminHandlers{
+			service: opts.PlacesAdmin, parser: opts.TokenParser,
+			authorizer: opts.Authorizer, logger: logger,
+		}
+		mux.HandleFunc("GET /v1/admin/places",
+			RequireAuth(opts.TokenParser,
+				RequirePermission(opts.Authorizer, PlaceUpdatePermission, logger, backoffice.listed)))
+		mux.HandleFunc("GET /v1/admin/places/{coPlace}",
+			RequireAuth(opts.TokenParser,
+				RequirePermission(opts.Authorizer, PlaceUpdatePermission, logger, backoffice.read)))
+		// Creation is the operator capability, not admin.access: the seeded EDITOR role
+		// holds admin.access (it means "may enter the backoffice"), and creating a curated
+		// catalogue entry is not something every editor may do.
+		mux.HandleFunc("POST /v1/admin/places",
+			RequireAuth(opts.TokenParser,
+				RequirePermission(opts.Authorizer, PlaceManageAllPermission, logger, backoffice.create)))
+		mux.HandleFunc("PATCH /v1/admin/places/{coPlace}",
+			RequireAuth(opts.TokenParser,
+				RequirePermission(opts.Authorizer, PlaceUpdatePermission, logger, backoffice.update)))
+		mux.HandleFunc("DELETE /v1/admin/places/{coPlace}",
+			RequireAuth(opts.TokenParser,
+				RequirePermission(opts.Authorizer, PlaceDeletePermission, logger, backoffice.retire)))
 	}
 
 	// Social graph: the consumer is the mobile app (D21), so these are authenticated

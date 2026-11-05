@@ -761,6 +761,157 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/admin/places:
+    get:
+      tags: [Admin]
+      operationId: listAdminPlaces
+      summary: List places in the backoffice
+      description: |
+        Requires `place.update`. The result is scoped by ownership: a caller holding
+        `place.manage_all` sees every place; everybody else sees only the rows whose
+        `coOwnerUser` is their own account. Curated places (owner NULL) therefore belong to
+        the backoffice and are invisible to an owner-editor.
+
+        By default the live catalogue is listed; `status=DELETED` lists the retired rows
+        instead, because a logical delete has to remain inspectable.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          description: Case-insensitive substring of the commercial title.
+          schema: { type: string, maxLength: 80 }
+        - name: status
+          in: query
+          schema: { type: string, enum: [ACTIVE, INACTIVE, DELETED] }
+        - name: categoryId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: country
+          in: query
+          schema: { type: string, pattern: "^[A-Z]{2}$" }
+        - name: region
+          in: query
+          schema: { type: string, pattern: "^[A-Z]{2}-[A-Z0-9]{1,3}$" }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page of places, newest first.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - type: object
+                    additionalProperties: false
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/AdminPlace" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    post:
+      tags: [Admin]
+      operationId: createAdminPlace
+      summary: Create a place
+      description: |
+        Requires `place.manage_all`: operating the whole catalogue. `admin.access` would be too
+        wide, because the seeded EDITOR role already holds it — that permission means "may
+        enter the backoffice", not "may create catalogue entries". `coOwnerUser` assigns the
+        owner; omit it for a row the backoffice curates itself.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminPlaceWrite" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminPlace" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/admin/places/{coPlace}:
+    get:
+      tags: [Admin]
+      operationId: getAdminPlace
+      summary: Read one place
+      description: |
+        Requires `place.update`. Scoped by ownership: a row the caller may not see answers
+        `404`, not `403`, because a caller who may not see a row must not learn it exists.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The place.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminPlace" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Admin]
+      operationId: updateAdminPlace
+      summary: Update a place
+      description: |
+        Requires `place.update`. Partial: an absent field is left alone, and an explicit
+        `null` clears a nullable one. Only a caller with `admin.access` may reassign
+        `coOwnerUser` — ownership is not something an owner hands over.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminPlaceWrite" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminPlace" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    delete:
+      tags: [Admin]
+      operationId: retireAdminPlace
+      summary: Retire a place
+      description: |
+        Requires `place.delete`. Logical: the row stays and the public read paths (discovery,
+        reviews, check-ins) stop serving it. Nothing is physically removed.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Retired. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/admin/reviews:
     get:
       tags: [Admin]
@@ -1363,6 +1514,58 @@ components:
                   - { field: password, code: too_short }
 
   schemas:
+    AdminPlace:
+      type: object
+      additionalProperties: false
+      required: [coPlace, coOwnerUser, name, title, description, category, country, region,
+                 timezone, latitude, longitude, address, status, createdAt, updatedAt, deletedAt]
+      properties:
+        coPlace: { type: string, format: uuid }
+        coOwnerUser:
+          type: string
+          format: uuid
+          nullable: true
+          description: NULL for a place the backoffice curates itself.
+        name: { type: string, description: Legal name. Admin-only; never in public reads. }
+        title: { type: string, description: Commercial name shown in the app. }
+        description: { type: string, nullable: true }
+        category:
+          type: object
+          additionalProperties: false
+          required: [id, name]
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+        country: { type: string, pattern: "^[A-Z]{2}$" }
+        region: { type: string, nullable: true }
+        timezone: { type: string }
+        latitude: { type: number }
+        longitude: { type: number }
+        address: { type: string, nullable: true }
+        status: { type: string, enum: [ACTIVE, INACTIVE, SUSPENDED] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        deletedAt: { type: string, format: date-time, nullable: true }
+    AdminPlaceWrite:
+      type: object
+      additionalProperties: false
+      properties:
+        coOwnerUser:
+          type: string
+          format: uuid
+          nullable: true
+          description: Only a caller with admin.access may set or change it.
+        name: { type: string, maxLength: 160 }
+        title: { type: string, maxLength: 160 }
+        description: { type: string, nullable: true, maxLength: 2000 }
+        coPlaceCategory: { type: string, format: uuid }
+        country: { type: string, pattern: "^[A-Z]{2}$" }
+        region: { type: string, nullable: true, pattern: "^[A-Z]{2}-[A-Z0-9]{1,3}$" }
+        timezone: { type: string, description: IANA name, e.g. America/Caracas. }
+        latitude: { type: number, minimum: -90, maximum: 90 }
+        longitude: { type: number, minimum: -180, maximum: 180 }
+        address: { type: string, nullable: true, maxLength: 300 }
+        status: { type: string, enum: [ACTIVE, INACTIVE] }
     GraphMember:
       type: object
       additionalProperties: false

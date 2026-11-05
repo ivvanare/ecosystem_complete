@@ -777,3 +777,36 @@ filtros son opcionales y el valor vacío lista todo.
 Ojo con la interacción ya conocida: moderar **no** borra. Una reseña `MODERATED` sigue visible
 para su autor y para el moderador, y desde la migración 20 el autor puede volver a reseñar ese
 lugar. Si querés impedir que alguien publique, eso es bloqueo de cuenta, no moderación.
+
+---
+
+## 14. Backoffice de lugares
+
+Cinco rutas, todas con bearer y permisos ya sembrados. El **Viewer de ownership** es el que
+decide el alcance: quien tiene `place.manage_all` ve todo el catálogo; quien solo tiene
+`place.update` ve únicamente los lugares donde `co_owner_user` es su propia cuenta. Los lugares
+curados por el backoffice (`co_owner_user` NULL) no son visibles para un editor: pertenecen al
+panel.
+
+```http
+GET    /v1/admin/places?q=&status=ACTIVE|INACTIVE|DELETED&categoryId=&country=&region=&page=&limit=
+GET    /v1/admin/places/{coPlace}
+POST   /v1/admin/places
+PATCH  /v1/admin/places/{coPlace}
+DELETE /v1/admin/places/{coPlace}
+```
+
+| Ruta | Permiso | Nota |
+|---|---|---|
+| `GET /v1/admin/places` | `place.update` | Paginado, alcance por ownership. Por defecto lista el catálogo vivo; `status=DELETED` lista los retirados |
+| `GET /v1/admin/places/{coPlace}` | `place.update` | Una fila que no podés ver responde **404**, no 403 |
+| `POST /v1/admin/places` | `place.manage_all` | Solo el backoffice crea y asigna dueño: el catálogo se cura, y el autoservicio es otra decisión |
+| `PATCH /v1/admin/places/{coPlace}` | `place.update` | Parcial: campo ausente = sin cambios; `null` explícito limpia un nullable. Solo `place.manage_all` reasigna dueño |
+| `DELETE /v1/admin/places/{coPlace}` | `place.delete` | **Borrado lógico**: la fila queda, y discovery, reseñas y check-ins dejan de servirla |
+
+**Por qué 404 y no 403** en una fila ajena: un 403 confirma que la fila existe. Un llamador que
+no puede verla no debe poder enumerar el catálogo por diferencia de códigos.
+
+Toda escritura anuncia el actor (`app.current_user_id`) en la misma transacción, así que el
+trigger de historia de `tb_place` registra `co_actor_user`. El servicio nunca escribe una fila
+de historia.
