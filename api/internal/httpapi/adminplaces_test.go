@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -12,17 +13,21 @@ import (
 
 // fakePlaceAdmin is a scriptable PlaceBackoffice that records the viewer it was asked with.
 type fakePlaceAdmin struct {
-	page       placeadmin.Page
-	place      placeadmin.Place
-	err        error
-	gotViewer  placeadmin.Viewer
-	gotFilter  placeadmin.Filter
-	gotInput   placeadmin.CreateInput
-	gotUpdate  placeadmin.UpdateInput
-	calls      int
-	createdFor string
-	categories []placeadmin.Category
-	gotStatus  string
+	page         placeadmin.Page
+	place        placeadmin.Place
+	err          error
+	gotViewer    placeadmin.Viewer
+	gotFilter    placeadmin.Filter
+	gotInput     placeadmin.CreateInput
+	gotUpdate    placeadmin.UpdateInput
+	calls        int
+	createdFor   string
+	categories   []placeadmin.Category
+	schedules    []placeadmin.Schedule
+	attributes   []string
+	gotSchedules []placeadmin.Schedule
+	gotCodes     []string
+	gotStatus    string
 }
 
 func (f *fakePlaceAdmin) List(_ context.Context, viewer placeadmin.Viewer, filter placeadmin.Filter, _, _ int) (placeadmin.Page, error) {
@@ -306,5 +311,75 @@ func TestPlaceCategoriesRejectAnUnknownStatus(t *testing.T) {
 	}
 	if service.calls != 0 {
 		t.Fatal("the service was reached with an invalid status")
+	}
+}
+
+// The content of a place: weekly hours and attributes. These are what make the already-shipped
+// `openAt` and attribute filters operable instead of SQL-only.
+
+func (f *fakePlaceAdmin) Schedules(_ context.Context, _ placeadmin.Viewer, _ string) ([]placeadmin.Schedule, error) {
+	f.calls++
+	return f.schedules, f.err
+}
+
+func (f *fakePlaceAdmin) ReplaceSchedules(_ context.Context, _ placeadmin.Viewer, _, _ string, schedules []placeadmin.Schedule) error {
+	f.calls++
+	f.gotSchedules = schedules
+	return f.err
+}
+
+func (f *fakePlaceAdmin) Attributes(_ context.Context, _ placeadmin.Viewer, _ string) ([]string, error) {
+	f.calls++
+	return f.attributes, f.err
+}
+
+func (f *fakePlaceAdmin) ReplaceAttributes(_ context.Context, _ placeadmin.Viewer, _, _ string, codes []string) error {
+	f.calls++
+	f.gotCodes = codes
+	return f.err
+}
+
+func TestReplaceSchedulesSendsTheWholeSet(t *testing.T) {
+	service := &fakePlaceAdmin{}
+	body := `{"schedules":[{"dayOfWeek":6,"open":"20:00","close":"02:00"}]}`
+	rec := bearerDo(t, backoffice(service, "owner-1", adminScope), http.MethodPut,
+		"/v1/admin/places/"+adminPlaceID+"/schedules", body)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if len(service.gotSchedules) != 1 || service.gotSchedules[0].Close != "02:00" {
+		t.Fatalf("schedules = %+v", service.gotSchedules)
+	}
+}
+
+func TestSchedulesReadReturnsTheSet(t *testing.T) {
+	service := &fakePlaceAdmin{schedules: []placeadmin.Schedule{{DayOfWeek: 1, Open: "10:00", Close: "22:00"}}}
+	rec := bearerDo(t, backoffice(service, "owner-1", adminScope), http.MethodGet,
+		"/v1/admin/places/"+adminPlaceID+"/schedules", "")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"close":"22:00"`) {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUnknownAttributeIsAFieldError(t *testing.T) {
+	// Silently dropping the code would leave the operator believing the filter will match.
+	service := &fakePlaceAdmin{err: &placeadmin.UnknownAttributeError{Codes: []string{"inventado"}}}
+	rec := bearerDo(t, backoffice(service, "owner-1", adminScope), http.MethodPut,
+		"/v1/admin/places/"+adminPlaceID+"/attributes", `{"codes":["inventado"]}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422 (%s)", rec.Code, rec.Body.String())
+	}
+	_, fields := errorFields(t, rec)
+	if len(fields) == 0 || fields[0].Field != "codes" || fields[0].Code != "unknown" {
+		t.Fatalf("fields = %+v", fields)
+	}
+}
+
+func TestScheduleValidationFailureIs422(t *testing.T) {
+	service := &fakePlaceAdmin{err: errors.New("placeadmin: open and close are the same time")}
+	rec := bearerDo(t, backoffice(service, "owner-1", adminScope), http.MethodPut,
+		"/v1/admin/places/"+adminPlaceID+"/schedules", `{"schedules":[{"dayOfWeek":1,"open":"10:00","close":"10:00"}]}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422 (%s)", rec.Code, rec.Body.String())
 	}
 }

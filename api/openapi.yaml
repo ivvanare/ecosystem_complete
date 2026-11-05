@@ -1524,6 +1524,132 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/admin/places/{coPlace}/schedules:
+    get:
+      tags: [Admin]
+      operationId: getPlaceSchedules
+      summary: The weekly hours of a place
+      description: Requires `place.update`, scoped by ownership like the rest of the backoffice.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The weekly set.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data, total]
+                properties:
+                  total: { type: integer }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/PlaceSchedule" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Admin]
+      operationId: replacePlaceSchedules
+      summary: Replace the weekly hours
+      description: |
+        Replaces the whole set in one transaction. An operator edits "the hours of this place",
+        and a half-applied weekly set would answer "closed" for a day nobody touched.
+
+        A close time at or before the open time crosses midnight — how the model already says
+        "open 20:00, closes 02:00". Equal open and close times are rejected: that reads as
+        closed all day or open all day depending on who asks.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [schedules]
+              properties:
+                schedules:
+                  type: array
+                  items: { $ref: "#/components/schemas/PlaceSchedule" }
+      responses:
+        "204": { description: Replaced. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/admin/places/{coPlace}/attributes:
+    get:
+      tags: [Admin]
+      operationId: getPlaceAttributes
+      summary: The attribute codes present on a place
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The codes.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data, total]
+                properties:
+                  total: { type: integer }
+                  data:
+                    type: array
+                    items: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Admin]
+      operationId: replacePlaceAttributes
+      summary: Replace the attributes of a place
+      description: |
+        Replaces the whole set. A code the catalogue does not carry is `422` with field `codes`
+        and code `unknown`: silently dropping it would leave the operator believing an
+        attribute is set when the filter will never match it.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [codes]
+              properties:
+                codes:
+                  type: array
+                  items: { type: string, example: terraza }
+      responses:
+        "204": { description: Replaced. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
   /v1/admin/places/{coPlace}:
     get:
       tags: [Admin]
@@ -2296,6 +2422,17 @@ components:
           nullable: true
           description: Absent means "no date yet", which is a real state.
         partySize: { type: integer, minimum: 1, maximum: 50 }
+    PlaceSchedule:
+      type: object
+      additionalProperties: false
+      required: [dayOfWeek, open, close]
+      properties:
+        dayOfWeek: { type: integer, minimum: 1, maximum: 7, description: ISO-8601, 1=Monday. }
+        open: { type: string, example: "20:00" }
+        close:
+          type: string
+          example: "02:00"
+          description: At or before `open` means it crosses midnight.
     AdminPlace:
       type: object
       additionalProperties: false
