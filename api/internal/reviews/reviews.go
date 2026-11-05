@@ -46,6 +46,11 @@ type Review struct {
 	Status     string
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
+	// ViaFollowedAuthor marks a row whose author the asking viewer follows. It is a
+	// property of the READ, not of the row (S5/D10): the same review is highlighted for
+	// one viewer and plain for another, which is why it is never stored and never cached
+	// under a key that lacks the viewer (S18).
+	ViaFollowedAuthor bool
 }
 
 // Viewer is who asks for the list (S11): anonymous when UserID is empty, otherwise

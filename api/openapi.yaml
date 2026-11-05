@@ -1611,9 +1611,17 @@ components:
 
     Review:
       type: object
-      required: [coReview, coPlace, rating, comment, status, author, createdAt, updatedAt]
+      additionalProperties: false
+      required: [coReview, coPlace, rating, comment, status, author, createdAt, updatedAt, viaFollowedAuthor]
       properties:
         coReview: { type: string, format: uuid }
+        viaFollowedAuthor:
+          type: boolean
+          description: |
+            Viewer-relative highlight: true when the reader follows this review's author.
+            A property of the read, never of the row — the same review is highlighted for
+            one viewer and plain for another. False for anonymous readers, and never cached
+            under a key that lacks the viewer.
         coPlace: { type: string, format: uuid }
         rating: { type: integer, minimum: 1, maximum: 5 }
         comment: { type: [string, "null"], maxLength: 2000 }

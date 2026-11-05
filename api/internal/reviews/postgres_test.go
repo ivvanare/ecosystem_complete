@@ -348,7 +348,8 @@ func TestListVisibilityPredicateAndNoAggregation(t *testing.T) {
 	now := time.Now()
 	db := &fakeDB{
 		count: 1,
-		rows:  [][]any{{"r1", "p1", "u1", "Ana", 5, "la mejor", StatusActive, now, now}},
+		// The list projection adds the viewer-relative highlight as its last column.
+		rows: [][]any{{"r1", "p1", "u1", "Ana", 5, "la mejor", StatusActive, now, now, true}},
 	}
 	rows, total, err := newTestStore(db).List(context.Background(), "p1", Viewer{UserID: "u1", Moderator: true}, 2, 20)
 	if err != nil {
@@ -356,6 +357,16 @@ func TestListVisibilityPredicateAndNoAggregation(t *testing.T) {
 	}
 	if total != 1 || len(rows) != 1 {
 		t.Fatalf("total=%d rows=%d", total, len(rows))
+	}
+	// S5: the highlight is part of the list read, computed from the viewer's follow set.
+	if !rows[0].ViaFollowedAuthor {
+		t.Error("ViaFollowedAuthor = false, want the value the projection returned")
+	}
+	if !strings.Contains(db.recorded[1].sql, "core.tb_follow") {
+		t.Errorf("list projection does not consult the follow graph: %s", db.recorded[1].sql)
+	}
+	if !strings.Contains(db.recorded[1].sql, "f.co_follower = $2::uuid") {
+		t.Errorf("the highlight must be keyed by the asking viewer: %s", db.recorded[1].sql)
 	}
 	if rows[0].ID != "r1" || rows[0].AuthorName == nil || *rows[0].AuthorName != "Ana" {
 		t.Errorf("row = %+v", rows[0])

@@ -329,6 +329,11 @@ type reviewResponse struct {
 	} `json:"author"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
+	// ViaFollowedAuthor is the viewer-relative highlight (S5): true when the reader
+	// follows this review's author. It is a property of the read, so the same review is
+	// highlighted for one viewer and plain for another — never cache this under a key
+	// that lacks the viewer (S18).
+	ViaFollowedAuthor bool `json:"viaFollowedAuthor"`
 }
 
 func toReviewResponse(review reviews.Review) reviewResponse {
@@ -340,6 +345,8 @@ func toReviewResponse(review reviews.Review) reviewResponse {
 		Status:    review.Status,
 		CreatedAt: review.CreatedAt,
 		UpdatedAt: review.UpdatedAt,
+
+		ViaFollowedAuthor: review.ViaFollowedAuthor,
 	}
 	response.Author.ID = review.AuthorID
 	response.Author.Name = review.AuthorName

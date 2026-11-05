@@ -72,6 +72,19 @@ SELECT r.co_review, r.co_place, r.co_user, u.tx_name,
 FROM core.tb_review r
 JOIN seg.tb_user u ON u.co_user = r.co_user`
 
+// reviewListColumns is the projection of the public list: the same fields as
+// reviewColumns plus the viewer-relative highlight. $2 is the asking viewer, so an
+// anonymous read (NULL) yields false everywhere by construction rather than by a branch.
+const reviewListColumns = `
+SELECT r.co_review, r.co_place, r.co_user, u.tx_name,
+       r.nu_rating, r.tx_comment, r.tx_status, r.dt_created_at, r.dt_updated_at,
+       EXISTS (
+           SELECT 1 FROM core.tb_follow f
+           WHERE f.co_follower = $2::uuid AND f.co_followed = r.co_user
+       ) AS via_followed_author
+FROM core.tb_review r
+JOIN seg.tb_user u ON u.co_user = r.co_user`
+
 // writeColumns is the RETURNING clause of a write, without the author join: the name
 // is read afterwards in the same transaction.
 const writeColumns = `
@@ -114,7 +127,7 @@ func (s *PostgresStore) List(ctx context.Context, placeID string, viewer Viewer,
 	}
 
 	offset := (page - 1) * limit
-	rows, err := s.db.Query(ctx, reviewColumns+visibilityPredicate+`
+	rows, err := s.db.Query(ctx, reviewListColumns+visibilityPredicate+`
 ORDER BY r.dt_created_at DESC, r.co_review DESC
 LIMIT $4 OFFSET $5`, append(args, limit, offset)...)
 	if err != nil {
@@ -124,7 +137,7 @@ LIMIT $4 OFFSET $5`, append(args, limit, offset)...)
 
 	result := make([]Review, 0, limit)
 	for rows.Next() {
-		review, err := scanReview(rows)
+		review, err := scanReviewList(rows)
 		if err != nil {
 			return nil, 0, fmt.Errorf("scanning review: %w", err)
 		}
@@ -327,6 +340,16 @@ func readAuthorName(ctx context.Context, tx transaction, review *Review) error {
 		return fmt.Errorf("reading author name: %w", err)
 	}
 	return nil
+}
+
+// scanReviewList reads one row of reviewListColumns: the shared fields plus the
+// viewer-relative highlight, which exists only on the list projection.
+func scanReviewList(row interface{ Scan(dest ...any) error }) (Review, error) {
+	var review Review
+	err := row.Scan(&review.ID, &review.PlaceID, &review.AuthorID, &review.AuthorName,
+		&review.Rating, &review.Comment, &review.Status, &review.CreatedAt, &review.UpdatedAt,
+		&review.ViaFollowedAuthor)
+	return review, err
 }
 
 // scanReview reads one row of reviewColumns.
