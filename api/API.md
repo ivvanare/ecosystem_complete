@@ -940,3 +940,27 @@ Ambas mutaciones son idempotentes (`204`), y bloquearse a uno mismo es `422` con
 `field: coUser` — lo rechaza el servicio y también un `CHECK` en la base.
 
 Un moderador con `review.moderate` sigue viendo todo: la moderación no es una relación social.
+
+---
+
+## 17. Notificaciones
+
+```http
+GET   /v1/notifications/preferences
+PATCH /v1/notifications/preferences   { "kind": "invitation.received", "enabled": false }
+```
+
+La entrega hoy es **email**, por la misma cola que ya usa el servicio. Push espera al cliente
+móvil, y un canal que nadie puede recibir no es un canal.
+
+- Cada tipo se puede apagar por separado, y **la ausencia de preferencia significa activado**:
+  así un tipo nuevo no requiere rellenar una fila por cada usuario.
+- `GET` devuelve el **catálogo completo** con el switch de cada tipo, no solo los apagados: el
+  cliente no tiene que inferir qué existe.
+- Un `kind` fuera del catálogo es `422` con `field: kind, code: unknown`. Un switch para un tipo
+  que no existe es un switch que miente.
+- **La notificación es cortesía, nunca condición:** si el correo falta, el usuario la apagó o la
+  cola está caída, se registra y se sigue. La invitación ya existe cuando esto corre, y una
+  cortesía no puede hacer fallar aquello que anuncia.
+
+Tipos disponibles hoy: `invitation.received`.

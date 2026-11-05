@@ -41,6 +41,7 @@ type Options struct {
 	PlacesAdmin        PlaceBackoffice
 	Plans              PlanCollaboration
 	Blocks             Blocking
+	Notifications      NotificationPreferences
 	Reviews            ReviewService
 }
 
@@ -155,6 +156,13 @@ func New(opts Options) http.Handler {
 	if opts.Discovery != nil {
 		placesHandler := &placesHandlers{discovery: opts.Discovery, logger: logger}
 		mux.HandleFunc("GET /v1/places", placesHandler.places)
+	}
+
+	// Notification preferences (S13): every kind is individually disableable.
+	if opts.Notifications != nil {
+		notificationHandler := &notificationHandlers{service: opts.Notifications, logger: logger}
+		mux.HandleFunc("GET /v1/notifications/preferences", RequireAuth(opts.TokenParser, notificationHandler.read))
+		mux.HandleFunc("PATCH /v1/notifications/preferences", RequireAuth(opts.TokenParser, notificationHandler.update))
 	}
 
 	// Blocking (decision Q2): the relation that gates every viewer-relative projection.

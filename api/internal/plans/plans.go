@@ -96,10 +96,16 @@ type Store interface {
 }
 
 // Service applies the authorization rules.
+// Notifier announces an event. It is a courtesy, so a failure never blocks the act.
+type Notifier interface {
+	InvitationReceived(ctx context.Context, userID, planName string)
+}
+
 type Service struct {
 	store       Store
 	logger      *slog.Logger
 	invitations Invitations
+	notifier    Notifier
 }
 
 // NewService wires the domain.
@@ -284,12 +290,27 @@ type Invitations interface {
 	VenueHidden(ctx context.Context, userID, planID string) (bool, error)
 }
 
+// SetNotifier wires the courtesy channel.
+func (s *Service) SetNotifier(notifier Notifier) { s.notifier = notifier }
+
 // SetInvitations wires the invitation lifecycle into the plan surface.
 func (s *Service) SetInvitations(service Invitations) { s.invitations = service }
 
 // Invite delegates to the invitation lifecycle.
 func (s *Service) Invite(ctx context.Context, actorID, planID string, in invitations.CreateInput) (invitations.Invitation, error) {
-	return s.invitations.Create(ctx, actorID, planID, in)
+	created, err := s.invitations.Create(ctx, actorID, planID, in)
+	if err != nil {
+		return invitations.Invitation{}, err
+	}
+	// The invitation already exists; a courtesy that fails must not undo it.
+	if s.notifier != nil {
+		planName := planID
+		if created.PlanName != nil && *created.PlanName != "" {
+			planName = *created.PlanName
+		}
+		s.notifier.InvitationReceived(ctx, created.UserID, planName)
+	}
+	return created, nil
 }
 
 // PlanInvitations is the host's RSVP view.
