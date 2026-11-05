@@ -295,6 +295,15 @@ matter:
 | `PATCH` | `/v1/admin/reviews/{coReview}` | bearer, `review.moderate` | `{status: ACTIVE\|INACTIVE\|MODERATED}` |
 | `GET` | `/v1/admin/reviews` | bearer, `review.moderate` | **Pending.** Lists reviews to moderate, paginated, filters `status` (`ACTIVE`/`INACTIVE`/`MODERATED`), `placeId`, `authorId`, newest first. Without it the moderation screen has no entry point: the admin route needs a `coReview` nobody can discover |
 
+> **Backoffice gap, tracked here because it blocks the SPA session.** Two admin surfaces are
+> outstanding and both are read-plus-write routes an operator needs, not consumer features
+> (D21): `GET /v1/admin/reviews` with the filters above, and the places backoffice
+> (`GET`/`POST`/`PATCH /v1/admin/places` with the ownership `Viewer`). The second belongs to the
+> `place-ownership` slice in the admin repository's own plan; it is listed here so the API side
+> does not quietly assume someone else is building it. The SPA session confirmed that
+> everything else in the panel is migrated to its base components, so these two routes are the
+> only remaining blockers for admin work.
+
 Details that are easy to get wrong and are therefore pinned:
 
 - `POST` and `PATCH` set `app.current_user_id` via `set_config(..., true)` at the start of the
