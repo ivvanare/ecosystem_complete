@@ -61,10 +61,21 @@ services:
       SMTP_ADDR: mailpit:1025
       MAIL_FROM: no-reply@melia.test
       LOG_LEVEL: info
+      # El productor de trending los necesita. Ausentes, el worker sigue mandando mails y
+      # simplemente no rankea: el read path degrada a orden por rating, que es un estado
+      # válido y no una caída.
+      DATABASE_URL: postgres://admin:my_admin_pass@database:5432/melia?sslmode=disable
+      REDIS_ADDR: redis:6379
+      # Frecuencia del batch en dev. Sin esto el scheduler queda apagado.
+      WORKER_SCHEDULER_INTERVAL: 2m
     depends_on:
       rabbitmq:
         condition: service_started
       mailpit:
+        condition: service_started
+      database:
+        condition: service_healthy
+      redis:
         condition: service_started
     networks:
       - melzone_network

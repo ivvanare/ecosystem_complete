@@ -170,6 +170,9 @@ func (NoRanking) Trending(context.Context, string) ([]string, bool, error) { ret
 // because the suite never needs PostgreSQL (AGENTS.md).
 type Store interface {
 	List(ctx context.Context, q listStoreQuery) ([]ListRow, int, error)
+	// ByIDs reads specific places, for the ranked read path: trending paginates over the
+	// zone ranking, not over a title-ordered page (p1-discovery.md §2).
+	ByIDs(ctx context.Context, near geo.Coordinate, ids []string) ([]ListRow, error)
 	MapPoints(ctx context.Context, q mapStoreQuery) (points []MapPoint, truncated bool, err error)
 }
 
@@ -210,26 +213,39 @@ func (s *Service) List(ctx context.Context, q ListQuery) (ListResult, error) {
 			s.logger.Warn("zone cell unavailable, trending degrades to rating", slog.String("error", err.Error()))
 			sort, degraded = SortRating, true
 		} else {
-			ids, ok, err := s.ranking.Trending(ctx, zone)
-			switch {
-			case err != nil:
-				s.logger.Warn("ranking read failed, trending degrades to rating", slog.String("error", err.Error()))
-				sort, degraded = SortRating, true
-			case !ok:
-				sort, degraded = SortRating, true
-			default:
-				rankedIDs = ids
+			rankedIDs, degraded = s.resolveRanking(ctx, zone)
+			if degraded {
+				sort = SortRating
 			}
 		}
 	}
 
-	// A ranked read still needs a deterministic base order to page over; the ranking is
-	// then applied to the page.
-	storeSort := sort
-	if sort == SortTrending {
-		storeSort = SortRating
+	if len(rankedIDs) > 0 {
+		// Trending pages over the ranking itself. Fetching a title-ordered page and
+		// reordering it would drop the best-ranked place whenever it sorts past the page
+		// boundary — the order would look plausible and be wrong.
+		var count int
+		var err error
+		if _, count, err = s.store.List(ctx, listStoreQuery{
+			near: q.Near, radius: q.Radius, country: q.Country, region: q.Region,
+			category: q.Category, sort: SortRating, page: 1, limit: 1,
+		}); err != nil {
+			return ListResult{}, err
+		}
+		page := pageOfRanking(rankedIDs, q.Page, q.Limit)
+		var rows []ListRow
+		if rows, err = s.store.ByIDs(ctx, q.Near, page); err != nil {
+			return ListResult{}, err
+		}
+		s.applyStats(ctx, rows)
+		applyRanking(rows, rankedIDs)
+		return ListResult{
+			Rows: rows, Total: count, Page: q.Page, Limit: q.Limit,
+			SortApplied: SortTrending, Degraded: false,
+		}, nil
 	}
 
+	storeSort := sort
 	rows, total, err := s.store.List(ctx, listStoreQuery{
 		near:       q.Near,
 		radius:     q.Radius,
@@ -263,6 +279,23 @@ func (s *Service) List(ctx context.Context, q ListQuery) (ListResult, error) {
 		SortApplied: sort,
 		Degraded:    degraded,
 	}, nil
+}
+
+// pageOfRanking slices the ranked ids to the requested page, so pagination follows the
+// ranking instead of a database order the ranking would then contradict.
+func pageOfRanking(rankedIDs []string, page, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	start := (page - 1) * limit
+	if start >= len(rankedIDs) {
+		return nil
+	}
+	end := start + limit
+	if end > len(rankedIDs) {
+		end = len(rankedIDs)
+	}
+	return rankedIDs[start:end]
 }
 
 // applyStats merges the worker-published aggregates into the page. The read asks only
@@ -313,6 +346,33 @@ func applyRanking(rows []ListRow, rankedIDs []string) {
 	sorted = append(sorted, ranked...)
 	sorted = append(sorted, unranked...)
 	copy(rows, sorted)
+}
+
+// resolveRanking asks the caller's own zone, then its parent cell once, and only then gives
+// up. A miss, a parse failure and a Redis failure all end in the same degraded answer: the
+// map still renders, ordered by rating (S28). It returns degraded=true when no ranking was
+// found.
+func (s *Service) resolveRanking(ctx context.Context, zone string) ([]string, bool) {
+	ids, ok, err := s.ranking.Trending(ctx, zone)
+	if err == nil && ok {
+		return ids, false
+	}
+	if err != nil {
+		s.logger.Warn("ranking read failed", slog.String("zone", zone), slog.String("error", err.Error()))
+	}
+
+	parent, hasParent := ParentZone(zone)
+	if !hasParent {
+		return nil, true
+	}
+	ids, ok, err = s.ranking.Trending(ctx, parent)
+	if err == nil && ok {
+		return ids, false
+	}
+	if err != nil {
+		s.logger.Warn("parent ranking read failed", slog.String("zone", parent), slog.String("error", err.Error()))
+	}
+	return nil, true
 }
 
 // Map runs map mode.

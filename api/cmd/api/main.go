@@ -159,7 +159,8 @@ func run() error {
 	// co_location so the GiST index serves them. Rating aggregates and the zone ranking
 	// come from the worker in a later slice; until then both readers report "nothing
 	// published", which is a degraded answer and never an error.
-	discovery := places.NewService(places.NewPostgresStore(pool), places.NoStats{}, places.NoRanking{}, logger)
+	discovery := places.NewService(places.NewPostgresStore(pool),
+		places.NewRedisStats(redisClient), places.NewRedisRanking(redisClient), logger)
 
 	// Reviews write path (p1-discovery.md §6): every write announces the actor with
 	// set_config at the start of its transaction, so the existing history trigger

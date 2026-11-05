@@ -270,6 +270,48 @@ func (s *PostgresStore) List(ctx context.Context, q listStoreQuery) ([]ListRow, 
 	return result, total, nil
 }
 
+// byIDsColumns is the projection of a ranked page: the same public fields as a list row,
+// selected by explicit ids so the ranking decides the order, not the database.
+const byIDsQuery = `
+SELECT p.co_place, p.tx_title, p.co_place_category, c.tx_name,
+       p.tx_country, p.tx_region, p.nu_latitude, p.nu_longitude, p.tx_address,
+       ST_Distance(p.co_location, $1::geography) AS distance_m
+FROM core.tb_place p
+JOIN core.tb_place_category c ON c.co_place_category = p.co_place_category
+WHERE p.dt_deleted_at IS NULL
+  AND p.tx_status = 'ACTIVE'
+  AND p.co_place = ANY($2::uuid[])`
+
+// ByIDs reads the places of one ranked page. Rows come back in any order: the caller
+// applies the ranking, which is the authority on order (p1-discovery.md §2).
+func (s *PostgresStore) ByIDs(ctx context.Context, near geo.Coordinate, ids []string) ([]ListRow, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx, byIDsQuery, ewktPoint(near), ids)
+	if err != nil {
+		return nil, fmt.Errorf("selecting ranked places: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]ListRow, 0, len(ids))
+	for rows.Next() {
+		var row ListRow
+		if err := rows.Scan(
+			&row.ID, &row.Title, &row.CategoryID, &row.CategoryName,
+			&row.Country, &row.Region, &row.Latitude, &row.Longitude, &row.Address,
+			&row.DistanceM,
+		); err != nil {
+			return nil, fmt.Errorf("scanning ranked place: %w", err)
+		}
+		result = append(result, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("during ranked iteration: %w", err)
+	}
+	return result, nil
+}
+
 // MapPoints returns the viewport rows, plus whether the row cap was hit.
 func (s *PostgresStore) MapPoints(ctx context.Context, q mapStoreQuery) ([]MapPoint, bool, error) {
 	// $8-$12 are the same §12 filters as the list predicate, valid in both modes

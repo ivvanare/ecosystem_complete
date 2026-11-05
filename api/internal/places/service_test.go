@@ -19,11 +19,27 @@ type fakeStore struct {
 	truncated bool
 	mapErr    error
 	lastMap   mapStoreQuery
+	lastIDs   []string
 }
 
 func (f *fakeStore) List(_ context.Context, q listStoreQuery) ([]ListRow, int, error) {
 	f.lastList = q
 	return f.listRows, f.listTotal, f.listErr
+}
+
+func (f *fakeStore) ByIDs(_ context.Context, _ geo.Coordinate, ids []string) ([]ListRow, error) {
+	f.lastIDs = ids
+	byID := make(map[string]ListRow, len(f.listRows))
+	for _, row := range f.listRows {
+		byID[row.ID] = row
+	}
+	rows := make([]ListRow, 0, len(ids))
+	for _, id := range ids {
+		if row, ok := byID[id]; ok {
+			rows = append(rows, row)
+		}
+	}
+	return rows, f.listErr
 }
 
 func (f *fakeStore) MapPoints(_ context.Context, q mapStoreQuery) ([]MapPoint, bool, error) {
@@ -43,14 +59,16 @@ func (f *fakeStats) PlaceStats(_ context.Context, ids []string) (map[string]Stat
 }
 
 type fakeRanking struct {
-	ids  []string
-	ok   bool
-	err  error
-	zone string
+	ids   []string
+	ok    bool
+	err   error
+	zone  string
+	zones []string // every probe, in order: the caller's zone first, then its parent
 }
 
 func (f *fakeRanking) Trending(_ context.Context, zone string) ([]string, bool, error) {
 	f.zone = zone
+	f.zones = append(f.zones, zone)
 	return f.ids, f.ok, f.err
 }
 
@@ -129,11 +147,16 @@ func TestListTrendingFallsBackToRatingWhenNoZoneRanking(t *testing.T) {
 		t.Errorf("store queried with sort %q, want the rating fallback", store.lastList.sort)
 	}
 
-	// The ranking was probed with the zone cell of the request coordinate, at the
-	// worker's resolution — never with the raw coordinate.
+	// The first probe is the zone cell of the request coordinate, at the worker's
+	// resolution — never the raw coordinate. The second is its parent, which is what a
+	// miss is allowed to try before the answer degrades (S28).
 	wantZone := cellString(t, q.Near.Lat, q.Near.Lng, geo.TrendingZoneResolution)
-	if ranking.zone != wantZone {
-		t.Errorf("ranking probed with zone %q, want %q", ranking.zone, wantZone)
+	if len(ranking.zones) == 0 || ranking.zones[0] != wantZone {
+		t.Errorf("first ranking probe = %v, want the request zone %q", ranking.zones, wantZone)
+	}
+	wantParent, ok := ParentZone(wantZone)
+	if !ok || len(ranking.zones) < 2 || ranking.zones[1] != wantParent {
+		t.Errorf("probes = %v, want the request zone then its parent %q", ranking.zones, wantParent)
 	}
 }
 
@@ -304,5 +327,55 @@ func TestMapPassesSearchFiltersToTheStore(t *testing.T) {
 	}
 	if got.maxPrice == nil || *got.maxPrice != 10.0 || got.openAt == nil || !got.openAt.Equal(openAt) {
 		t.Errorf("maxPrice/openAt = %v/%v", got.maxPrice, got.openAt)
+	}
+}
+
+func TestListTrendingPagesOverTheRankingNotOverATitleOrder(t *testing.T) {
+	// The defect this pins: choosing the page by title and reordering it afterwards drops
+	// the best-ranked place whenever it sorts past the page boundary. Trending must slice
+	// the ranking and then read exactly those rows.
+	rows := []ListRow{
+		{ID: "p1", Title: "Alfa"}, {ID: "p2", Title: "Beta"},
+		{ID: "p3", Title: "Gamma"}, {ID: "p4", Title: "Delta"},
+	}
+	store := &fakeStore{listRows: rows, listTotal: 4}
+	ranking := &fakeRanking{ids: []string{"p4", "p3", "p2", "p1"}, ok: true}
+	service := newTestService(store, &fakeStats{}, ranking)
+
+	q := nearQuery
+	q.Sort = SortTrending
+	q.Page = 1
+	q.Limit = 2
+
+	result, err := service.List(context.Background(), q)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+
+	// The page is the first two ranked ids, in rank order.
+	if len(store.lastIDs) != 2 || store.lastIDs[0] != "p4" || store.lastIDs[1] != "p3" {
+		t.Fatalf("ranked page fetched %v, want [p4 p3]", store.lastIDs)
+	}
+	if len(result.Rows) != 2 || result.Rows[0].ID != "p4" || result.Rows[1].ID != "p3" {
+		t.Fatalf("rows = %+v, want p4 then p3", result.Rows)
+	}
+	if result.SortApplied != SortTrending || result.Degraded {
+		t.Errorf("SortApplied=%q Degraded=%v, want trending/false", result.SortApplied, result.Degraded)
+	}
+
+	// Page two moves along the ranking, not along the alphabet.
+	q.Page = 2
+	result, err = service.List(context.Background(), q)
+	if err != nil {
+		t.Fatalf("List page 2: %v", err)
+	}
+	if len(store.lastIDs) != 2 || store.lastIDs[0] != "p2" || store.lastIDs[1] != "p1" {
+		t.Fatalf("page 2 fetched %v, want [p2 p1]", store.lastIDs)
+	}
+	if len(result.Rows) != 2 || result.Rows[0].ID != "p2" {
+		t.Fatalf("page 2 rows = %+v, want p2 first", result.Rows)
+	}
+	if result.Rows[0].TrendingRank == nil || *result.Rows[0].TrendingRank != 3 {
+		t.Errorf("page 2 first rank = %v, want 3", result.Rows[0].TrendingRank)
 	}
 }

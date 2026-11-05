@@ -17,8 +17,12 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/ivvanare/ecosystem_complete/api/internal/config"
+	"github.com/ivvanare/ecosystem_complete/api/internal/db"
 	"github.com/ivvanare/ecosystem_complete/api/internal/mailer"
+	"github.com/ivvanare/ecosystem_complete/api/internal/trending"
 	"github.com/ivvanare/ecosystem_complete/api/internal/worker"
 )
 
@@ -126,6 +130,7 @@ func startScheduler(ctx context.Context, logger *slog.Logger) <-chan struct{} {
 	}
 	name, job := worker.Heartbeat(logger)
 	scheduler.Register(name, job)
+	registerTrending(ctx, scheduler, logger)
 
 	done := make(chan struct{})
 	go func() {
@@ -133,6 +138,42 @@ func startScheduler(ctx context.Context, logger *slog.Logger) <-chan struct{} {
 		scheduler.Run(ctx)
 	}()
 	return done
+}
+
+// registerTrending wires the trending producer onto the scheduler.
+//
+// DATABASE_URL and REDIS_ADDR are required by the API but not by the mail path, so a worker
+// without them keeps delivering mail and simply does not rank anything: a missing producer
+// degrades the read path to rating order (S28), which is a state, not an outage. Every
+// failure here is logged and the scheduler keeps its other jobs.
+func registerTrending(ctx context.Context, scheduler *worker.Scheduler, logger *slog.Logger) {
+	databaseURL := strings.TrimSpace(os.Getenv("DATABASE_URL"))
+	redisAddr := strings.TrimSpace(os.Getenv("REDIS_ADDR"))
+	if databaseURL == "" || redisAddr == "" {
+		logger.Info("trending producer not registered: DATABASE_URL or REDIS_ADDR is unset")
+		return
+	}
+
+	pool, err := db.Connect(ctx, databaseURL, 3, logger)
+	if err != nil {
+		logger.Error("trending producer disabled: database unavailable", slog.String("error", err.Error()))
+		return
+	}
+
+	redisClient := redis.NewClient(&redis.Options{Addr: redisAddr})
+	batch := trending.NewBatch(
+		trending.NewPostgresLoader(pool),
+		trending.NewWriter(redisClient, logger),
+		logger,
+	)
+	scheduler.Register(batch.Name(), func(ctx context.Context) error {
+		// The pool and the client are closed with the worker, not per tick.
+		if err := batch.Run(ctx); err != nil {
+			return err
+		}
+		return nil
+	})
+	logger.Info("trending producer registered")
 }
 
 // single adapts one delivery into a closed channel so the drain path reuses the same code.
