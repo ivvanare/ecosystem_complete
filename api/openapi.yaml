@@ -900,6 +900,133 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/plans/{coRoute}/places:
+    get:
+      tags: [Plans]
+      operationId: listPlanPlaces
+      summary: The ordered itinerary of a plan
+      description: |
+        Ordered by net votes descending, then the manual order, then creation time — so the
+        result is deterministic and reproducible. A member reads it; anyone reads it for a
+        PUBLIC plan. `myVote` is 0 when the caller has not voted.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coRoute
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The itinerary.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data, total]
+                properties:
+                  total: { type: integer }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/PlanPlace" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Plans]
+      operationId: addPlanPlace
+      summary: Add or reorder a place in the plan
+      description: |
+        Requires `EDITOR` or `OWNER`: a `VIEWER` reads and votes, it does not shape the
+        itinerary. Adding a place already in the plan updates its order.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coRoute
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [coPlace]
+              properties:
+                coPlace: { type: string, format: uuid }
+                order: { type: integer, minimum: 1, default: 1 }
+      responses:
+        "204": { description: Added or reordered. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/plans/{coRoute}/places/{coPlace}:
+    delete:
+      tags: [Plans]
+      operationId: removePlanPlace
+      summary: Remove a place from the plan
+      description: |
+        Requires `EDITOR` or `OWNER`. The votes for that place go with it, through the composite
+        foreign key.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coRoute
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Removed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/plans/{coRoute}/places/{coPlace}/votes:
+    post:
+      tags: [Plans]
+      operationId: votePlanPlace
+      summary: Vote on a place in the plan
+      description: |
+        Only a **member** may vote; a vote from a non-member is rejected with 403, never
+        silently dropped. A public plan lets a passer-by read, not vote — reading is open,
+        shaping is not. Voting again changes the vote (upsert), so a member has at most one vote
+        per place.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coRoute
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [vote]
+              properties:
+                vote:
+                  type: integer
+                  enum: [-1, 1]
+                  description: '-1 down, 1 up. There is no 0: not voting is having no row.'
+      responses:
+        "204": { description: Vote recorded. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
   /v1/plans/{coRoute}/members:
     post:
       tags: [Plans]
@@ -1698,6 +1825,17 @@ components:
                   - { field: password, code: too_short }
 
   schemas:
+    PlanPlace:
+      type: object
+      additionalProperties: false
+      required: [coPlace, title, order, netVotes, myVote, createdAt]
+      properties:
+        coPlace: { type: string, format: uuid }
+        title: { type: string }
+        order: { type: integer, description: Manual order, the tie-breaker. }
+        netVotes: { type: integer, description: Sum of up and down votes. }
+        myVote: { type: integer, enum: [-1, 0, 1], description: 0 when the caller has not voted. }
+        createdAt: { type: string, format: date-time }
     PlaceCategory:
       type: object
       additionalProperties: false

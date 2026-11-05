@@ -865,3 +865,25 @@ El listado `GET /v1/admin/reviews` agrega `place: {id, title}` a cada fila. No e
 lectura pública a propósito: ahí el cliente ya conoce el lugar porque consultó por `coPlace`.
 En el listado admin sí hace falta, porque un moderador puede tener `review.moderate` sin
 `place.update` y entonces no puede resolver el uuid por su cuenta.
+
+### 15.1 Itinerario y votos
+
+```http
+GET    /v1/plans/{coRoute}/places
+POST   /v1/plans/{coRoute}/places                          { coPlace, order? }
+DELETE /v1/plans/{coRoute}/places/{coPlace}
+POST   /v1/plans/{coRoute}/places/{coPlace}/votes          { vote: -1 | 1 }
+```
+
+El itinerario se ordena por **votos netos descendente**, y los empates se rompen por el orden
+manual y después por fecha de creación. Ese desempate es lo que lo hace determinístico: dos
+lecturas seguidas devuelven el mismo orden, y una lista votada no se reordena sola entre pedidos.
+
+- Agregar o quitar lugares es de `EDITOR` u `OWNER`. Un `VIEWER` lee y vota: no da forma al plan.
+- **Solo un miembro vota.** Un voto de alguien que no pertenece al plan se rechaza con `403`, no
+  se descarta en silencio. En un plan público cualquiera puede *leer*; votar sigue siendo de
+  miembros.
+- Votar dos veces cambia el voto, no agrega otro: un miembro tiene como máximo un voto por lugar.
+  Por eso `nu_vote` es `-1` o `1` y no existe el `0` — no votar es simplemente no tener fila.
+- Sacar un lugar del plan borra sus votos: la FK es compuesta a `(co_route, co_place)`, así que
+  tampoco se puede votar un lugar que no está en el plan.

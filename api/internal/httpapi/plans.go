@@ -20,6 +20,10 @@ type PlanCollaboration interface {
 	Join(ctx context.Context, actorID, planID string) error
 	Leave(ctx context.Context, actorID, planID, targetID string) error
 	List(ctx context.Context, actorID string, page, limit int) ([]plans.Plan, int, error)
+	Places(ctx context.Context, actorID, planID string) ([]plans.PlanPlace, error)
+	AddPlace(ctx context.Context, actorID, planID, placeID string, order int) error
+	RemovePlace(ctx context.Context, actorID, planID, placeID string) error
+	Vote(ctx context.Context, actorID, planID, placeID string, value int) error
 }
 
 type planHandlers struct {
@@ -286,4 +290,140 @@ func (h *planHandlers) listed(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": data, "page": page, "limit": limit, "total": total,
 	})
+}
+
+// planPlaceResponse is one row of the itinerary.
+type planPlaceResponse struct {
+	CoPlace   string `json:"coPlace"`
+	Title     string `json:"title"`
+	Order     int    `json:"order"`
+	NetVotes  int    `json:"netVotes"`
+	MyVote    int    `json:"myVote"`
+	CreatedAt string `json:"createdAt"`
+}
+
+// places serves GET /v1/plans/{coRoute}/places: the ordered itinerary.
+func (h *planHandlers) places(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.caller(w, r)
+	if !ok {
+		return
+	}
+	planID, ok := planParam(w, r)
+	if !ok {
+		return
+	}
+	rows, err := h.service.Places(r.Context(), userID, planID)
+	if err != nil {
+		h.writePlanError(w, err, "reading plan places")
+		return
+	}
+	data := make([]planPlaceResponse, 0, len(rows))
+	for _, place := range rows {
+		data = append(data, planPlaceResponse{
+			CoPlace: place.PlaceID, Title: place.Title, Order: place.Order,
+			NetVotes: place.NetVotes, MyVote: place.MyVote,
+			CreatedAt: place.CreatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": data, "total": len(data)})
+}
+
+type planPlaceRequest struct {
+	CoPlace string `json:"coPlace"`
+	Order   *int   `json:"order"`
+}
+
+// addPlace serves POST /v1/plans/{coRoute}/places.
+func (h *planHandlers) addPlace(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.caller(w, r)
+	if !ok {
+		return
+	}
+	planID, ok := planParam(w, r)
+	if !ok {
+		return
+	}
+	var body planPlaceRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+		return
+	}
+	if !uuidPattern.MatchString(strings.TrimSpace(body.CoPlace)) {
+		writeValidationError(w, []fieldError{{Field: "coPlace", Code: "invalid"}})
+		return
+	}
+	order := 1
+	if body.Order != nil {
+		order = *body.Order
+	}
+	if order < 1 {
+		writeValidationError(w, []fieldError{{Field: "order", Code: "invalid"}})
+		return
+	}
+	if err := h.service.AddPlace(r.Context(), userID, planID, body.CoPlace, order); err != nil {
+		h.writePlanError(w, err, "adding place to plan")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// removePlace serves DELETE /v1/plans/{coRoute}/places/{coPlace}.
+func (h *planHandlers) removePlace(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.caller(w, r)
+	if !ok {
+		return
+	}
+	planID, ok := planParam(w, r)
+	if !ok {
+		return
+	}
+	placeID := r.PathValue("coPlace")
+	if !uuidPattern.MatchString(placeID) {
+		writeValidationError(w, []fieldError{{Field: "coPlace", Code: "invalid"}})
+		return
+	}
+	if err := h.service.RemovePlace(r.Context(), userID, planID, placeID); err != nil {
+		h.writePlanError(w, err, "removing place from plan")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type voteRequest struct {
+	Vote *int `json:"vote"`
+}
+
+// vote serves POST /v1/plans/{coRoute}/places/{coPlace}/votes.
+func (h *planHandlers) vote(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.caller(w, r)
+	if !ok {
+		return
+	}
+	planID, ok := planParam(w, r)
+	if !ok {
+		return
+	}
+	placeID := r.PathValue("coPlace")
+	if !uuidPattern.MatchString(placeID) {
+		writeValidationError(w, []fieldError{{Field: "coPlace", Code: "invalid"}})
+		return
+	}
+	var body voteRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+		return
+	}
+	if body.Vote == nil {
+		writeValidationError(w, []fieldError{{Field: "vote", Code: "required"}})
+		return
+	}
+	if *body.Vote != 1 && *body.Vote != -1 {
+		writeValidationError(w, []fieldError{{Field: "vote", Code: "invalid"}})
+		return
+	}
+	if err := h.service.Vote(r.Context(), userID, planID, placeID, *body.Vote); err != nil {
+		h.writePlanError(w, err, "voting")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

@@ -12,13 +12,17 @@ import (
 
 // fakePlans scripts the collaboration service and records what it was asked.
 type fakePlans struct {
-	plan    plans.Plan
-	err     error
-	gotIn   plans.CreateInput
-	gotUpd  plans.UpdateInput
-	gotJoin string
-	gotLeft [2]string
-	calls   int
+	plan     plans.Plan
+	err      error
+	gotIn    plans.CreateInput
+	gotUpd   plans.UpdateInput
+	gotJoin  string
+	gotLeft  [2]string
+	places   []plans.PlanPlace
+	gotPlace string
+	gotOrder int
+	gotVote  int
+	calls    int
 }
 
 func (f *fakePlans) Create(_ context.Context, _ string, in plans.CreateInput) (plans.Plan, error) {
@@ -47,6 +51,28 @@ func (f *fakePlans) Join(_ context.Context, actorID, planID string) error {
 func (f *fakePlans) Leave(_ context.Context, actorID, planID, targetID string) error {
 	f.calls++
 	f.gotLeft = [2]string{actorID, targetID}
+	return f.err
+}
+
+func (f *fakePlans) Places(context.Context, string, string) ([]plans.PlanPlace, error) {
+	f.calls++
+	return f.places, f.err
+}
+
+func (f *fakePlans) AddPlace(_ context.Context, _, _, placeID string, order int) error {
+	f.calls++
+	f.gotPlace, f.gotOrder = placeID, order
+	return f.err
+}
+
+func (f *fakePlans) RemovePlace(context.Context, string, string, string) error {
+	f.calls++
+	return f.err
+}
+
+func (f *fakePlans) Vote(_ context.Context, _, _, placeID string, value int) error {
+	f.calls++
+	f.gotPlace, f.gotVote = placeID, value
 	return f.err
 }
 
@@ -175,6 +201,53 @@ func TestPlansResponseCarriesTheViewerRole(t *testing.T) {
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, `"viewerRole":"VIEWER"`) || !strings.Contains(body, `"memberCount":12`) {
+		t.Fatalf("body = %s", body)
+	}
+}
+
+func TestVoteRejectsAValueOutsideTheSet(t *testing.T) {
+	service := &fakePlans{}
+	rec := bearerDo(t, plansHandler(service, "member"), http.MethodPost,
+		"/v1/plans/"+planUUID+"/places/"+planGuestUUID+"/votes", `{"vote":0}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rec.Code)
+	}
+	if service.calls != 0 {
+		t.Fatal("the service was reached with an invalid vote")
+	}
+}
+
+func TestVotePassesThroughAndDefaultsOrderToOne(t *testing.T) {
+	service := &fakePlans{}
+	rec := bearerDo(t, plansHandler(service, "member"), http.MethodPost,
+		"/v1/plans/"+planUUID+"/places/"+planGuestUUID+"/votes", `{"vote":-1}`)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("vote status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if service.gotVote != -1 {
+		t.Fatalf("vote = %d, want -1", service.gotVote)
+	}
+
+	rec = bearerDo(t, plansHandler(service, "editor"), http.MethodPost,
+		"/v1/plans/"+planUUID+"/places", `{"coPlace":"`+planGuestUUID+`"}`)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("add status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if service.gotOrder != 1 {
+		t.Fatalf("default order = %d, want 1", service.gotOrder)
+	}
+}
+
+func TestItineraryCarriesNetAndMyVote(t *testing.T) {
+	service := &fakePlans{places: []plans.PlanPlace{
+		{PlaceID: planGuestUUID, Title: "Arepera", Order: 1, NetVotes: 3, MyVote: 1},
+	}}
+	rec := bearerDo(t, plansHandler(service, "member"), http.MethodGet, "/v1/plans/"+planUUID+"/places", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"netVotes":3`) || !strings.Contains(body, `"myVote":1`) {
 		t.Fatalf("body = %s", body)
 	}
 }

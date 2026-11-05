@@ -68,6 +68,16 @@ type UpdateInput struct {
 	PartySize   **int
 }
 
+// PlanPlace is one row of the ordered itinerary.
+type PlanPlace struct {
+	PlaceID   string
+	Title     string
+	Order     int
+	NetVotes  int
+	MyVote    int // 0 when the caller has not voted
+	CreatedAt time.Time
+}
+
 // Store is the persistence seam; tests fake it, because the suite never needs PostgreSQL.
 type Store interface {
 	Create(ctx context.Context, actorID string, in CreateInput) (Plan, error)
@@ -77,6 +87,10 @@ type Store interface {
 	Join(ctx context.Context, actorID, planID string, role string) error
 	Remove(ctx context.Context, planID, userID string) error
 	ListFor(ctx context.Context, actorID string, page, limit int) ([]Plan, int, error)
+	AddPlace(ctx context.Context, actorID, planID, placeID string, order int) error
+	RemovePlace(ctx context.Context, planID, placeID string) error
+	Places(ctx context.Context, actorID, planID string) ([]PlanPlace, error)
+	Vote(ctx context.Context, actorID, planID, placeID string, value int) error
 }
 
 // Service applies the authorization rules.
@@ -172,6 +186,71 @@ func (s *Service) Leave(ctx context.Context, actorID, planID, targetID string) e
 	default:
 		return ErrForbidden
 	}
+}
+
+// Places returns the ordered itinerary: net votes descending, ties by the manual order, then by
+// creation time, so the result is deterministic and reproducible (D9).
+func (s *Service) Places(ctx context.Context, actorID, planID string) ([]PlanPlace, error) {
+	role, visibility, err := s.store.Role(ctx, actorID, planID)
+	if err != nil {
+		return nil, err
+	}
+	if role == "" && visibility != VisibilityPublic {
+		return nil, ErrNotFound
+	}
+	return s.store.Places(ctx, actorID, planID)
+}
+
+// AddPlace adds a place to the plan. EDITOR or OWNER only: a VIEWER reads and votes, it does
+// not shape the itinerary (S7).
+func (s *Service) AddPlace(ctx context.Context, actorID, planID, placeID string, order int) error {
+	role, visibility, err := s.store.Role(ctx, actorID, planID)
+	if err != nil {
+		return err
+	}
+	if role == "" && visibility != VisibilityPublic {
+		return ErrNotFound
+	}
+	if role != RoleOwner && role != RoleEditor {
+		return ErrForbidden
+	}
+	return s.store.AddPlace(ctx, actorID, planID, placeID, order)
+}
+
+// RemovePlace removes a place, and its votes with it (the composite FK cascades).
+func (s *Service) RemovePlace(ctx context.Context, actorID, planID, placeID string) error {
+	role, visibility, err := s.store.Role(ctx, actorID, planID)
+	if err != nil {
+		return err
+	}
+	if role == "" && visibility != VisibilityPublic {
+		return ErrNotFound
+	}
+	if role != RoleOwner && role != RoleEditor {
+		return ErrForbidden
+	}
+	return s.store.RemovePlace(ctx, planID, placeID)
+}
+
+// Vote records the caller's vote on a place in the plan.
+//
+// Only a member may vote — a vote from a non-member is rejected, never silently dropped (S9).
+// A public plan does not let a passer-by vote: reading is open, shaping is not.
+func (s *Service) Vote(ctx context.Context, actorID, planID, placeID string, value int) error {
+	if value != 1 && value != -1 {
+		return fmt.Errorf("plans: vote must be 1 or -1")
+	}
+	role, visibility, err := s.store.Role(ctx, actorID, planID)
+	if err != nil {
+		return err
+	}
+	if role == "" && visibility != VisibilityPublic {
+		return ErrNotFound
+	}
+	if role == "" {
+		return ErrForbidden
+	}
+	return s.store.Vote(ctx, actorID, planID, placeID, value)
 }
 
 // List returns the plans the caller belongs to.
@@ -336,6 +415,85 @@ LIMIT $2 OFFSET $3`, actorID, limit, offset)
 		return nil, 0, fmt.Errorf("during plan iteration: %w", err)
 	}
 	return result, total, nil
+}
+
+// AddPlace inserts or reorders a place in the itinerary. The composite primary key makes this
+// an upsert on order rather than a duplicate.
+func (s *PostgresStore) AddPlace(ctx context.Context, actorID, planID, placeID string, order int) error {
+	const query = `
+INSERT INTO core.tb_route_place (co_route, co_place, nu_order, dt_created_at, dt_updated_at)
+VALUES ($1::uuid, $2::uuid, $3, now(), now())
+ON CONFLICT (co_route, co_place) DO UPDATE
+   SET nu_order = EXCLUDED.nu_order, dt_updated_at = now()`
+	if _, err := s.pool.Exec(ctx, query, planID, placeID, order); err != nil {
+		return fmt.Errorf("adding place to plan: %w", err)
+	}
+	return nil
+}
+
+// RemovePlace deletes the row; its votes go with it through the composite FK.
+func (s *PostgresStore) RemovePlace(ctx context.Context, planID, placeID string) error {
+	const query = `DELETE FROM core.tb_route_place WHERE co_route = $1::uuid AND co_place = $2::uuid`
+	if _, err := s.pool.Exec(ctx, query, planID, placeID); err != nil {
+		return fmt.Errorf("removing place from plan: %w", err)
+	}
+	return nil
+}
+
+// Places reads the itinerary ordered by net votes, then the manual order, then creation time.
+//
+// The aggregate is over one plan's rows, not over the review table, so it is a bounded sum of a
+// small set — the interactive read this endpoint exists for.
+func (s *PostgresStore) Places(ctx context.Context, actorID, planID string) ([]PlanPlace, error) {
+	const query = `
+SELECT rp.co_place::text, p.tx_title, rp.nu_order,
+       coalesce(sum(v.nu_vote), 0)::int AS net_votes,
+       -- The plan id comes from the parameter, not from the grouped row: a correlated
+       -- reference to rp.co_route would be an ungrouped column and Postgres rejects it.
+       coalesce((SELECT vv.nu_vote FROM core.tb_route_place_vote vv
+                  WHERE vv.co_route = $2::uuid AND vv.co_place = rp.co_place
+                    AND vv.co_user = $1::uuid), 0)::int AS my_vote,
+       rp.dt_created_at
+FROM core.tb_route_place rp
+JOIN core.tb_place p ON p.co_place = rp.co_place
+LEFT JOIN core.tb_route_place_vote v
+       ON v.co_route = rp.co_route AND v.co_place = rp.co_place
+WHERE rp.co_route = $2::uuid
+GROUP BY rp.co_place, p.tx_title, rp.nu_order, rp.dt_created_at
+ORDER BY net_votes DESC, rp.nu_order ASC, rp.dt_created_at ASC`
+	rows, err := s.pool.Query(ctx, query, actorID, planID)
+	if err != nil {
+		return nil, fmt.Errorf("reading plan places: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]PlanPlace, 0, 8)
+	for rows.Next() {
+		var place PlanPlace
+		if err := rows.Scan(&place.PlaceID, &place.Title, &place.Order,
+			&place.NetVotes, &place.MyVote, &place.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scanning plan place: %w", err)
+		}
+		result = append(result, place)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("during plan place iteration: %w", err)
+	}
+	return result, nil
+}
+
+// Vote upserts the caller's vote: changing your mind is an update, not a second row.
+func (s *PostgresStore) Vote(ctx context.Context, actorID, planID, placeID string, value int) error {
+	const query = `
+INSERT INTO core.tb_route_place_vote
+    (co_route, co_place, co_user, nu_vote, dt_created_at, dt_updated_at)
+VALUES ($1::uuid, $2::uuid, $3::uuid, $4, now(), now())
+ON CONFLICT (co_route, co_place, co_user) DO UPDATE
+   SET nu_vote = EXCLUDED.nu_vote, dt_updated_at = now()`
+	if _, err := s.pool.Exec(ctx, query, planID, placeID, actorID, value); err != nil {
+		return fmt.Errorf("voting: %w", err)
+	}
+	return nil
 }
 
 // withActor runs one write with the caller announced, so any trigger observes the actor.
