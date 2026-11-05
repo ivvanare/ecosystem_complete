@@ -920,3 +920,23 @@ puede invitar**.
 - Si el plan no tiene fecha, `AT_SCHEDULED` no puede cumplirse: el destape ocurre al aceptar.
 - El **sweeper de higiene** corre en el worker y pasa a `EXPIRED` las invitaciones vencidas.
   Es higiene, no corrección: el predicado de lectura ya las trataba como inutilizables.
+
+### 13.3 Bloqueo
+
+```http
+POST   /v1/blocks          { "coUser": "<uuid>" }
+GET    /v1/blocks
+DELETE /v1/blocks/{coUser}
+```
+
+Un bloqueo es una **relación, no un flag**, y eso decide tres cosas:
+
+- **Aplica en las dos direcciones.** El bloqueado tampoco te ve: ni en su lista de follow, ni
+  en las reseñas. Un bloqueo de una sola dirección no protege a nadie.
+- **Sobrevive a un unfollow.** No es el inverso de seguir.
+- **No necesita que exista un follow.** Se puede bloquear a un desconocido.
+
+Ambas mutaciones son idempotentes (`204`), y bloquearse a uno mismo es `422` con
+`field: coUser` — lo rechaza el servicio y también un `CHECK` en la base.
+
+Un moderador con `review.moderate` sigue viendo todo: la moderación no es una relación social.

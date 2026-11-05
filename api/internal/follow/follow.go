@@ -160,7 +160,7 @@ SELECT u.co_user::text, u.tx_name,
                 WHERE back.co_follower = f.co_followed AND back.co_followed = f.co_follower) AS mutual
 FROM core.tb_follow f
 JOIN seg.tb_user u ON u.co_user = f.co_followed
-WHERE f.co_follower = $1 AND u.dt_deleted_at IS NULL
+` + graphPredicate + ` AND f.co_follower = $1
 ORDER BY f.dt_created_at DESC, u.co_user
 LIMIT $2 OFFSET $3`
 
@@ -171,12 +171,31 @@ SELECT u.co_user::text, u.tx_name,
                 WHERE back.co_follower = f.co_follower AND back.co_followed = f.co_followed) AS mutual
 FROM core.tb_follow f
 JOIN seg.tb_user u ON u.co_user = f.co_follower
-WHERE f.co_followed = $1 AND u.dt_deleted_at IS NULL
+` + graphPredicate + ` AND f.co_followed = $1
 ORDER BY f.dt_created_at DESC, u.co_user
 LIMIT $2 OFFSET $3`
 
-const countFollowing = `SELECT count(*) FROM core.tb_follow WHERE co_follower = $1`
-const countFollowers = `SELECT count(*) FROM core.tb_follow WHERE co_followed = $1`
+// graphPredicate is the WHERE clause shared by the page and the count. Keeping one copy is
+// deliberate: when the page filtered blocks and the count did not, the API answered
+// total=1 with zero rows, and a client paginating would loop over empty pages forever.
+const graphPredicate = `
+WHERE u.dt_deleted_at IS NULL
+  -- A block is a relation in both directions: neither side sees the other (Q2).
+  AND NOT EXISTS (SELECT 1 FROM core.tb_block b
+                   WHERE (b.co_blocker = $1::uuid AND b.co_blocked = u.co_user)
+                      OR (b.co_blocker = u.co_user AND b.co_blocked = $1::uuid))`
+
+const countFollowing = `
+SELECT count(*)
+FROM core.tb_follow f
+JOIN seg.tb_user u ON u.co_user = f.co_followed
+` + graphPredicate + ` AND f.co_follower = $1`
+
+const countFollowers = `
+SELECT count(*)
+FROM core.tb_follow f
+JOIN seg.tb_user u ON u.co_user = f.co_follower
+` + graphPredicate + ` AND f.co_followed = $1`
 
 // List returns one page plus the total in that direction.
 func (s *PostgresStore) List(ctx context.Context, viewerID, direction string, page, limit int) (Page, error) {

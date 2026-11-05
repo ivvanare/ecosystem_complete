@@ -16,6 +16,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/ivvanare/ecosystem_complete/api/internal/audit"
+	"github.com/ivvanare/ecosystem_complete/api/internal/blocks"
 	"github.com/ivvanare/ecosystem_complete/api/internal/checkin"
 	"github.com/ivvanare/ecosystem_complete/api/internal/config"
 	"github.com/ivvanare/ecosystem_complete/api/internal/db"
@@ -160,6 +161,9 @@ func run() error {
 		signupRequester = signup.New(signup.NewPostgresStore(pool), publisher, logger)
 	}
 
+	// Blocking (Q2): a relation the viewer-relative projections filter by.
+	blockService := blocks.NewService(blocks.NewPostgresStore(pool), logger)
+
 	// Plans (P3a): visibility is an attribute, membership carries the role.
 	planService := plans.NewService(plans.NewPostgresStore(pool), logger)
 	// The invitation lifecycle is its own domain; the plan surface exposes it.
@@ -210,6 +214,7 @@ func run() error {
 			Checkins:           checkinService,
 			PlacesAdmin:        placeBackoffice,
 			Plans:              planService,
+			Blocks:             blockService,
 			Reviews:            reviewsService,
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,

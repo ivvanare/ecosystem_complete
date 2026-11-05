@@ -82,10 +82,12 @@ func (f *fakeDB) Query(_ context.Context, sql string, args ...any) (pgx.Rows, er
 func (f *fakeDB) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
 	f.recorded = append(f.recorded, recordedQuery{sql, args})
 	switch {
-	case strings.Contains(sql, "EXISTS"):
-		return &fakeRow{values: []any{f.exists}, err: f.rowErr}
+	// COUNT(*) first: the visibility predicate now contains an EXISTS (the block filter), so
+	// the looser test would answer a bool where the count scan needs an int.
 	case strings.Contains(sql, "COUNT(*)"):
 		return &fakeRow{values: []any{f.count}, err: f.rowErr}
+	case strings.Contains(sql, "EXISTS") && !strings.Contains(sql, "core.tb_review r"):
+		return &fakeRow{values: []any{f.exists}, err: f.rowErr}
 	case strings.Contains(sql, "JOIN seg.tb_user"):
 		if len(f.rows) == 0 {
 			return &fakeRow{err: pgx.ErrNoRows}
@@ -364,6 +366,10 @@ func TestListVisibilityPredicateAndNoAggregation(t *testing.T) {
 	}
 	if !strings.Contains(db.recorded[1].sql, "core.tb_follow") {
 		t.Errorf("list projection does not consult the follow graph: %s", db.recorded[1].sql)
+	}
+	// Q2: a block hides content in both directions, so the predicate must consult tb_block.
+	if !strings.Contains(db.recorded[1].sql, "core.tb_block") {
+		t.Errorf("the visibility predicate ignores blocking: %s", db.recorded[1].sql)
 	}
 	if !strings.Contains(db.recorded[1].sql, "f.co_follower = $2::uuid") {
 		t.Errorf("the highlight must be keyed by the asking viewer: %s", db.recorded[1].sql)

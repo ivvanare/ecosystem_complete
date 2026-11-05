@@ -796,6 +796,71 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/PlaceCategory" }
         "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/blocks:
+    post:
+      tags: [Social]
+      operationId: blockUser
+      summary: Block another account
+      description: |
+        A block is a relation, not a flag: it applies in **both directions** — the blocked
+        person stops seeing the blocker's content too — it survives an unfollow, and it does
+        not require that either person follows the other. Idempotent; blocking yourself is
+        rejected by the service and by a CHECK constraint.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [coUser]
+              properties:
+                coUser: { type: string, format: uuid }
+      responses:
+        "204": { description: Blocked, already or newly. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    get:
+      tags: [Social]
+      operationId: listBlocks
+      summary: Whom the caller blocks
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The caller's block list, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data, total]
+                properties:
+                  total: { type: integer }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Block" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/blocks/{coUser}:
+    delete:
+      tags: [Social]
+      operationId: unblockUser
+      summary: Remove a block
+      description: Idempotent — removing a block that does not exist answers `204` too.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coUser
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Not blocking, anymore or never. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
   /v1/plans:
     post:
       tags: [Plans]
@@ -2096,6 +2161,14 @@ components:
         longitude: { type: number, minimum: -180, maximum: 180 }
         address: { type: string, nullable: true, maxLength: 300 }
         status: { type: string, enum: [ACTIVE, INACTIVE] }
+    Block:
+      type: object
+      additionalProperties: false
+      required: [coUser, name, createdAt]
+      properties:
+        coUser: { type: string, format: uuid }
+        name: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
     GraphMember:
       type: object
       additionalProperties: false
