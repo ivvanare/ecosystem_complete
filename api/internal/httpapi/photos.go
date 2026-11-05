@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -98,7 +99,20 @@ func (h *placesAdminHandlers) uploadPhoto(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	photo, err := h.service.AddPhoto(r.Context(), viewer, viewer.UserID, placeID, url, photoType, 0)
+	// `order` is read from the form, not hardcoded: the contract documents it, and a parameter
+	// that silently does nothing is worse than one that does not exist.
+	order := 0
+	if raw := strings.TrimSpace(r.FormValue("order")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			_ = h.storage.Delete(r.Context(), key)
+			writeValidationError(w, []fieldError{{Field: "order", Code: "invalid"}})
+			return
+		}
+		order = parsed
+	}
+
+	photo, err := h.service.AddPhoto(r.Context(), viewer, viewer.UserID, placeID, url, photoType, order)
 	if err != nil {
 		// The bytes are already written; removing them keeps storage from filling with orphans
 		// every time a row is rejected.
