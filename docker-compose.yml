@@ -61,10 +61,21 @@ services:
       SMTP_ADDR: mailpit:1025
       MAIL_FROM: no-reply@melia.test
       LOG_LEVEL: info
+      # El productor de trending los necesita. Ausentes, el worker sigue mandando mails y
+      # simplemente no rankea: el read path degrada a orden por rating, que es un estado
+      # válido y no una caída.
+      DATABASE_URL: postgres://admin:my_admin_pass@database:5432/melia?sslmode=disable
+      REDIS_ADDR: redis:6379
+      # Frecuencia del batch en dev. Sin esto el scheduler queda apagado.
+      WORKER_SCHEDULER_INTERVAL: 2m
     depends_on:
       rabbitmq:
         condition: service_started
       mailpit:
+        condition: service_started
+      database:
+        condition: service_healthy
+      redis:
         condition: service_started
     networks:
       - melzone_network
@@ -81,10 +92,13 @@ services:
     networks:
       - melzone_network
 
-  # --- DATABASE (PostgreSQL 15) ---
+  # --- DATABASE (PostgreSQL 15 + PostGIS 3.5) ---
   # Levantar solo esta:  docker compose up -d database
   database:
-    image: postgres:15-alpine
+    # Mismo major de PostgreSQL (15): el volumen nombrado existente sigue válido.
+    # PostGIS habilita core.tb_place.co_location y su índice GiST
+    # (database/init/15-postgis-extension.sql y 16-place-geo.sql).
+    image: postgis/postgis:15-3.5-alpine
     container_name: melzone_db
     restart: always
     # Sin esto, PostgreSQL en Docker se queda con 64 MB de /dev/shm y las consultas

@@ -17,8 +17,15 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/ivvanare/ecosystem_complete/api/internal/config"
+	"github.com/ivvanare/ecosystem_complete/api/internal/db"
+	"github.com/ivvanare/ecosystem_complete/api/internal/invitations"
 	"github.com/ivvanare/ecosystem_complete/api/internal/mailer"
+	"github.com/ivvanare/ecosystem_complete/api/internal/taste"
+	"github.com/ivvanare/ecosystem_complete/api/internal/trending"
+	"github.com/ivvanare/ecosystem_complete/api/internal/worker"
 )
 
 const (
@@ -76,12 +83,21 @@ func run() error {
 
 	logger.Info("worker listening", slog.String("queue", queueName), slog.String("smtp", sender.Addr))
 
+	schedulerDone := startScheduler(ctx, logger)
+
 	for {
 		select {
 		case <-ctx.Done():
 			logger.Info("shutdown requested, draining")
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 			handleDelivery(shutdownCtx, deliveries, sender, logger)
+			if schedulerDone != nil {
+				select {
+				case <-schedulerDone:
+				case <-shutdownCtx.Done():
+					logger.Warn("scheduler did not stop before the shutdown deadline")
+				}
+			}
 			cancel()
 			logger.Info("worker stopped")
 			return nil
@@ -92,6 +108,87 @@ func run() error {
 			handleDelivery(ctx, single(delivery), sender, logger)
 		}
 	}
+}
+
+// startScheduler wires the periodic-job scheduler from the environment. A missing
+// or invalid WORKER_SCHEDULER_INTERVAL disables it with a warning: the worker's
+// mail duty must survive a bad config, so this never fails startup. The returned
+// channel closes when the scheduler has stopped; nil means no scheduler is running.
+func startScheduler(ctx context.Context, logger *slog.Logger) <-chan struct{} {
+	interval, err := config.SchedulerInterval(os.Getenv)
+	switch {
+	case err != nil:
+		logger.Warn("scheduler disabled", slog.String("reason", err.Error()))
+		return nil
+	case interval == 0:
+		logger.Info("scheduler disabled: WORKER_SCHEDULER_INTERVAL is not set")
+		return nil
+	}
+
+	scheduler, err := worker.NewScheduler(interval, logger)
+	if err != nil {
+		logger.Warn("scheduler disabled", slog.String("reason", err.Error()))
+		return nil
+	}
+	name, job := worker.Heartbeat(logger)
+	scheduler.Register(name, job)
+	registerTrending(ctx, scheduler, logger)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		scheduler.Run(ctx)
+	}()
+	return done
+}
+
+// registerTrending wires the trending producer onto the scheduler.
+//
+// DATABASE_URL and REDIS_ADDR are required by the API but not by the mail path, so a worker
+// without them keeps delivering mail and simply does not rank anything: a missing producer
+// degrades the read path to rating order (S28), which is a state, not an outage. Every
+// failure here is logged and the scheduler keeps its other jobs.
+func registerTrending(ctx context.Context, scheduler *worker.Scheduler, logger *slog.Logger) {
+	databaseURL := strings.TrimSpace(os.Getenv("DATABASE_URL"))
+	redisAddr := strings.TrimSpace(os.Getenv("REDIS_ADDR"))
+	if databaseURL == "" || redisAddr == "" {
+		logger.Info("trending producer not registered: DATABASE_URL or REDIS_ADDR is unset")
+		return
+	}
+
+	pool, err := db.Connect(ctx, databaseURL, 3, logger)
+	if err != nil {
+		logger.Error("trending producer disabled: database unavailable", slog.String("error", err.Error()))
+		return
+	}
+
+	redisClient := redis.NewClient(&redis.Options{Addr: redisAddr})
+	batch := trending.NewBatch(
+		trending.NewPostgresLoader(pool),
+		trending.NewWriter(redisClient, logger),
+		logger,
+	)
+	scheduler.Register(batch.Name(), func(ctx context.Context) error {
+		// The pool and the client are closed with the worker, not per tick.
+		if err := batch.Run(ctx); err != nil {
+			return err
+		}
+		return nil
+	})
+	logger.Info("trending producer registered")
+
+	// Invitation expiry is hygiene, not enforcement: the read predicate already refuses an
+	// expired invitation. The job keeps the table honest.
+	scheduler.Register("invitation-expiry", invitations.NewSweeper(invitations.NewPostgresStore(pool), logger).Run)
+
+	// Taste profiles: a derived cache rebuilt from explicit acts. It reads the same pool and
+	// writes one row per user, so a failure here cannot affect mail, ranking or invitations.
+	tasteBatch := taste.NewBatch(
+		taste.NewPostgresLoader(pool),
+		taste.NewPostgresStore(pool),
+		logger,
+	)
+	scheduler.Register(tasteBatch.Name(), tasteBatch.Run)
 }
 
 // single adapts one delivery into a closed channel so the drain path reuses the same code.

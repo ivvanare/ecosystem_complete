@@ -415,6 +415,10 @@ El panel es un SPA en otro origen, así que cada llamada es cross-origin y el he
 | `rate_limited` | 429 | cuota de pedidos de código; trae `Retry-After` |
 | `invalid_password` | 400 | la contraseña actual no coincide |
 | `email_unavailable` | 409 | la dirección ya está en uso |
+| `review_already_exists` | 409 | ya tenés una reseña activa en ese lugar |
+| `not_near_place` | 422 | la coordenada enviada está fuera del radio del lugar |
+| `already_checked_in` | 409 | ya hiciste check-in en ese lugar hoy |
+| `invitation_already_pending` | 409 | esa persona ya tiene una invitación viva a ese plan |
 | `refresh_invalid` | 401 | refresh desconocido o vencido |
 | `refresh_reused` | 401 | reuso detectado; la familia está revocada |
 | `invalid_token` | 401 | el ID token del proveedor no valida |
@@ -433,15 +437,232 @@ vocabulario de `code` es cerrado:
 |---|---|
 | `required` | falta un campo obligatorio |
 | `invalid` | el formato no sirve (email, código de 6 dígitos, fecha, provider) |
-| `too_short` | no llega al mínimo (contraseña: 12 caracteres) |
-| `too_long` | excede el máximo |
+| `too_short` | no llega al mínimo (contraseña: 12 caracteres; `q`/`dish`: 2) |
+| `too_long` | excede el máximo (`q`/`dish`: 80 caracteres; `radius`/`bbox`: su tope) |
 | `unchanged` | el email nuevo es igual al actual |
-| `unknown` | el rol pedido no existe o está inactivo |
+| `unknown` | el rol o el atributo pedido no existe o está inactivo |
 | `not_configured` | el proveedor social no está habilitado en este servidor |
 
 ---
 
-## 11. Recetas
+## 11. Descubrimiento de lugares
+
+Lectura pública, **sin autenticación**. Una sola ruta con dos modos, decididos por el
+localizador:
+
+| Localizador | Modo | Parámetros propios |
+|---|---|---|
+| `near=lat,long` | **lista** | `radius` (metros, por defecto 2000, máximo 50000), `sort`, `page`, `limit` |
+| `bbox=minLon,minLat,maxLon,maxLat` | **mapa** | `zoom` (0–21, obligatorio con `bbox`) |
+
+`near` lleva latitud primero; `bbox` lleva longitud primero, como GeoJSON. Mandar ambos
+localizadores o ninguno → `422 validation_failed`: ninguno trae
+`{field: "locator", code: "required"}` y ambos traen `{field: "bbox", code: "invalid"}`.
+El cruce del antimeridiano está fuera de alcance y se rechaza (`bbox` inválido).
+
+Filtros en ambos modos: `country` (`^[A-Z]{2}$`), `region` (`^[A-Z]{2}-[A-Z0-9]{1,3}$`) y
+`category` (uuid). Un valor inválido → `422` con su `field`. Los parámetros ajenos al modo
+(`page` en modo mapa, `zoom` en modo lista) se ignoran. Búsqueda y filtros de la ficha del
+lugar (`q`, `dish`, `attributes`, `maxPrice`, `openAt`): ver §11.3.
+
+**La coordenada del pedido se evalúa y se descarta**: no se persiste, no se loguea y nunca
+es material de una clave de caché.
+
+### 11.1 Modo lista
+
+```http
+GET /v1/places?near=10.4806,-66.9036&radius=2000&sort=distance&page=1&limit=20
+```
+
+```json
+{
+  "mode": "list",
+  "page": 1, "limit": 20, "total": 42,
+  "sortApplied": "trending",
+  "degraded": false,
+  "data": [
+    {
+      "coPlace": "9f1c...", "name": "Arepera El Hatillo",
+      "category": { "id": "43c4...", "name": "Arepera" },
+      "country": "VE", "region": "VE-A",
+      "latitude": 10.480594, "longitude": -66.903606,
+      "address": "Calle 1", "distanceMeters": 940,
+      "rating": { "average": 4.6, "count": 128 }
+    }
+  ]
+}
+```
+
+- `name` es el nombre comercial (`tx_title`). El nombre legal (`tx_name`) y el dueño del
+  lugar **nunca** se exponen en esta lectura.
+- `distanceMeters` son metros enteros desde `near`; nunca se fabrica.
+- `rating` es `null` cuando el worker no publicó agregado para ese lugar; la ausencia no
+  es un error. Nunca se calcula agregando reseñas en el pedido.
+- `trendingRank` solo aparece con `sort=trending` y ranking de zona existente.
+
+`sort`: `distance` (por defecto, orden real por cercanía sobre el índice GiST), `rating`,
+`trending`. **`sortApplied` es el orden que efectivamente corrió**: si se pidió `trending`
+y la zona no tenía ranking publicado, la API cae a `rating` y responde `degraded: true` —
+así el cliente distingue un ranking frío de un lugar impopular, sin error.
+
+Un radio sin resultados es `200` con `data: []` y `total: 0`: no es un error.
+
+### 11.2 Modo mapa
+
+```http
+GET /v1/places?bbox=-66.99,10.41,-66.82,10.54&zoom=12
+```
+
+```json
+{
+  "mode": "map", "zoom": 12, "resolution": 7,
+  "total": 311, "truncated": false,
+  "clusters": [
+    {
+      "cell": "872830828ffffff", "resolution": 7, "count": 37,
+      "center": { "latitude": 10.48, "longitude": -66.9 },
+      "averageRating": 4.3
+    }
+  ]
+}
+```
+
+- `total` es la cantidad de lugares detrás de los clusters, no la cantidad de clusters.
+- Cada cluster es una **zona**: una celda H3 serializada como string hex (los números JSON
+  pierden precisión por encima de 2^53). Trae conteos y agregados neutros y **ningún
+  nombre administrativo**: no es un barrio, ni un distrito, ni un municipio.
+- `averageRating` es el promedio de los ratings publicados de la celda; es `null` cuando
+  se desconoce, nunca `0`.
+- `zoom` elige la resolución H3 según la tabla; la celda se deriva por aritmética de
+  padres, nunca hay una columna por nivel de zoom.
+
+| `zoom` | resolución H3 |
+|---|---|
+| 0–4 | 3 |
+| 5–7 | 5 |
+| 8–10 | 6 |
+| 11–13 | 7 |
+| 14–16 | 8 |
+| 17–21 | 9 |
+
+La consulta del viewport está topeada a **5000 filas**. Un bbox que supera el tope de área
+(100 000 km²) se rechaza **antes de consultar** con `422` (`field: bbox`, `code:
+too_long`), pidiendo acercar — truncar en silencio haría mentirosos los conteos. Si el
+tope se alcanza igualmente, `truncated: true` y los conteos describen la muestra, no el
+total.
+
+### 11.3 Búsqueda y filtros
+
+Cinco parámetros más, válidos en los dos modos y combinables entre sí y con el
+localizador:
+
+- **`q` — ¿cómo se llama?** Busca en el nombre comercial del lugar, sin importar
+  mayúsculas ni acentos: `terraza`, `Térraza` y `TERRAZA` son la misma consulta. Sin
+  stemming: `terrazas` **no** matchea `terraza`. Entre 2 y 80 caracteres
+  (`{field: "q", code: "too_short"}` / `too_long`).
+- **`dish` — ¿quién sirve este plato?** Busca en nombres y descripciones de ítems de
+  menú (activos, de menús activos) y devuelve los **lugares** que lo tienen. Misma cota
+  de 2 a 80 caracteres. Son dos preguntas distintas con índices distintos: una sola caja
+  haría que «arepa» devuelva un lugar llamado Arepa's y pierda el restaurante que las
+  sirve.
+- **`attributes` — conjuntivo.** `attributes=terraza,petfriendly` exige **ambos**. Un
+  código que no está en el catálogo gobernado → `422` `{field: "attributes", code:
+  "unknown"}`. Vocabulario vigente: `terraza`, `petfriendly`, `frente_playa`,
+  `aire_libre`, `musica_en_vivo`.
+- **`maxPrice` — siempre USD.** Matchea lugares con al menos un ítem activo, de un menú
+  activo, cuya moneda sea USD y cuyo precio no supere el monto. Un ítem en otra moneda
+  **no** matchea: es comportamiento documentado, no un defecto, y no existe parámetro
+  `currency`. Negativo o no numérico → `{field: "maxPrice", code: "invalid"}`.
+- **`openAt` — pregunta de horario, no de atributo.** Instantáneo ISO-8601
+  (`2026-11-08T03:30:00Z`); se evalúa en la zona horaria **del lugar** e incluye los
+  horarios que cruzan la medianoche: un local que abre 20:00 y cierra 02:00 figura
+  abierto a las 23:00. Si no es un instante válido → `{field: "openAt", code:
+  "invalid"}`.
+
+Una búsqueda sin resultados es `200` con la página vacía, nunca `404`.
+
+---
+
+## 12. Reseñas
+
+Las reseñas son la primera escritura de dominio de la API. **Una por usuario y lugar**: lo
+garantiza el índice único parcial `ux_tb_review_user_place_active`, nunca una consulta
+previa (chequear antes de insertar tiene carrera).
+
+| Método | Ruta | Autenticación | Qué hace |
+|---|---|---|---|
+| `GET` | `/v1/places/{coPlace}/reviews?page&limit` | pública | lista paginada, la más reciente primero |
+| `POST` | `/v1/places/{coPlace}/reviews` | bearer | crea tu reseña (`201`) |
+| `PATCH` | `/v1/places/{coPlace}/reviews/{coReview}` | bearer, solo el autor | edita `rating` y/o `comment` |
+| `DELETE` | `/v1/places/{coPlace}/reviews/{coReview}` | bearer, solo el autor | borrado **lógico** (`204`) |
+| `PATCH` | `/v1/admin/reviews/{coReview}` | bearer + `review.moderate` | fija `status` (`ACTIVE`/`INACTIVE`/`MODERATED`) |
+
+Un lugar borrado lógico o `INACTIVE` responde `404` en **todas** estas rutas, igual que un
+lugar inexistente: no se pueden enumerar lugares retirados por diferencias de error.
+
+### Crear
+
+```http
+POST /v1/places/9f1c.../reviews
+Authorization: Bearer <access>
+{"rating": 5, "comment": "La mejor arepa de Chacao."}
+```
+
+→ `201` con la reseña. `rating` es entero de 1 a 5 (el CHECK de la tabla) y `comment`
+tiene tope de 2000 caracteres, validado en el borde (`422`, `field: comment`, `code:
+too_long`), no en la base.
+
+Si ya tenés una reseña activa (no borrada) en ese lugar → `409 review_already_exists`.
+Es la traducción del índice único parcial, nunca un chequeo previo ni un 500.
+
+### Visibilidad
+
+Todos ven las reseñas `ACTIVE` no borradas. Una reseña `INACTIVE`, `MODERATED` o borrada
+lógicamente solo la ven **su autora** y quienes tienen `review.moderate` — la lista es
+pública, pero si mandás el bearer la API sabe quién sos y te muestra también las tuyas. El
+email del autor nunca se expone: `author` trae solo `id` y `name`.
+
+### Editar y borrar (solo el autor)
+
+```http
+PATCH /v1/places/9f1c.../reviews/7a2b...
+Authorization: Bearer <access>
+{"rating": 4}
+```
+
+→ `200` con la reseña actualizada. Al menos un campo es obligatorio (`rating` o
+`comment`). Cualquier otro usuario → `403 permission_denied`. Editar no cambia `status`.
+
+```http
+DELETE /v1/places/9f1c.../reviews/7a2b...
+Authorization: Bearer <access>
+```
+
+→ `204`. El borrado es **lógico** (`dt_deleted_at`), así que podés reseñar ese lugar de
+nuevo después — por eso el índice único es parcial.
+
+### Moderación
+
+```http
+PATCH /v1/admin/reviews/7a2b...
+Authorization: Bearer <access>
+{"status": "MODERATED"}
+```
+
+Requiere el permiso `review.moderate` (ya sembrado); sin él → `403 permission_denied`.
+Solo usa valores del enum `review_status` existente: no hay permisos ni estados nuevos.
+Una reseña `MODERATED` deja de verse para todos salvo su autora y los moderadores.
+
+### Historia
+
+Cada escritura anuncia al actor con `set_config('app.current_user_id', ...)` al abrir su
+transacción, así el trigger existente registra `co_actor_user` en
+`core.tb_review_history`. El servicio **nunca** inserta en la tabla de historia: la
+escribe el trigger.
+
+---
+
+## 13. Recetas
 
 **Registro completo (móvil)**
 
@@ -488,7 +709,7 @@ curl -s localhost:9000/v1/me -H "Authorization: Bearer $TOKEN" | jq '.permission
 
 ---
 
-## 12. Checklist para un cliente nuevo
+## 14. Checklist para un cliente nuevo
 
 1. Login o registro → guardar `access_token` y `refresh_token` (el panel no recibe el refresh:
    va en cookie).
@@ -498,3 +719,204 @@ curl -s localhost:9000/v1/me -H "Authorization: Bearer $TOKEN" | jq '.permission
 5. Leer `error.code`, nunca `message`.
 6. En el panel: mandar `X-CSRF-Token` en refresh y logout, y nunca leer la cookie
    `refresh_token`.
+
+---
+
+## 13. Grafo social
+
+### 13.1 Seguir
+
+```http
+POST /v1/follows          { "coUser": "<uuid>" }   → 204
+DELETE /v1/follows/{coUser}                        → 204
+GET /v1/follows?direction=following|followers&page=1&limit=20
+```
+
+El grafo es asimétrico: seguir a alguien no dice nada sobre si esa persona te sigue. Ambas
+mutaciones son **idempotentes** — repetir un follow o borrar uno que no existe también responde
+`204`, porque el grafo es un conjunto y no un historial de intenciones.
+
+`mutual: true` en el listado marca un amigo: existe también la arista inversa. Se calcula en
+cada lectura y **nunca se guarda**: el grafo cambia todos los días y un flag almacenado se
+pudre en uno. Seguirte a vos mismo es `422` con `field: coUser`.
+
+### 13.2 Check-in
+
+```http
+POST /v1/places/{coPlace}/checkins   { "near": "10.4806,-66.9036" }   → 201
+```
+
+La coordenada **prueba** la presencia y después se descarta: solo se guarda el veredicto
+(`PROXIMITY`). No se almacena la coordenada ni la distancia, así que no hay rastro de ubicación
+que purgar.
+
+- Fuera del radio del lugar → `422 not_near_place`. No se degrada a "afirmación libre": decir
+  "no estás ahí" es honesto; registrar lo que la persona no hizo envenena justamente la señal
+  que este endpoint existe para dar.
+- Segundo check-in el mismo día en el mismo lugar → `409 already_checked_in`. La regla vive en
+  el esquema (índice único sobre usuario, lugar y día), no en el servicio.
+- Un lugar borrado o inactivo → `404`, igual que en el resto de las rutas de lugar.
+
+Un check-in es un hecho **append-only**: no se edita ni se borra lógicamente, y por eso no está
+en el conjunto de tablas de historia.
+
+### 13.3 Moderación de reseñas
+
+```http
+GET /v1/admin/reviews?status=MODERATED&placeId=<uuid>&authorId=<uuid>&page=1&limit=20
+PATCH /v1/admin/reviews/{coReview}   { "status": "ACTIVE" | "INACTIVE" | "MODERATED" }
+```
+
+Ambas requieren el permiso `review.moderate`.
+
+El listado existe porque la ruta de moderación recibe un `coReview` y **nada más lo hacía
+descubrible**: una pantalla de moderación sin listado no tiene de dónde salir. A diferencia del
+listado público, este **no aplica el predicado de visibilidad**: devuelve todas las reseñas,
+incluidas las moderadas y las borradas lógicamente, con la más reciente primero. Todos los
+filtros son opcionales y el valor vacío lista todo.
+
+Ojo con la interacción ya conocida: moderar **no** borra. Una reseña `MODERATED` sigue visible
+para su autor y para el moderador, y desde la migración 20 el autor puede volver a reseñar ese
+lugar. Si querés impedir que alguien publique, eso es bloqueo de cuenta, no moderación.
+
+---
+
+## 14. Backoffice de lugares
+
+Cinco rutas, todas con bearer y permisos ya sembrados. El **Viewer de ownership** es el que
+decide el alcance: quien tiene `place.manage_all` ve todo el catálogo; quien solo tiene
+`place.update` ve únicamente los lugares donde `co_owner_user` es su propia cuenta. Los lugares
+curados por el backoffice (`co_owner_user` NULL) no son visibles para un editor: pertenecen al
+panel.
+
+```http
+GET    /v1/admin/places?q=&status=ACTIVE|INACTIVE|DELETED&categoryId=&country=&region=&page=&limit=
+GET    /v1/admin/places/{coPlace}
+POST   /v1/admin/places
+PATCH  /v1/admin/places/{coPlace}
+DELETE /v1/admin/places/{coPlace}
+```
+
+| Ruta | Permiso | Nota |
+|---|---|---|
+| `GET /v1/admin/places` | `place.update` | Paginado, alcance por ownership. Por defecto lista el catálogo vivo; `status=DELETED` lista los retirados |
+| `GET /v1/admin/places/{coPlace}` | `place.update` | Una fila que no podés ver responde **404**, no 403 |
+| `POST /v1/admin/places` | `place.manage_all` | Solo el backoffice crea y asigna dueño: el catálogo se cura, y el autoservicio es otra decisión |
+| `PATCH /v1/admin/places/{coPlace}` | `place.update` | Parcial: campo ausente = sin cambios; `null` explícito limpia un nullable. Solo `place.manage_all` reasigna dueño |
+| `DELETE /v1/admin/places/{coPlace}` | `place.delete` | **Borrado lógico**: la fila queda, y discovery, reseñas y check-ins dejan de servirla |
+
+**Por qué 404 y no 403** en una fila ajena: un 403 confirma que la fila existe. Un llamador que
+no puede verla no debe poder enumerar el catálogo por diferencia de códigos.
+
+Toda escritura anuncia el actor (`app.current_user_id`) en la misma transacción, así que el
+trigger de historia de `tb_place` registra `co_actor_user`. El servicio nunca escribe una fila
+de historia.
+
+---
+
+## 15. Planes colaborativos
+
+```http
+POST   /v1/plans                                    { name, description?, visibility?, scheduledAt?, partySize? }
+GET    /v1/plans?page=&limit=
+GET    /v1/plans/{coRoute}
+PATCH  /v1/plans/{coRoute}
+POST   /v1/plans/{coRoute}/members
+DELETE /v1/plans/{coRoute}/members/{coUser}
+```
+
+Un festival público y un viaje privado son la misma entidad con puertas distintas: la
+visibilidad es un atributo del plan y la membresía es una relación que lleva el rol
+(`OWNER` / `EDITOR` / `VIEWER`).
+
+**Reglas que importan:**
+
+- `visibility` arranca en `PRIVATE`. Un plan nunca se vuelve público por omisión.
+- El creador queda como `OWNER` en la misma transacción que crea el plan: un plan sin dueño es
+  inválido.
+- **El self-join a un plan público otorga `VIEWER`, siempre.** Una puerta abierta que reparte
+  `EDITOR` es un plan que cualquiera puede reordenar y vaciar, y un festival es el peor caso.
+  Promover a `EDITOR` es una acción del dueño.
+- Unirse a un plan **privado** responde `404`: no confirma que exista.
+- Un plan **visible** con rol insuficiente responde `403`: ya sabés que existe, te falta permiso.
+- Cambiar la visibilidad es **solo del `OWNER`**: pasar a público toca a todos los ya invitados.
+- El dueño no puede salir del plan por su cuenta: primero transfiere la propiedad.
+- Un plan inactivo (moderado) responde `404` a los no-owner, y sus miembros conservan la
+  lectura para no perder el itinerario.
+
+---
+
+## 16. Catálogo de categorías
+
+```http
+GET /v1/place-categories?status=ACTIVE&page=1&limit=100
+```
+
+Público, sin bearer. Es **taxonomía, no dato de cliente**: el mismo listado sirve para el
+select del panel y para los filtros de discovery del móvil, así que no tiene sentido esconderlo
+detrás de un permiso de backoffice.
+
+`status=ACTIVE` devuelve solo las elegibles; sin `status` devuelve el catálogo vivo. El orden es
+por nombre, para que el vocabulario mantenga un orden estable entre llamadas. `code` es la clave
+estable (`arepera`, `hotel`, `rumba`): usá esa en los filtros, no el uuid.
+
+### El lugar en la fila de moderación
+
+El listado `GET /v1/admin/reviews` agrega `place: {id, title}` a cada fila. No está en la
+lectura pública a propósito: ahí el cliente ya conoce el lugar porque consultó por `coPlace`.
+En el listado admin sí hace falta, porque un moderador puede tener `review.moderate` sin
+`place.update` y entonces no puede resolver el uuid por su cuenta.
+
+### 15.1 Itinerario y votos
+
+```http
+GET    /v1/plans/{coRoute}/places
+POST   /v1/plans/{coRoute}/places                          { coPlace, order? }
+DELETE /v1/plans/{coRoute}/places/{coPlace}
+POST   /v1/plans/{coRoute}/places/{coPlace}/votes          { vote: -1 | 1 }
+```
+
+El itinerario se ordena por **votos netos descendente**, y los empates se rompen por el orden
+manual y después por fecha de creación. Ese desempate es lo que lo hace determinístico: dos
+lecturas seguidas devuelven el mismo orden, y una lista votada no se reordena sola entre pedidos.
+
+- Agregar o quitar lugares es de `EDITOR` u `OWNER`. Un `VIEWER` lee y vota: no da forma al plan.
+- **Solo un miembro vota.** Un voto de alguien que no pertenece al plan se rechaza con `403`, no
+  se descarta en silencio. En un plan público cualquiera puede *leer*; votar sigue siendo de
+  miembros.
+- Votar dos veces cambia el voto, no agrega otro: un miembro tiene como máximo un voto por lugar.
+  Por eso `nu_vote` es `-1` o `1` y no existe el `0` — no votar es simplemente no tener fila.
+- Sacar un lugar del plan borra sus votos: la FK es compuesta a `(co_route, co_place)`, así que
+  tampoco se puede votar un lugar que no está en el plan.
+
+### 15.2 Invitaciones
+
+```http
+POST   /v1/plans/{coRoute}/invitations            { coUser, expiresAt, mode?, message?, hint? }
+GET    /v1/plans/{coRoute}/invitations            ← la vista del anfitrión
+GET    /v1/invitations                            ← mi bandeja
+POST   /v1/invitations/{coInvitation}/accept
+POST   /v1/invitations/{coInvitation}/decline
+```
+
+Una invitación tiene ciclo de vida propio (`PENDING → ACCEPTED | DECLINED | EXPIRED | REVOKED`),
+no es un flag ni una membresía con estado. Invitar es de `EDITOR` u `OWNER`; **un no-miembro no
+puede invitar**.
+
+- **Aceptar crea la membresía `VIEWER` en la misma transacción.** Aceptar nunca da `EDITOR`.
+- **Rechazar es terminal y no crea nada.**
+- **El vencimiento lo impone la lectura.** Toda lectura y todo aceptar exigen
+  `dt_expires_at > now()`: una invitación vencida no se puede aceptar aunque el sweeper esté
+  caído. La columna `expired` te dice el veredicto sin que tengas que comparar fechas.
+- **Visibilidad asimétrica:** el anfitrión ve el estado de todos; un invitado ve solo el suyo.
+  Quién rechazó no es información de la comunidad.
+- Una invitación vencida, ya respondida o ajena responden `404`, indistinguibles a propósito.
+- `SURPRISE` exige al menos `message` o `hint`: un sobre vacío no es una sorpresa.
+- **El destape** lo dice el campo `revealed`: una invitación `PLAIN` siempre lo trae en `true`;
+  una `SURPRISE` lo pasa a `true` cuando su regla se cumple — al aceptar (`ON_ACCEPT`) o a la
+  hora del plan (`AT_SCHEDULED`, el default). Mientras sea `false`, el itinerario del plan
+  responde `403` a ese invitado: el itinerario **es** el lugar, y mostrarlo antes de tiempo
+  rompe la sorpresa. Un miembro ya está adentro y nunca se le oculta nada.
+- Si el plan no tiene fecha, `AT_SCHEDULED` no puede cumplirse: el destape ocurre al aceptar.
+- El **sweeper de higiene** corre en el worker y pasa a `EXPIRED` las invitaciones vencidas.
+  Es higiene, no corrección: el predicado de lectura ya las trataba como inutilizables.

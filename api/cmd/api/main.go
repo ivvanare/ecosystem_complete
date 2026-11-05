@@ -16,16 +16,23 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/ivvanare/ecosystem_complete/api/internal/audit"
+	"github.com/ivvanare/ecosystem_complete/api/internal/checkin"
 	"github.com/ivvanare/ecosystem_complete/api/internal/config"
 	"github.com/ivvanare/ecosystem_complete/api/internal/db"
 	"github.com/ivvanare/ecosystem_complete/api/internal/emailchange"
+	"github.com/ivvanare/ecosystem_complete/api/internal/follow"
 	"github.com/ivvanare/ecosystem_complete/api/internal/httpapi"
 	"github.com/ivvanare/ecosystem_complete/api/internal/identity"
 	"github.com/ivvanare/ecosystem_complete/api/internal/invitation"
+	"github.com/ivvanare/ecosystem_complete/api/internal/invitations"
 	"github.com/ivvanare/ecosystem_complete/api/internal/login"
 	"github.com/ivvanare/ecosystem_complete/api/internal/password"
+	"github.com/ivvanare/ecosystem_complete/api/internal/placeadmin"
+	"github.com/ivvanare/ecosystem_complete/api/internal/places"
+	"github.com/ivvanare/ecosystem_complete/api/internal/plans"
 	"github.com/ivvanare/ecosystem_complete/api/internal/probe"
 	"github.com/ivvanare/ecosystem_complete/api/internal/queue"
+	"github.com/ivvanare/ecosystem_complete/api/internal/reviews"
 	"github.com/ivvanare/ecosystem_complete/api/internal/session"
 	"github.com/ivvanare/ecosystem_complete/api/internal/signup"
 	"github.com/ivvanare/ecosystem_complete/api/internal/social"
@@ -153,6 +160,32 @@ func run() error {
 		signupRequester = signup.New(signup.NewPostgresStore(pool), publisher, logger)
 	}
 
+	// Plans (P3a): visibility is an attribute, membership carries the role.
+	planService := plans.NewService(plans.NewPostgresStore(pool), logger)
+	// The invitation lifecycle is its own domain; the plan surface exposes it.
+	planService.SetInvitations(invitations.NewService(invitations.NewPostgresStore(pool), logger))
+
+	// Places backoffice (place-ownership): the ownership viewer is resolved per request
+	// from admin.access, so a owner-editor sees only their own rows.
+	placeBackoffice := placeadmin.NewService(placeadmin.NewPostgresStore(pool), logger)
+
+	// Social graph (P2): follow and check-in belong to the mobile consumer (D21); the
+	// admin panel has no counterpart for them.
+	followService := follow.NewService(follow.NewPostgresStore(pool), logger)
+	checkinService := checkin.NewService(checkin.NewPostgresStore(pool), logger)
+
+	// Discovery read path (p1-discovery.md): the store runs the spatial predicates on
+	// co_location so the GiST index serves them. Rating aggregates and the zone ranking
+	// come from the worker in a later slice; until then both readers report "nothing
+	// published", which is a degraded answer and never an error.
+	discovery := places.NewService(places.NewPostgresStore(pool),
+		places.NewRedisStats(redisClient), places.NewRedisRanking(redisClient), logger)
+
+	// Reviews write path (p1-discovery.md §6): every write announces the actor with
+	// set_config at the start of its transaction, so the existing history trigger
+	// records co_actor_user; the service never writes core.tb_review_history itself.
+	reviewsService := reviews.NewService(reviews.NewPostgresStore(pool), logger)
+
 	server := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: httpapi.New(httpapi.Options{
@@ -172,6 +205,12 @@ func run() error {
 			Password:           passwordService,
 			EmailChange:        emailChangeService,
 			Social:             socialService,
+			Discovery:          discovery,
+			Follows:            followService,
+			Checkins:           checkinService,
+			PlacesAdmin:        placeBackoffice,
+			Plans:              planService,
+			Reviews:            reviewsService,
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}

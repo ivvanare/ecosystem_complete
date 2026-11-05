@@ -145,6 +145,24 @@ func Load(getenv func(string) string) (Config, error) {
 	return cfg, nil
 }
 
+// SchedulerInterval reads WORKER_SCHEDULER_INTERVAL, the cadence of the worker
+// process's periodic jobs. It lives apart from Load on purpose: the scheduler is a
+// worker concern, and an invalid value must never abort a startup — the caller
+// warns and runs with the scheduler disabled, because the worker's mail duty must
+// survive a bad config. Empty means disabled (0, nil); an invalid value is an
+// error naming the variable.
+func SchedulerInterval(getenv func(string) string) (time.Duration, error) {
+	raw := lookup(getenv, "WORKER_SCHEDULER_INTERVAL")
+	if raw == "" {
+		return 0, nil
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil || parsed <= 0 {
+		return 0, fmt.Errorf("invalid WORKER_SCHEDULER_INTERVAL %q: must be a positive duration such as 5m", raw)
+	}
+	return parsed, nil
+}
+
 // splitList parses a comma-separated variable, dropping blanks.
 func splitList(raw string) []string {
 	if raw == "" {

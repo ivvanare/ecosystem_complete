@@ -4,19 +4,30 @@
 --
 -- Usage (live PostgreSQL 15, e.g. docker compose up database):
 --   psql -h localhost -U admin -d melia -v ON_ERROR_STOP=1 -f database/verify_base_model.sql
+-- Against a scratch database (a throwaway proof of pending schema files):
+--   psql -h localhost -U admin -d <scratch> -v ON_ERROR_STOP=1 -v expected_db=<scratch> -f database/verify_base_model.sql
 --
 -- Every check RAISEs EXCEPTION on failure. All behavioral inserts run inside a
 -- transaction that is ROLLED BACK at the end: the database is left untouched.
 -- ============================================================================
 \set ON_ERROR_STOP on
 
+-- The S1 name guard expects melia unless the caller overrides it. psql does not
+-- expand variables inside $$ bodies, so the value travels through a custom GUC.
+\if :{?expected_db}
+\else
+\set expected_db 'melia'
+\endif
+SELECT set_config('verify.expected_db', :'expected_db', false);
+
 BEGIN;
 
 -- ---- S1: topology — one database, schemas seg + core ------------------------
 DO $$
 BEGIN
-    IF current_database() <> 'melia' THEN
-        RAISE EXCEPTION 'S1 FAIL: expected database melia, got %', current_database();
+    IF current_database() <> current_setting('verify.expected_db') THEN
+        RAISE EXCEPTION 'S1 FAIL: expected database %, got %',
+            current_setting('verify.expected_db'), current_database();
     END IF;
     IF (SELECT count(*) FROM information_schema.schemata
         WHERE schema_name IN ('seg', 'core')) <> 2 THEN
@@ -648,13 +659,16 @@ END $$;
 -- ---- S20: locale catalogs exist, seeded, and the storage convention is UTC ---
 DO $$
 BEGIN
-    -- Both catalogs exist with exactly their seeds, and nothing else.
-    IF (SELECT count(*) FROM core.tb_place_category WHERE dt_deleted_at IS NULL) <> 3
+    -- Both catalogs exist with exactly their seeds, and nothing else. The
+    -- categories are six: the original three plus rumba/restaurante/bar, which
+    -- 18-place-attributes.sql seeds because 06/10 are applied (S15).
+    IF (SELECT count(*) FROM core.tb_place_category WHERE dt_deleted_at IS NULL) <> 6
        OR (SELECT count(*) FROM core.tb_place_category
             WHERE dt_deleted_at IS NULL
               AND (tx_code, tx_name) IN (('hotel', 'Hotel'), ('arepera', 'Arepera'),
-                                         ('parque', 'Parque'))) <> 3 THEN
-        RAISE EXCEPTION 'S20 FAIL: expected exactly the 3 seeded place categories';
+                                         ('parque', 'Parque'), ('rumba', 'Rumba'),
+                                         ('restaurante', 'Restaurante'), ('bar', 'Bar'))) <> 6 THEN
+        RAISE EXCEPTION 'S20 FAIL: expected exactly the 6 seeded place categories';
     END IF;
     IF (SELECT count(*) FROM core.tb_currency WHERE dt_deleted_at IS NULL) <> 3
        OR (SELECT count(*) FROM core.tb_currency
@@ -948,6 +962,297 @@ BEGIN
                                dt_created_at, dt_updated_at)
     VALUES (gen_random_uuid(), 'UTC Place', 'UTC', 0, 0,
             v_cat, 'AR', 'UTC', now(), now());
+END $$;
+
+-- ---- S26: co_location is derived from the decimals and follows them ---------
+-- Phase 0 of social discovery (D2/S16): the decimals are the contract and the
+-- geography column is a GENERATED ALWAYS projection of them.
+DO $$
+DECLARE
+    v_cat   uuid;
+    v_place uuid := gen_random_uuid();
+BEGIN
+    -- The extension is present (15-postgis-extension.sql).
+    IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'postgis') THEN
+        RAISE EXCEPTION 'S26 FAIL: postgis extension is not created';
+    END IF;
+
+    -- The column is a stored generated column on the entity.
+    IF NOT EXISTS (SELECT 1 FROM pg_attribute a
+                   JOIN pg_class c ON c.oid = a.attrelid
+                   JOIN pg_namespace n ON n.oid = c.relnamespace
+                   WHERE n.nspname = 'core' AND c.relname = 'tb_place'
+                     AND a.attname = 'co_location' AND a.attgenerated = 's'
+                     AND NOT a.attisdropped) THEN
+        RAISE EXCEPTION 'S26 FAIL: co_location is not a stored generated column';
+    END IF;
+
+    -- The GiST index serves the radius and viewport reads.
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes
+                   WHERE schemaname = 'core' AND tablename = 'tb_place'
+                     AND indexname = 'ix_tb_place_location'
+                     AND indexdef ILIKE '%USING gist%') THEN
+        RAISE EXCEPTION 'S26 FAIL: tb_place has no GiST index on co_location';
+    END IF;
+
+    SELECT co_place_category INTO v_cat FROM core.tb_place_category
+     WHERE tx_code = 'hotel' AND dt_deleted_at IS NULL;
+
+    INSERT INTO core.tb_place (co_place, tx_name, tx_title,
+                               nu_latitude, nu_longitude,
+                               co_place_category, tx_country, tx_timezone,
+                               dt_created_at, dt_updated_at)
+    VALUES (v_place, 'S26', 'S26', 10.5, -66.9,
+            v_cat, 'VE', 'America/Caracas', now(), now());
+
+    -- The derived value agrees with the decimals on insert (10.5, -66.9 would
+    -- also catch a swapped MakePoint argument order) ...
+    IF NOT (SELECT ST_Equals(co_location::geometry,
+                             ST_SetSRID(ST_MakePoint(nu_longitude, nu_latitude), 4326))
+              FROM core.tb_place WHERE co_place = v_place) THEN
+        RAISE EXCEPTION 'S26 FAIL: co_location disagrees with the decimals on insert';
+    END IF;
+
+    -- ... and follows an update of them.
+    UPDATE core.tb_place SET nu_latitude = -34.6, nu_longitude = -58.4,
+                             dt_updated_at = now()
+     WHERE co_place = v_place;
+    IF NOT (SELECT ST_Equals(co_location::geometry,
+                             ST_SetSRID(ST_MakePoint(-58.4, -34.6), 4326))
+              FROM core.tb_place WHERE co_place = v_place) THEN
+        RAISE EXCEPTION 'S26 FAIL: co_location did not follow an update of the decimals';
+    END IF;
+
+    -- A hand-written value is rejected: the column is derived, never authored.
+    BEGIN
+        UPDATE core.tb_place
+           SET co_location = ST_SetSRID(ST_MakePoint(0, 0), 4326)::geography
+         WHERE co_place = v_place;
+        RAISE EXCEPTION 'S26 FAIL: co_location accepted a hand-written value';
+    EXCEPTION WHEN generated_always THEN NULL;
+    END;
+END $$;
+
+-- ---- S27: tx_region shape, navigation index, and history mirror -------------
+-- Phase 0 of social discovery (S3/S15): region is a nullable ISO 3166-2 code,
+-- and the place history payload carries it.
+DO $$
+DECLARE
+    v_cat   uuid;
+    v_place uuid := gen_random_uuid();
+BEGIN
+    SELECT co_place_category INTO v_cat FROM core.tb_place_category
+     WHERE tx_code = 'hotel' AND dt_deleted_at IS NULL;
+
+    -- NULL is deliberate and must be admitted: the geocoder may not answer.
+    INSERT INTO core.tb_place (co_place, tx_name, tx_title,
+                               nu_latitude, nu_longitude,
+                               co_place_category, tx_country, tx_timezone,
+                               dt_created_at, dt_updated_at)
+    VALUES (v_place, 'S27', 'S27', 10.5, -66.9,
+            v_cat, 'VE', 'America/Caracas', now(), now());
+
+    -- Shape violations are rejected by the CHECK, with the exact SQLSTATE.
+    BEGIN
+        UPDATE core.tb_place SET tx_region = 've-a', dt_updated_at = now()
+         WHERE co_place = v_place;
+        RAISE EXCEPTION 'S27 FAIL: lowercase region admitted';
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+    BEGIN
+        UPDATE core.tb_place SET tx_region = 'VEA1', dt_updated_at = now()
+         WHERE co_place = v_place;
+        RAISE EXCEPTION 'S27 FAIL: region without the hyphen admitted';
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+
+    -- A valid ISO 3166-2 code is accepted and the open interval carries it.
+    UPDATE core.tb_place SET tx_region = 'VE-A', dt_updated_at = now()
+     WHERE co_place = v_place;
+    IF NOT EXISTS (SELECT 1 FROM core.tb_place_history
+                    WHERE co_place = v_place AND dt_valid_to IS NULL
+                      AND tx_operation = 'UPDATE' AND tx_region = 'VE-A') THEN
+        RAISE EXCEPTION 'S27 FAIL: place history lost tx_region';
+    END IF;
+
+    -- Navigation reads use (tx_country, tx_region) together, in that order.
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes
+                   WHERE schemaname = 'core' AND tablename = 'tb_place'
+                     AND indexname = 'ix_tb_place_country_region'
+                     AND indexdef ILIKE '%(tx_country, tx_region)%') THEN
+        RAISE EXCEPTION 'S27 FAIL: ix_tb_place_country_region missing or wrong order';
+    END IF;
+
+    -- The derived co_location stays OUT of the history payload (S16/16: the
+    -- payload already carries the decimals it derives from).
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+               WHERE table_schema = 'core' AND table_name = 'tb_place_history'
+                 AND column_name = 'co_location') THEN
+        RAISE EXCEPTION 'S27 FAIL: history payload carries the derived co_location';
+    END IF;
+END $$;
+
+-- ---- S28: attribute vocabulary, link bridge, and generated search columns ---
+-- Phase 1 commit 3 of social discovery (S15-S23): attributes are a governed
+-- many-to-many with a composite-key bridge, and text search runs on generated
+-- tsvectors built through an immutable unaccent wrapper (18/19).
+DO $$
+DECLARE
+    v_place  uuid := gen_random_uuid();
+    v_menu   uuid := gen_random_uuid();
+    v_item   uuid := gen_random_uuid();
+    v_cat    uuid;
+    v_usd    uuid;
+    v_attr_t uuid;
+    v_attr_p uuid;
+BEGIN
+    -- The bridge key shape: composite PRIMARY KEY (co_place, co_attribute),
+    -- and NO soft delete, exactly like tb_route_place (S15).
+    IF NOT EXISTS (SELECT 1
+                     FROM pg_constraint c
+                     JOIN pg_index i ON i.indexrelid = c.conindid
+                    WHERE c.conrelid = 'core.tb_place_attribute_link'::regclass
+                      AND c.contype = 'p'
+                      AND (SELECT array_agg(a.attname ORDER BY a.attname)
+                             FROM pg_attribute a
+                            WHERE a.attrelid = c.conindid
+                              AND NOT a.attisdropped) = '{co_attribute,co_place}') THEN
+        RAISE EXCEPTION 'S28 FAIL: tb_place_attribute_link has no composite PK (co_place, co_attribute)';
+    END IF;
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'core' AND table_name = 'tb_place_attribute_link'
+                  AND column_name = 'dt_deleted_at') THEN
+        RAISE EXCEPTION 'S28 FAIL: tb_place_attribute_link carries soft delete (composite-key bridges do not)';
+    END IF;
+
+    -- tx_code is unique among LIVE rows, like every soft-deletable catalog.
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes
+                    WHERE schemaname = 'core' AND tablename = 'tb_place_attribute'
+                      AND indexname = 'ux_tb_place_attribute_code_active'
+                      AND indexdef ILIKE '%UNIQUE%'
+                      AND indexdef ILIKE '%dt_deleted_at IS NULL%') THEN
+        RAISE EXCEPTION 'S28 FAIL: ux_tb_place_attribute_code_active missing or not partial';
+    END IF;
+
+    -- The vocabulary and the new categories are seeded by the migration, not
+    -- created on the fly (S15/S23).
+    IF (SELECT count(*) FROM core.tb_place_attribute
+         WHERE tx_code IN ('terraza','petfriendly','frente_playa','aire_libre','musica_en_vivo')
+           AND tx_status = 'ACTIVE' AND dt_deleted_at IS NULL) <> 5 THEN
+        RAISE EXCEPTION 'S28 FAIL: the attribute vocabulary is not seeded';
+    END IF;
+    IF (SELECT count(*) FROM core.tb_place_category
+         WHERE tx_code IN ('rumba','restaurante','bar')
+           AND tx_status = 'ACTIVE' AND dt_deleted_at IS NULL) <> 3 THEN
+        RAISE EXCEPTION 'S28 FAIL: the new categories (rumba, restaurante, bar) are not seeded';
+    END IF;
+
+    -- The wrapper exists, declared IMMUTABLE and STRICT: the declaration is
+    -- the correctness decision the migration header documents (S16).
+    IF NOT EXISTS (SELECT 1 FROM pg_proc p
+                     JOIN pg_namespace n ON n.oid = p.pronamespace
+                    WHERE n.nspname = 'public' AND p.proname = 'unaccent_immutable'
+                      AND p.provolatile = 'i' AND p.proisstrict) THEN
+        RAISE EXCEPTION 'S28 FAIL: public.unaccent_immutable is not an IMMUTABLE STRICT function';
+    END IF;
+
+    -- Both search columns are stored generated columns, with their GIN indexes.
+    IF NOT EXISTS (SELECT 1 FROM pg_attribute a
+                     JOIN pg_class c ON c.oid = a.attrelid
+                     JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE n.nspname = 'core' AND c.relname = 'tb_place'
+                      AND a.attname = 'search_name' AND a.attgenerated = 's'
+                      AND NOT a.attisdropped) THEN
+        RAISE EXCEPTION 'S28 FAIL: tb_place.search_name is not a stored generated column';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_attribute a
+                     JOIN pg_class c ON c.oid = a.attrelid
+                     JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE n.nspname = 'core' AND c.relname = 'tb_menu_item'
+                      AND a.attname = 'search_text' AND a.attgenerated = 's'
+                      AND NOT a.attisdropped) THEN
+        RAISE EXCEPTION 'S28 FAIL: tb_menu_item.search_text is not a stored generated column';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes
+                    WHERE schemaname = 'core' AND tablename = 'tb_place'
+                      AND indexname = 'ix_tb_place_search_name'
+                      AND indexdef ILIKE '%USING gin%') THEN
+        RAISE EXCEPTION 'S28 FAIL: tb_place has no GIN index on search_name';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes
+                    WHERE schemaname = 'core' AND tablename = 'tb_menu_item'
+                      AND indexname = 'ix_tb_menu_item_search_text'
+                      AND indexdef ILIKE '%USING gin%') THEN
+        RAISE EXCEPTION 'S28 FAIL: tb_menu_item has no GIN index on search_text';
+    END IF;
+
+    -- A real match through the wrapper: the stored vector and the query vector
+    -- come from the same expression, so 'Térraza' answers 'terraza' ...
+    SELECT co_place_category INTO v_cat FROM core.tb_place_category
+     WHERE tx_code = 'restaurante' AND dt_deleted_at IS NULL;
+    SELECT co_currency INTO v_usd FROM core.tb_currency
+     WHERE tx_code = 'USD' AND dt_deleted_at IS NULL;
+
+    INSERT INTO core.tb_place (co_place, tx_name, tx_title,
+                               nu_latitude, nu_longitude,
+                               co_place_category, tx_country, tx_timezone,
+                               dt_created_at, dt_updated_at)
+    VALUES (v_place, 'S28', 'Café Térraza S28', 10.5, -66.9,
+            v_cat, 'VE', 'America/Caracas', now(), now());
+
+    IF NOT EXISTS (SELECT 1 FROM core.tb_place
+                    WHERE co_place = v_place
+                      AND search_name @@ plainto_tsquery('simple', public.unaccent_immutable('terraza'))) THEN
+        RAISE EXCEPTION 'S28 FAIL: the name vector does not match through the immutable wrapper';
+    END IF;
+    -- ... and 'terrazas' does NOT match: 'simple' must not stem names (S16).
+    IF EXISTS (SELECT 1 FROM core.tb_place
+                WHERE co_place = v_place
+                  AND search_name @@ plainto_tsquery('simple', public.unaccent_immutable('terrazas'))) THEN
+        RAISE EXCEPTION 'S28 FAIL: the simple configuration stemmed a place name (it must not)';
+    END IF;
+
+    -- The dish side: menu -> item, the vector covers name and description.
+    INSERT INTO core.tb_menu (co_menu, co_place, tx_name, tx_status, dt_created_at, dt_updated_at)
+    VALUES (v_menu, v_place, 'Cena', 'ACTIVE', now(), now());
+    INSERT INTO core.tb_menu_item (co_menu_item, co_menu, tx_name, tx_description,
+                                   nu_price, co_currency, tx_status, dt_created_at, dt_updated_at)
+    VALUES (v_item, v_menu, 'Arepa Reina Pepiada', 'Con aguacate y pollo', 4.50,
+            v_usd, 'ACTIVE', now(), now());
+
+    IF NOT EXISTS (SELECT 1 FROM core.tb_menu_item
+                    WHERE co_menu_item = v_item
+                      AND search_text @@ plainto_tsquery('simple', public.unaccent_immutable('pepiada'))) THEN
+        RAISE EXCEPTION 'S28 FAIL: the dish vector does not match through the immutable wrapper';
+    END IF;
+
+    -- The conjunctive count the filter relies on (S18): both attributes linked,
+    -- the intersection of {terraza, petfriendly} counts 2.
+    SELECT co_attribute INTO v_attr_t FROM core.tb_place_attribute
+     WHERE tx_code = 'terraza' AND dt_deleted_at IS NULL;
+    SELECT co_attribute INTO v_attr_p FROM core.tb_place_attribute
+     WHERE tx_code = 'petfriendly' AND dt_deleted_at IS NULL;
+    INSERT INTO core.tb_place_attribute_link (co_place, co_attribute, dt_created_at, dt_updated_at)
+    VALUES (v_place, v_attr_t, now(), now()), (v_place, v_attr_p, now(), now());
+
+    IF (SELECT count(*) FROM core.tb_place_attribute_link l
+         JOIN core.tb_place_attribute a ON a.co_attribute = l.co_attribute
+        WHERE l.co_place = v_place
+          AND a.tx_code = ANY(ARRAY['terraza','petfriendly'])
+          AND a.dt_deleted_at IS NULL) <> 2 THEN
+        RAISE EXCEPTION 'S28 FAIL: the conjunctive attribute count is broken';
+    END IF;
+
+    -- The derived search columns stay OUT of the history payloads, like
+    -- co_location (S27): the payloads already carry what they derive from.
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'core' AND table_name = 'tb_place_history'
+                  AND column_name = 'search_name')
+       OR EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = 'core' AND table_name = 'tb_menu_item_history'
+                     AND column_name = 'search_text') THEN
+        RAISE EXCEPTION 'S28 FAIL: a derived search column leaked into a history payload';
+    END IF;
 END $$;
 
 ROLLBACK;

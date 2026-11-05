@@ -29,6 +29,8 @@ tags:
     description: Registration, login, sessions and credential recovery.
   - name: Identity
     description: The authenticated caller's own profile.
+  - name: Discovery
+    description: Public, read-only place discovery. No authentication.
   - name: Admin
     description: Backoffice operations. Requires the `admin.access` permission.
 
@@ -479,6 +481,961 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /v1/places:
+    get:
+      tags: [Discovery]
+      operationId: discoverPlaces
+      summary: Discover places by radius (list) or viewport (map)
+      description: |
+        One route, two modes, decided by the locator parameter:
+
+        - **List mode** — `near=lat,long` (latitude first) with optional `radius` in
+          metres. Paginated, sortable.
+        - **Map mode** — `bbox=minLon,minLat,maxLon,maxLat` (longitude first, like
+          GeoJSON) with a required `zoom`. Returns H3 clusters instead of places.
+
+        Exactly one locator is required: sending both or neither is `422
+        validation_failed` (`{field: "bbox", code: "invalid"}` when both are present,
+        `{field: "locator", code: "required"}` when neither is). Anti-meridian
+        crossing is out of scope and rejected.
+
+        The request coordinate is evaluated and discarded: never persisted, never
+        logged, never part of a cache key.
+
+        `sort` applies to list mode only. `trending` reads the ranking the worker
+        publishes per H3 zone cell; when the zone has no ranking the API falls back
+        to `rating` and answers `degraded: true`, so a client can tell a cold
+        ranking from an unpopular place. The read path never aggregates reviews in a
+        request.
+
+        Map mode caps the viewport query at 5000 rows. An oversized bbox (over
+        100 000 km²) is rejected `422` `{field: "bbox", code: "too_long"}` rather
+        than silently truncated; if the cap is hit anyway, `truncated: true` and
+        cluster counts describe the sample, not the total. A cluster is a zone: it
+        carries counts and neutral aggregates and no administrative name.
+
+        `q`, `dish`, `attributes`, `maxPrice` and `openAt` are valid in both modes
+        and compose with the locator and with each other. `q` and `dish` are two
+        different questions: the first searches the place's commercial name, the
+        second searches menu items and returns the places that carry a match —
+        both accent-insensitive with no stemming. `attributes` is conjunctive: a
+        place must carry every listed code. `maxPrice` is always USD; an item
+        priced in another currency never matches, which is documented behaviour.
+        `openAt` is answered from the place's schedule in the place's own
+        timezone, including schedules that close after midnight. A search with no
+        matches is `200` with an empty page, never `404`.
+      parameters:
+        - name: near
+          in: query
+          description: '`lat,long`. List mode locator. Closed bounds: latitude −90..90, longitude −180..180.'
+          schema: { type: string, example: "10.4806,-66.9036" }
+        - name: radius
+          in: query
+          description: Metres. List mode only.
+          schema: { type: integer, minimum: 1, maximum: 50000, default: 2000 }
+        - name: bbox
+          in: query
+          description: '`minLon,minLat,maxLon,maxLat`. Map mode locator. Must be strictly increasing and under the area cap.'
+          schema: { type: string, example: "-66.99,10.41,-66.82,10.54" }
+        - name: zoom
+          in: query
+          description: Map mode only, required with `bbox`. Selects the cluster resolution (0–4→3, 5–7→5, 8–10→6, 11–13→7, 14–16→8, 17–21→9).
+          schema: { type: integer, minimum: 0, maximum: 21 }
+        - name: country
+          in: query
+          description: ISO 3166-1 alpha-2 filter, both modes.
+          schema: { type: string, pattern: "^[A-Z]{2}$" }
+        - name: region
+          in: query
+          description: ISO 3166-2 filter, both modes.
+          schema: { type: string, pattern: "^[A-Z]{2}-[A-Z0-9]{1,3}$" }
+        - name: category
+          in: query
+          description: Place category UUID filter, both modes.
+          schema: { type: string, format: uuid }
+        - name: q
+          in: query
+          description: Commercial-name search, both modes. Accent-insensitive, no stemming. Rejected `422`/`q`/`too_short` under 2 characters, `too_long` over 80.
+          schema: { type: string, minLength: 2, maxLength: 80, example: terraza }
+        - name: dish
+          in: query
+          description: Menu-item search returning the places that carry a matching dish, both modes. Same bounds as `q`.
+          schema: { type: string, minLength: 2, maxLength: 80, example: arepa }
+        - name: attributes
+          in: query
+          description: Comma-separated attribute codes, conjunctive (a place must carry ALL of them). Unknown codes are rejected `422`/`attributes`/`unknown`.
+          schema: { type: string, example: "terraza,petfriendly" }
+        - name: maxPrice
+          in: query
+          description: USD ceiling. Matches places with at least one active USD-priced item on an active menu at or under the amount. Items in other currencies never match. Negative or non-numeric is `422`/`maxPrice`/`invalid`.
+          schema: { type: number, minimum: 0, example: 10 }
+        - name: openAt
+          in: query
+          description: ISO-8601 instant. Keeps places open at that instant in the place's own timezone, honouring schedules that close after midnight. Not an instant is `422`/`openAt`/`invalid`.
+          schema: { type: string, format: date-time, example: "2026-11-08T03:30:00Z" }
+        - name: sort
+          in: query
+          description: List mode only.
+          schema: { type: string, enum: [distance, trending, rating], default: distance }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: List page (list mode) or cluster map (map mode), discriminated by `mode`.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/PlaceListPage"
+                  - $ref: "#/components/schemas/ClusterMap"
+                discriminator:
+                  propertyName: mode
+                  mapping:
+                    list: "#/components/schemas/PlaceListPage"
+                    map: "#/components/schemas/ClusterMap"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /v1/places/{coPlace}/reviews:
+    get:
+      tags: [Reviews]
+      operationId: listPlaceReviews
+      summary: List the reviews of a place
+      description: |
+        Public and paginated, newest first. The read never aggregates reviews for
+        ordering: the place average belongs to the worker, not to a request.
+
+        Visibility depends on the viewer. Everyone sees reviews that are `ACTIVE` and
+        not deleted. The author additionally sees their own rows in any state
+        (`INACTIVE`, `MODERATED`, logically deleted), and so does a caller holding
+        `review.moderate`. Both are resolved from the bearer token when one is sent;
+        the route itself requires no authentication.
+
+        A place that is soft-deleted or `INACTIVE` answers `404`, exactly like a place
+        that does not exist, so retired places cannot be enumerated.
+      parameters:
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page of reviews.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReviewPage" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    post:
+      tags: [Reviews]
+      operationId: createReview
+      summary: Review a place
+      description: |
+        Creates the caller's review of the place. One active review per user and
+        place is enforced by the partial unique index `ux_tb_review_user_place_active`
+        and surfaced as `409 review_already_exists` — never a pre-check, which would
+        race. A logically deleted review does not block reviewing again, which is
+        exactly why the index is partial.
+
+        The write announces the actor with `set_config('app.current_user_id', ...)` in
+        its transaction, so the history trigger records `co_actor_user`. The service
+        never inserts into `core.tb_review_history` itself.
+
+        `rating` is an integer in `1..5` (the table CHECK); `comment` is bounded to
+        2000 characters at the edge, not in the database.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReviewUpsert" }
+      responses:
+        "201":
+          description: Review created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Review" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The caller already has an active (non-deleted) review for this place.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error:
+                  code: review_already_exists
+                  message: You already have a review for this place.
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /v1/places/{coPlace}/reviews/{coReview}:
+    patch:
+      tags: [Reviews]
+      operationId: updateReview
+      summary: Edit your own review
+      description: |
+        Author-only: anyone else gets `403 permission_denied`. At least one of
+        `rating` or `comment` is required. Editing does not change `tx_status` and
+        does not resurrect visibility of a `MODERATED` row. A logically deleted
+        review is `404`.
+
+        The write announces the actor with `set_config('app.current_user_id', ...)`,
+        so the history trigger records `co_actor_user`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: coReview
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReviewUpsert" }
+      responses:
+        "200":
+          description: Updated review.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Review" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      tags: [Reviews]
+      operationId: deleteReview
+      summary: Delete your own review
+      description: |
+        Author-only: anyone else gets `403 permission_denied`. The delete is logical
+        (`dt_deleted_at`), never physical: the history trigger records the UPDATE,
+        and because the one-review index is partial, the author may review the place
+        again afterwards.
+
+        The write announces the actor with `set_config('app.current_user_id', ...)`,
+        so the history trigger records `co_actor_user`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: coReview
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Review logically deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/place-categories:
+    get:
+      tags: [Discovery]
+      operationId: listPlaceCategories
+      summary: List the place category catalogue
+      description: |
+        Public taxonomy, not customer data: the panel renders a select from it and the mobile
+        client renders the same list as discovery filters, so it is deliberately not behind a
+        backoffice permission.
+
+        `status=ACTIVE` returns only the selectable ones; omitting it returns the live
+        catalogue. Ordering is by name, so the vocabulary keeps a stable order between calls.
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [ACTIVE, INACTIVE] }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page of categories.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data, page, limit, total]
+                properties:
+                  page: { type: integer }
+                  limit: { type: integer }
+                  total: { type: integer }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/PlaceCategory" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/plans:
+    post:
+      tags: [Plans]
+      operationId: createPlan
+      summary: Create a plan
+      description: |
+        The creator becomes `OWNER` in the same transaction. `visibility` defaults to
+        `PRIVATE`: a plan must never become public by omission.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PlanWrite" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Plan" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    get:
+      tags: [Plans]
+      operationId: listPlans
+      summary: List the plans the caller belongs to
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page of plans, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data, page, limit, total]
+                properties:
+                  page: { type: integer }
+                  limit: { type: integer }
+                  total: { type: integer }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Plan" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/plans/{coRoute}:
+    get:
+      tags: [Plans]
+      operationId: getPlan
+      summary: Read one plan
+      description: |
+        Visible to a member, and to any authenticated caller when the plan is `PUBLIC`.
+        Anything else is `404` — a private plan does not confirm that it exists.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coRoute
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The plan.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Plan" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Plans]
+      operationId: updatePlan
+      summary: Update a plan
+      description: |
+        Requires `EDITOR` or `OWNER`. `visibility` is `OWNER` only: changing PRIVATE to PUBLIC
+        touches everyone already invited, and taking a public plan private hides it from the
+        people who joined. A visible plan with an insufficient role answers `403`; an invisible
+        one answers `404`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coRoute
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PlanWrite" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Plan" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/plans/{coRoute}/invitations:
+    post:
+      tags: [Plans]
+      operationId: inviteToPlan
+      summary: Invite a registered person to a plan
+      description: |
+        Requires `EDITOR` or `OWNER` of the plan; a non-member's invitation is rejected, not
+        dropped. Invitations address registered users only — there is no shareable token.
+
+        A `SURPRISE` invitation must carry at least one of `message` or `hint`: an empty envelope
+        is not a surprise. `expiresAt` must be in the future, and the read predicate treats any
+        `PENDING` row past its expiry as already unusable, whether or not a sweeper has run.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coRoute
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InvitationWrite" }
+      responses:
+        "201":
+          description: Invitation created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invitation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    get:
+      tags: [Plans]
+      operationId: listPlanInvitations
+      summary: The host's RSVP view
+      description: |
+        Requires `EDITOR` or `OWNER`. Every invitee's status, expiry and response time. An
+        invitee reads only their own, through `GET /v1/invitations`: who declined is not
+        community information.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coRoute
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Invitations of the plan, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data, total]
+                properties:
+                  total: { type: integer }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Invitation" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/invitations:
+    get:
+      tags: [Plans]
+      operationId: listMyInvitations
+      summary: The caller's own invitations
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Only the caller's invitations.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data, total]
+                properties:
+                  total: { type: integer }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Invitation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/invitations/{coInvitation}/accept:
+    post:
+      tags: [Plans]
+      operationId: acceptInvitation
+      summary: Accept an invitation
+      description: |
+        In one transaction the invitation flips to `ACCEPTED` and the membership is created as
+        `VIEWER` — never `EDITOR`. An expired, already answered or someone else's invitation is
+        `404`, all indistinguishable on purpose.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coInvitation
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Accepted; membership created. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/invitations/{coInvitation}/decline:
+    post:
+      tags: [Plans]
+      operationId: declineInvitation
+      summary: Decline an invitation
+      description: Terminal, and it creates no membership. Declining never reveals a SURPRISE plan.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coInvitation
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Declined. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/plans/{coRoute}/places:
+    get:
+      tags: [Plans]
+      operationId: listPlanPlaces
+      summary: The ordered itinerary of a plan
+      description: |
+        Ordered by net votes descending, then the manual order, then creation time — so the
+        result is deterministic and reproducible. A member reads it; anyone reads it for a
+        PUBLIC plan. `myVote` is 0 when the caller has not voted.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coRoute
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The itinerary.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data, total]
+                properties:
+                  total: { type: integer }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/PlanPlace" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Plans]
+      operationId: addPlanPlace
+      summary: Add or reorder a place in the plan
+      description: |
+        Requires `EDITOR` or `OWNER`: a `VIEWER` reads and votes, it does not shape the
+        itinerary. Adding a place already in the plan updates its order.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coRoute
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [coPlace]
+              properties:
+                coPlace: { type: string, format: uuid }
+                order: { type: integer, minimum: 1, default: 1 }
+      responses:
+        "204": { description: Added or reordered. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/plans/{coRoute}/places/{coPlace}:
+    delete:
+      tags: [Plans]
+      operationId: removePlanPlace
+      summary: Remove a place from the plan
+      description: |
+        Requires `EDITOR` or `OWNER`. The votes for that place go with it, through the composite
+        foreign key.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coRoute
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Removed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/plans/{coRoute}/places/{coPlace}/votes:
+    post:
+      tags: [Plans]
+      operationId: votePlanPlace
+      summary: Vote on a place in the plan
+      description: |
+        Only a **member** may vote; a vote from a non-member is rejected with 403, never
+        silently dropped. A public plan lets a passer-by read, not vote — reading is open,
+        shaping is not. Voting again changes the vote (upsert), so a member has at most one vote
+        per place.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coRoute
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [vote]
+              properties:
+                vote:
+                  type: integer
+                  enum: [-1, 1]
+                  description: '-1 down, 1 up. There is no 0: not voting is having no row.'
+      responses:
+        "204": { description: Vote recorded. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/plans/{coRoute}/members:
+    post:
+      tags: [Plans]
+      operationId: joinPlan
+      summary: Join a public plan
+      description: |
+        Only a `PUBLIC` plan accepts a self-join, and it grants `VIEWER` — always. An open door
+        that hands out `EDITOR` is a plan anyone can rearrange and empty, and a festival is the
+        worst case. A private plan answers `404`, and joining twice changes nothing.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coRoute
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Member (already or newly). }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/plans/{coRoute}/members/{coUser}:
+    delete:
+      tags: [Plans]
+      operationId: leavePlan
+      summary: Leave a plan, or remove a member
+      description: |
+        A caller may remove themselves; an `OWNER` may remove anyone else. An owner cannot leave
+        by themselves — a plan without an owner is invalid. Removing a non-member is a no-op
+        `204`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coRoute
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: coUser
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: No longer a member. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/admin/places:
+    get:
+      tags: [Admin]
+      operationId: listAdminPlaces
+      summary: List places in the backoffice
+      description: |
+        Requires `place.update`. The result is scoped by ownership: a caller holding
+        `place.manage_all` sees every place; everybody else sees only the rows whose
+        `coOwnerUser` is their own account. Curated places (owner NULL) therefore belong to
+        the backoffice and are invisible to an owner-editor.
+
+        By default the live catalogue is listed; `status=DELETED` lists the retired rows
+        instead, because a logical delete has to remain inspectable.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          description: Case-insensitive substring of the commercial title.
+          schema: { type: string, maxLength: 80 }
+        - name: status
+          in: query
+          schema: { type: string, enum: [ACTIVE, INACTIVE, DELETED] }
+        - name: categoryId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: country
+          in: query
+          schema: { type: string, pattern: "^[A-Z]{2}$" }
+        - name: region
+          in: query
+          schema: { type: string, pattern: "^[A-Z]{2}-[A-Z0-9]{1,3}$" }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page of places, newest first.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - type: object
+                    additionalProperties: false
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/AdminPlace" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    post:
+      tags: [Admin]
+      operationId: createAdminPlace
+      summary: Create a place
+      description: |
+        Requires `place.manage_all`: operating the whole catalogue. `admin.access` would be too
+        wide, because the seeded EDITOR role already holds it — that permission means "may
+        enter the backoffice", not "may create catalogue entries". `coOwnerUser` assigns the
+        owner; omit it for a row the backoffice curates itself.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminPlaceWrite" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminPlace" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/admin/places/{coPlace}:
+    get:
+      tags: [Admin]
+      operationId: getAdminPlace
+      summary: Read one place
+      description: |
+        Requires `place.update`. Scoped by ownership: a row the caller may not see answers
+        `404`, not `403`, because a caller who may not see a row must not learn it exists.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The place.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminPlace" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Admin]
+      operationId: updateAdminPlace
+      summary: Update a place
+      description: |
+        Requires `place.update`. Partial: an absent field is left alone, and an explicit
+        `null` clears a nullable one. Only a caller with `admin.access` may reassign
+        `coOwnerUser` — ownership is not something an owner hands over.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminPlaceWrite" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminPlace" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    delete:
+      tags: [Admin]
+      operationId: retireAdminPlace
+      summary: Retire a place
+      description: |
+        Requires `place.delete`. Logical: the row stays and the public read paths (discovery,
+        reviews, check-ins) stop serving it. Nothing is physically removed.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Retired. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/admin/reviews:
+    get:
+      tags: [Admin]
+      operationId: listAdminReviews
+      summary: List reviews for moderation
+      description: |
+        Requires `review.moderate`. Exists because the moderation route takes a `coReview`
+        and nothing else can discover one: a moderator needs a page to work from.
+
+        Unlike the public listing this does not apply the visibility predicate — it returns
+        every review, including moderated and logically deleted ones, newest first. Each
+        filter is optional; the zero value lists everything.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [ACTIVE, INACTIVE, MODERATED] }
+        - name: placeId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: authorId
+          in: query
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page of reviews, newest first.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - type: object
+                    additionalProperties: false
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Review" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/admin/reviews/{coReview}:
+    patch:
+      tags: [Admin, Reviews]
+      operationId: moderateReview
+      summary: Moderate a review
+      description: |
+        Requires `review.moderate`. Sets `tx_status` to one of the existing
+        `review_status` values (`ACTIVE`, `INACTIVE`, `MODERATED`) — moderation
+        invents no new permission and no new enum value. A `MODERATED` review stops
+        being returned to readers other than its author and moderators.
+
+        The write announces the actor with `set_config('app.current_user_id', ...)`,
+        so the history trigger records `co_actor_user` — the moderation funnel stays
+        measurable from `core.tb_review_history`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coReview
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { $ref: "#/components/schemas/ReviewStatus" }
+      responses:
+        "200":
+          description: Moderated review.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Review" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /v1/admin/users:
     get:
       tags: [Admin]
@@ -763,6 +1720,138 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /v1/follows:
+    post:
+      tags: [Social]
+      operationId: followUser
+      summary: Follow another account
+      description: |
+        Asymmetric: following someone says nothing about whether they follow you back.
+        Idempotent — following twice leaves the graph unchanged and still answers `204`.
+        Following yourself is rejected by the service and by a CHECK constraint.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [coUser]
+              properties:
+                coUser: { type: string, format: uuid }
+      responses:
+        "204": { description: Following, already or newly. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    get:
+      tags: [Social]
+      operationId: listFollows
+      summary: List the graph in one direction
+      description: |
+        `mutual` marks a friend: the opposite edge exists too. Computed per request and
+        never stored, because the graph changes daily.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: direction
+          in: query
+          schema: { type: string, enum: [following, followers], default: following }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page of accounts.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [direction, page, limit, total, data]
+                properties:
+                  direction: { type: string }
+                  page: { type: integer }
+                  limit: { type: integer }
+                  total: { type: integer }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/GraphMember" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/follows/{coUser}:
+    delete:
+      tags: [Social]
+      operationId: unfollowUser
+      summary: Remove a follow
+      description: Idempotent — removing an edge that does not exist answers `204` too.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coUser
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Not following, anymore or never. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/places/{coPlace}/checkins:
+    post:
+      tags: [Social]
+      operationId: checkIn
+      summary: Record presence at a place
+      description: |
+        The coordinate proves presence and is then discarded: only the verdict `PROXIMITY`
+        is stored, never the coordinate and never the distance (D11). A claim outside the
+        place radius is refused with `422 not_near_place` rather than silently downgraded,
+        and a second check-in on the same day answers `409 already_checked_in` — the
+        uniqueness is a database rule, not a service guess.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [near]
+              properties:
+                near:
+                  type: string
+                  description: '`lat,long`. Validated at the edge, used to decide proximity, never stored.'
+      responses:
+        "201":
+          description: Check-in recorded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Checkin" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Already checked in today.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: already_checked_in, message: You already checked in to this place today. }
+        "422":
+          description: Validation failure, or the coordinate is outside the place radius.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: not_near_place, message: You are not within the radius of this place. }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -859,6 +1948,173 @@ components:
                   - { field: password, code: too_short }
 
   schemas:
+    Invitation:
+      type: object
+      additionalProperties: false
+      required: [coInvitation, coRoute, coUser, status, mode, message, hint, expiresAt, expired,
+                 createdAt, respondedAt, inviteeName, planName, planScheduledAt]
+      properties:
+        coInvitation: { type: string, format: uuid }
+        coRoute: { type: string, format: uuid }
+        coUser: { type: string, format: uuid }
+        status: { type: string, enum: [PENDING, ACCEPTED, DECLINED, EXPIRED, REVOKED] }
+        mode: { type: string, enum: [PLAIN, SURPRISE] }
+        message: { type: string, nullable: true }
+        hint: { type: string, nullable: true }
+        expiresAt: { type: string, format: date-time }
+        revealed:
+          type: boolean
+          description: |
+            Whether the venue may be shown to the invitee (S26/D20). A PLAIN invitation never
+            hides anything; a SURPRISE one keeps the venue hidden until its rule fires — on
+            accept, or at the plan's scheduled time.
+        expired:
+          type: boolean
+          description: |
+            The read predicate's verdict: a PENDING invitation past its expiry is already
+            unusable, whether or not a sweeper ran.
+        createdAt: { type: string, format: date-time }
+        respondedAt: { type: string, format: date-time, nullable: true }
+        inviteeName: { type: string, nullable: true }
+        planName: { type: string, nullable: true }
+        planScheduledAt: { type: string, format: date-time, nullable: true }
+    InvitationWrite:
+      type: object
+      additionalProperties: false
+      required: [coUser, expiresAt]
+      properties:
+        coUser: { type: string, format: uuid }
+        expiresAt: { type: string, format: date-time }
+        mode: { type: string, enum: [PLAIN, SURPRISE], default: PLAIN }
+        message: { type: string, maxLength: 500, nullable: true }
+        hint: { type: string, maxLength: 200, nullable: true }
+    PlanPlace:
+      type: object
+      additionalProperties: false
+      required: [coPlace, title, order, netVotes, myVote, createdAt]
+      properties:
+        coPlace: { type: string, format: uuid }
+        title: { type: string }
+        order: { type: integer, description: Manual order, the tie-breaker. }
+        netVotes: { type: integer, description: Sum of up and down votes. }
+        myVote: { type: integer, enum: [-1, 0, 1], description: 0 when the caller has not voted. }
+        createdAt: { type: string, format: date-time }
+    PlaceCategory:
+      type: object
+      additionalProperties: false
+      required: [coPlaceCategory, code, name, status]
+      properties:
+        coPlaceCategory: { type: string, format: uuid }
+        code:
+          type: string
+          description: Stable key, e.g. arepera. Use it in discovery filters.
+        name: { type: string }
+        status: { type: string, enum: [ACTIVE, INACTIVE] }
+    Plan:
+      type: object
+      additionalProperties: false
+      required: [coRoute, coUser, name, description, visibility, status, scheduledAt, partySize,
+                 viewerRole, memberCount, createdAt, updatedAt]
+      properties:
+        coRoute: { type: string, format: uuid }
+        coUser: { type: string, format: uuid, description: Creator. }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        visibility: { type: string, enum: [PRIVATE, PUBLIC] }
+        status: { type: string, enum: [ACTIVE, INACTIVE] }
+        scheduledAt: { type: string, format: date-time, nullable: true }
+        partySize: { type: integer, minimum: 1, maximum: 50, nullable: true }
+        viewerRole:
+          type: string
+          enum: [OWNER, EDITOR, VIEWER, ""]
+          description: The caller's role; empty when the plan is public and not joined.
+        memberCount: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    PlanWrite:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, maxLength: 160 }
+        description: { type: string, nullable: true, maxLength: 2000 }
+        visibility: { type: string, enum: [PRIVATE, PUBLIC] }
+        scheduledAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Absent means "no date yet", which is a real state.
+        partySize: { type: integer, minimum: 1, maximum: 50 }
+    AdminPlace:
+      type: object
+      additionalProperties: false
+      required: [coPlace, coOwnerUser, name, title, description, category, country, region,
+                 timezone, latitude, longitude, address, status, createdAt, updatedAt, deletedAt]
+      properties:
+        coPlace: { type: string, format: uuid }
+        coOwnerUser:
+          type: string
+          format: uuid
+          nullable: true
+          description: NULL for a place the backoffice curates itself.
+        name: { type: string, description: Legal name. Admin-only; never in public reads. }
+        title: { type: string, description: Commercial name shown in the app. }
+        description: { type: string, nullable: true }
+        category:
+          type: object
+          additionalProperties: false
+          required: [id, name]
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+        country: { type: string, pattern: "^[A-Z]{2}$" }
+        region: { type: string, nullable: true }
+        timezone: { type: string }
+        latitude: { type: number }
+        longitude: { type: number }
+        address: { type: string, nullable: true }
+        status: { type: string, enum: [ACTIVE, INACTIVE, SUSPENDED] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        deletedAt: { type: string, format: date-time, nullable: true }
+    AdminPlaceWrite:
+      type: object
+      additionalProperties: false
+      properties:
+        coOwnerUser:
+          type: string
+          format: uuid
+          nullable: true
+          description: Only a caller with admin.access may set or change it.
+        name: { type: string, maxLength: 160 }
+        title: { type: string, maxLength: 160 }
+        description: { type: string, nullable: true, maxLength: 2000 }
+        coPlaceCategory: { type: string, format: uuid }
+        country: { type: string, pattern: "^[A-Z]{2}$" }
+        region: { type: string, nullable: true, pattern: "^[A-Z]{2}-[A-Z0-9]{1,3}$" }
+        timezone: { type: string, description: IANA name, e.g. America/Caracas. }
+        latitude: { type: number, minimum: -90, maximum: 90 }
+        longitude: { type: number, minimum: -180, maximum: 180 }
+        address: { type: string, nullable: true, maxLength: 300 }
+        status: { type: string, enum: [ACTIVE, INACTIVE] }
+    GraphMember:
+      type: object
+      additionalProperties: false
+      required: [coUser, name, mutual]
+      properties:
+        coUser: { type: string, format: uuid }
+        name: { type: string }
+        mutual:
+          type: boolean
+          description: The opposite edge exists too — the computed friend.
+    Checkin:
+      type: object
+      additionalProperties: false
+      required: [coCheckin, coPlace, verification, createdAt]
+      properties:
+        coCheckin: { type: string, format: uuid }
+        coPlace: { type: string, format: uuid }
+        verification: { type: string, enum: [SELF_REPORTED, PROXIMITY] }
+        createdAt: { type: string, format: date-time }
     Error:
       type: object
       required: [code, message]
@@ -1005,3 +2261,166 @@ components:
         page: { type: integer, minimum: 1 }
         limit: { type: integer, minimum: 1, maximum: 100 }
         total: { type: integer, minimum: 0 }
+
+    PlaceListPage:
+      type: object
+      required: [mode, page, limit, total, sortApplied, degraded, data]
+      properties:
+        mode: { type: string, const: list }
+        page: { type: integer, minimum: 1 }
+        limit: { type: integer, minimum: 1, maximum: 100 }
+        total: { type: integer, minimum: 0 }
+        sortApplied:
+          type: string
+          enum: [distance, trending, rating]
+          description: The order that actually ran, which may differ from the requested `sort`.
+        degraded:
+          type: boolean
+          description: '`true` when a requested `trending` had no zone ranking and fell back to `rating`. A cold ranking is not an error.'
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/PlaceSummary" }
+
+    PlaceSummary:
+      type: object
+      required: [coPlace, name, category, country, region, latitude, longitude, address, distanceMeters, rating]
+      properties:
+        coPlace: { type: string, format: uuid }
+        name:
+          type: string
+          description: The commercial name (`tb_place.tx_title`). The legal name (`tx_name`) and the owner are never exposed in the discovery read path.
+        category: { $ref: "#/components/schemas/PlaceCategory" }
+        country: { type: string, pattern: "^[A-Z]{2}$" }
+        region: { type: [string, "null"], pattern: "^[A-Z]{2}-[A-Z0-9]{1,3}$" }
+        latitude: { type: number, format: double }
+        longitude: { type: number, format: double }
+        address: { type: [string, "null"] }
+        distanceMeters:
+          type: integer
+          description: Whole metres from `near`. Present in list mode; never fabricated.
+        rating:
+          anyOf:
+            - $ref: "#/components/schemas/Rating"
+            - type: "null"
+          description: '`null` when the worker has published no aggregate for the place. Absence is not an error.'
+        trendingRank:
+          type: integer
+          minimum: 1
+          description: Present only when `sort=trending` and a zone ranking ordered the row.
+
+    Rating:
+      type: object
+      required: [average, count]
+      properties:
+        average: { type: number, format: double, example: 4.6 }
+        count: { type: integer, minimum: 0, example: 128 }
+
+    ClusterMap:
+      type: object
+      required: [mode, zoom, resolution, total, truncated, clusters]
+      properties:
+        mode: { type: string, const: map }
+        zoom: { type: integer, minimum: 0, maximum: 21 }
+        resolution:
+          type: integer
+          minimum: 0
+          maximum: 15
+          description: The H3 resolution the clusters are grouped at, derived from `zoom`.
+        total:
+          type: integer
+          minimum: 0
+          description: Places behind the clusters, not the number of clusters.
+        truncated:
+          type: boolean
+          description: '`true` when the 5000-row cap was hit: cluster counts describe the sample, never present them as totals.'
+        clusters:
+          type: array
+          items: { $ref: "#/components/schemas/Cluster" }
+
+    Cluster:
+      type: object
+      required: [cell, resolution, count, center, averageRating]
+      properties:
+        cell:
+          type: string
+          example: "872830828ffffff"
+          description: H3 index serialized as a hex string — JSON numbers lose precision above 2^53, and the index uses the full 64-bit range.
+        resolution: { type: integer, minimum: 0, maximum: 15 }
+        count: { type: integer, minimum: 1 }
+        center: { $ref: "#/components/schemas/GeoPoint" }
+        averageRating:
+          type: [number, "null"]
+          format: double
+          description: Mean of the published place ratings in the cell. `null` when unknown, never `0`. A cluster is a zone — it carries no name, district or administrative claim.
+
+    GeoPoint:
+      type: object
+      required: [latitude, longitude]
+      properties:
+        latitude: { type: number, format: double }
+        longitude: { type: number, format: double }
+
+    ReviewStatus:
+      type: string
+      enum: [ACTIVE, INACTIVE, MODERATED]
+      description: Mirrors `public.review_status`. Moderation reuses it; no new enum value is invented.
+
+    ReviewUpsert:
+      type: object
+      properties:
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+          description: Required on create; optional on edit. Bounded by the table CHECK.
+        comment:
+          type: string
+          maxLength: 2000
+          description: Bounded at the edge, not in the database.
+
+    Review:
+      type: object
+      additionalProperties: false
+      required: [coReview, coPlace, rating, comment, status, author, createdAt, updatedAt, viaFollowedAuthor]
+      properties:
+        coReview: { type: string, format: uuid }
+        place:
+          type: object
+          additionalProperties: false
+          required: [id, title]
+          description: |
+            Present on the moderator listing only. A moderator may hold review.moderate
+            without place.update and cannot resolve a bare coPlace uuid.
+          properties:
+            id: { type: string, format: uuid }
+            title: { type: string, nullable: true }
+        viaFollowedAuthor:
+          type: boolean
+          description: |
+            Viewer-relative highlight: true when the reader follows this review's author.
+            A property of the read, never of the row — the same review is highlighted for
+            one viewer and plain for another. False for anonymous readers, and never cached
+            under a key that lacks the viewer.
+        coPlace: { type: string, format: uuid }
+        rating: { type: integer, minimum: 1, maximum: 5 }
+        comment: { type: [string, "null"], maxLength: 2000 }
+        status: { $ref: "#/components/schemas/ReviewStatus" }
+        author:
+          type: object
+          required: [id, name]
+          description: Display-safe author fields. The email is never exposed.
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: [string, "null"], description: "`seg.tb_user.tx_name`; `null` when the account never gave one (social sign-in)." }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    ReviewPage:
+      allOf:
+        - $ref: "#/components/schemas/Page"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/Review" }
