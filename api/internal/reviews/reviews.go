@@ -58,6 +58,10 @@ type Review struct {
 	Status     string
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
+	// PlaceTitle is the commercial name of the reviewed place. It is populated by the
+	// moderator listing only: the public read is scoped by coPlace, so the client already
+	// knows the place and does not need it repeated on every row.
+	PlaceTitle *string
 	// ViaFollowedAuthor marks a row whose author the asking viewer follows. It is a
 	// property of the READ, not of the row (S5/D10): the same review is highlighted for
 	// one viewer and plain for another, which is why it is never stored and never cached

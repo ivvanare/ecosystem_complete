@@ -21,6 +21,8 @@ type fakePlaceAdmin struct {
 	gotUpdate  placeadmin.UpdateInput
 	calls      int
 	createdFor string
+	categories []placeadmin.Category
+	gotStatus  string
 }
 
 func (f *fakePlaceAdmin) List(_ context.Context, viewer placeadmin.Viewer, filter placeadmin.Filter, _, _ int) (placeadmin.Page, error) {
@@ -45,6 +47,12 @@ func (f *fakePlaceAdmin) Update(_ context.Context, viewer placeadmin.Viewer, _, 
 	f.calls++
 	f.gotViewer, f.gotUpdate = viewer, in
 	return f.place, f.err
+}
+
+func (f *fakePlaceAdmin) Categories(_ context.Context, status string, _, _ int) ([]placeadmin.Category, int, error) {
+	f.calls++
+	f.gotStatus = status
+	return f.categories, len(f.categories), f.err
 }
 
 func (f *fakePlaceAdmin) Retire(_ context.Context, viewer placeadmin.Viewer, _, _ string) error {
@@ -271,3 +279,32 @@ func scopeFor(admin bool) grantedPermissions {
 }
 
 var _ = strings.TrimSpace
+
+func TestPlaceCategoriesArePublicAndFilterable(t *testing.T) {
+	service := &fakePlaceAdmin{categories: []placeadmin.Category{
+		{ID: "c1", Code: "arepera", Name: "Arepera", Status: "ACTIVE"},
+	}}
+	// No bearer token: the taxonomy is public, so the route must answer without one.
+	rec := do(t, backoffice(service, "", adminScope), http.MethodGet, "/v1/place-categories?status=ACTIVE")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if service.gotStatus != "ACTIVE" {
+		t.Fatalf("status filter = %q, want ACTIVE", service.gotStatus)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"code":"arepera"`) || !strings.Contains(body, `"total":1`) {
+		t.Fatalf("body = %s", body)
+	}
+}
+
+func TestPlaceCategoriesRejectAnUnknownStatus(t *testing.T) {
+	service := &fakePlaceAdmin{}
+	rec := do(t, backoffice(service, "", adminScope), http.MethodGet, "/v1/place-categories?status=GONE")
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rec.Code)
+	}
+	if service.calls != 0 {
+		t.Fatal("the service was reached with an invalid status")
+	}
+}

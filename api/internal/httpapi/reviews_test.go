@@ -573,3 +573,21 @@ func TestAdminReviewsRequiresTheModerationCapability(t *testing.T) {
 		t.Fatalf("status = %d, want 403", rec.Code)
 	}
 }
+
+func TestAdminReviewsCarryThePlaceTitle(t *testing.T) {
+	// A moderator may hold review.moderate without place.update: the row must carry enough to
+	// render a name, or the screen shows uuids.
+	title := "Arepera Chacao"
+	service := &fakeReviews{adminResult: reviews.ListResult{
+		Rows:  []reviews.Review{{ID: "r1", PlaceID: reviewPlace, PlaceTitle: &title, Rating: 5, Status: reviews.StatusActive}},
+		Total: 1, Page: 1, Limit: 20,
+	}}
+	rec := bearerDo(t, newReviewsHandler(service, authedParser(reviewAuthorID), &fakeAuthorizer{allowed: true}),
+		http.MethodGet, "/v1/admin/reviews", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"title":"Arepera Chacao"`) {
+		t.Fatalf("body = %s, want the place title", rec.Body.String())
+	}
+}

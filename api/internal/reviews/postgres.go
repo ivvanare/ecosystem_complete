@@ -113,6 +113,26 @@ WHERE ($1::public.review_status IS NULL OR r.tx_status = $1::public.review_statu
 // This is the backoffice listing (S17): without it the moderation route has no entry
 // point, because nothing can discover a coReview. It deliberately does not apply the
 // public visibility predicate — a moderator sees the rows the public cannot.
+// adminReviewColumns is the moderator listing projection: the shared fields plus the place
+// title, because a moderator may hold review.moderate without place.update and would
+// otherwise render a bare uuid.
+const adminReviewColumns = `
+SELECT r.co_review, r.co_place, r.co_user, u.tx_name,
+       r.nu_rating, r.tx_comment, r.tx_status, r.dt_created_at, r.dt_updated_at,
+       p.tx_title
+FROM core.tb_review r
+JOIN seg.tb_user u ON u.co_user = r.co_user
+JOIN core.tb_place p ON p.co_place = r.co_place`
+
+// scanReviewAdmin reads one row of adminReviewColumns.
+func scanReviewAdmin(row interface{ Scan(dest ...any) error }) (Review, error) {
+	var review Review
+	err := row.Scan(&review.ID, &review.PlaceID, &review.AuthorID, &review.AuthorName,
+		&review.Rating, &review.Comment, &review.Status, &review.CreatedAt, &review.UpdatedAt,
+		&review.PlaceTitle)
+	return review, err
+}
+
 func (s *PostgresStore) AdminList(ctx context.Context, filter AdminFilter, page, limit int) ([]Review, int, error) {
 	args := []any{nullableText(filter.Status), nullableText(filter.PlaceID), nullableText(filter.AuthorID)}
 
@@ -122,7 +142,7 @@ func (s *PostgresStore) AdminList(ctx context.Context, filter AdminFilter, page,
 	}
 
 	offset := (page - 1) * limit
-	rows, err := s.db.Query(ctx, reviewColumns+adminFilterPredicate+`
+	rows, err := s.db.Query(ctx, adminReviewColumns+adminFilterPredicate+`
 ORDER BY r.dt_created_at DESC, r.co_review DESC
 LIMIT $4 OFFSET $5`, append(args, limit, offset)...)
 	if err != nil {
@@ -132,7 +152,7 @@ LIMIT $4 OFFSET $5`, append(args, limit, offset)...)
 
 	result := make([]Review, 0, limit)
 	for rows.Next() {
-		review, err := scanReview(rows)
+		review, err := scanReviewAdmin(rows)
 		if err != nil {
 			return nil, 0, fmt.Errorf("scanning admin review: %w", err)
 		}

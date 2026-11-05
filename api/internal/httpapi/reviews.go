@@ -129,9 +129,18 @@ func (h *reviewsHandlers) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data := make([]reviewResponse, 0, len(result.Rows))
+	data := make([]map[string]any, 0, len(result.Rows))
 	for _, review := range result.Rows {
-		data = append(data, toReviewResponse(review))
+		row := map[string]any{
+			"coReview": review.ID, "coPlace": review.PlaceID, "rating": review.Rating,
+			"comment": review.Comment, "status": review.Status,
+			"author":    map[string]any{"id": review.AuthorID, "name": review.AuthorName},
+			"createdAt": review.CreatedAt, "updatedAt": review.UpdatedAt,
+		}
+		// The place title travels with the row: a moderator may hold review.moderate without
+		// place.update and cannot resolve a uuid on its own.
+		row["place"] = map[string]any{"id": review.PlaceID, "title": review.PlaceTitle}
+		data = append(data, row)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": data, "page": result.Page, "limit": result.Limit, "total": result.Total,
@@ -300,9 +309,17 @@ func (h *reviewsHandlers) adminList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data := make([]reviewResponse, 0, len(result.Rows))
+	// The moderator row carries the place title: a moderator may hold review.moderate without
+	// place.update, and then a bare coPlace uuid is all the screen can show.
+	data := make([]map[string]any, 0, len(result.Rows))
 	for _, review := range result.Rows {
-		data = append(data, toReviewResponse(review))
+		data = append(data, map[string]any{
+			"coReview": review.ID, "coPlace": review.PlaceID, "rating": review.Rating,
+			"comment": review.Comment, "status": review.Status,
+			"author":    map[string]any{"id": review.AuthorID, "name": review.AuthorName},
+			"place":     map[string]any{"id": review.PlaceID, "title": review.PlaceTitle},
+			"createdAt": review.CreatedAt, "updatedAt": review.UpdatedAt,
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": data, "page": result.Page, "limit": result.Limit, "total": result.Total,

@@ -19,6 +19,7 @@ type PlaceBackoffice interface {
 	Create(ctx context.Context, actorID string, in placeadmin.CreateInput) (placeadmin.Place, error)
 	Update(ctx context.Context, viewer placeadmin.Viewer, actorID, placeID string, in placeadmin.UpdateInput) (placeadmin.Place, error)
 	Retire(ctx context.Context, viewer placeadmin.Viewer, actorID, placeID string) error
+	Categories(ctx context.Context, status string, page, limit int) ([]placeadmin.Category, int, error)
 }
 
 // Permissions the places backoffice is built from. place.create/update/delete are seeded in
@@ -177,6 +178,37 @@ func (h *placesAdminHandlers) listed(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": data, "page": result.Page, "limit": result.Limit, "total": result.Total,
+	})
+}
+
+// categories serves GET /v1/place-categories: the taxonomy, public.
+//
+// It is deliberately not behind admin: a client needs the same list to render a discovery
+// filter, and the catalogue is not customer data. An unknown status is rejected rather than
+// becoming a SQL enum error.
+func (h *placesAdminHandlers) categories(w http.ResponseWriter, r *http.Request) {
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	if status != "" && status != "ACTIVE" && status != "INACTIVE" {
+		writeValidationError(w, []fieldError{{Field: "status", Code: "invalid"}})
+		return
+	}
+	page, limit := pageAndLimit(r)
+	rows, total, err := h.service.Categories(r.Context(), status, page, limit)
+	if err != nil {
+		h.logger.Error("listing categories", slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, "internal_error", "The request could not be completed.")
+		return
+	}
+
+	data := make([]map[string]any, 0, len(rows))
+	for _, category := range rows {
+		data = append(data, map[string]any{
+			"coPlaceCategory": category.ID, "code": category.Code,
+			"name": category.Name, "status": category.Status,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data": data, "page": page, "limit": limit, "total": total,
 	})
 }
 

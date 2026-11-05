@@ -93,6 +93,15 @@ type UpdateInput struct {
 	Status      *string
 }
 
+// Category is one entry of the category catalogue. The taxonomy is public: a client needs it
+// to render a filter, and an operator needs it to render a select. It is not customer data.
+type Category struct {
+	ID     string
+	Code   string
+	Name   string
+	Status string
+}
+
 // Page is one page of the listing.
 type Page struct {
 	Rows  []Place
@@ -109,6 +118,7 @@ type Store interface {
 	Update(ctx context.Context, viewer Viewer, actorID, placeID string, in UpdateInput) (Place, error)
 	Retire(ctx context.Context, viewer Viewer, actorID, placeID string) error
 	CategoryExists(ctx context.Context, categoryID string) (bool, error)
+	Categories(ctx context.Context, status string, page, limit int) ([]Category, int, error)
 }
 
 // Service applies the ownership rules.
@@ -174,6 +184,12 @@ func (s *Service) requireCategory(ctx context.Context, categoryID string) error 
 		return ErrUnknownCategory
 	}
 	return nil
+}
+
+// Categories lists the catalogue. An empty status means "every live category", so a client
+// that wants only the selectable ones passes ACTIVE and a client browsing passes nothing.
+func (s *Service) Categories(ctx context.Context, status string, page, limit int) ([]Category, int, error) {
+	return s.store.Categories(ctx, status, page, limit)
 }
 
 // PostgresStore is the pgx implementation.
@@ -361,6 +377,48 @@ func (s *PostgresStore) CategoryExists(ctx context.Context, categoryID string) (
 		return false, fmt.Errorf("checking category: %w", err)
 	}
 	return exists, nil
+}
+
+// Categories reads the catalogue, newest last so the seeded vocabulary keeps a stable order.
+func (s *PostgresStore) Categories(ctx context.Context, status string, page, limit int) ([]Category, int, error) {
+	const predicate = `
+WHERE dt_deleted_at IS NULL
+  AND ($1::public.activatable_status IS NULL OR tx_status = $1::public.activatable_status)`
+
+	// INACTIVE is a value of the enum, so it binds; an unknown status is rejected upstream.
+	var statusParam any
+	if status != "" {
+		statusParam = status
+	}
+
+	var total int
+	if err := s.pool.QueryRow(ctx, "SELECT COUNT(*) FROM core.tb_place_category"+predicate, statusParam).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("counting categories: %w", err)
+	}
+
+	offset := (page - 1) * limit
+	rows, err := s.pool.Query(ctx, `
+SELECT co_place_category::text, tx_code, tx_name, tx_status::text
+FROM core.tb_place_category`+predicate+`
+ORDER BY tx_name
+LIMIT $2 OFFSET $3`, statusParam, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing categories: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]Category, 0, limit)
+	for rows.Next() {
+		var category Category
+		if err := rows.Scan(&category.ID, &category.Code, &category.Name, &category.Status); err != nil {
+			return nil, 0, fmt.Errorf("scanning category: %w", err)
+		}
+		result = append(result, category)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("during category iteration: %w", err)
+	}
+	return result, total, nil
 }
 
 // withActor runs one write with the caller announced, so the tb_place history trigger records

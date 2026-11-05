@@ -842,3 +842,26 @@ visibilidad es un atributo del plan y la membresía es una relación que lleva e
 - El dueño no puede salir del plan por su cuenta: primero transfiere la propiedad.
 - Un plan inactivo (moderado) responde `404` a los no-owner, y sus miembros conservan la
   lectura para no perder el itinerario.
+
+---
+
+## 16. Catálogo de categorías
+
+```http
+GET /v1/place-categories?status=ACTIVE&page=1&limit=100
+```
+
+Público, sin bearer. Es **taxonomía, no dato de cliente**: el mismo listado sirve para el
+select del panel y para los filtros de discovery del móvil, así que no tiene sentido esconderlo
+detrás de un permiso de backoffice.
+
+`status=ACTIVE` devuelve solo las elegibles; sin `status` devuelve el catálogo vivo. El orden es
+por nombre, para que el vocabulario mantenga un orden estable entre llamadas. `code` es la clave
+estable (`arepera`, `hotel`, `rumba`): usá esa en los filtros, no el uuid.
+
+### El lugar en la fila de moderación
+
+El listado `GET /v1/admin/reviews` agrega `place: {id, title}` a cada fila. No está en la
+lectura pública a propósito: ahí el cliente ya conoce el lugar porque consultó por `coPlace`.
+En el listado admin sí hace falta, porque un moderador puede tener `review.moderate` sin
+`place.update` y entonces no puede resolver el uuid por su cuenta.

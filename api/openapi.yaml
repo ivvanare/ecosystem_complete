@@ -761,6 +761,41 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/place-categories:
+    get:
+      tags: [Discovery]
+      operationId: listPlaceCategories
+      summary: List the place category catalogue
+      description: |
+        Public taxonomy, not customer data: the panel renders a select from it and the mobile
+        client renders the same list as discovery filters, so it is deliberately not behind a
+        backoffice permission.
+
+        `status=ACTIVE` returns only the selectable ones; omitting it returns the live
+        catalogue. Ordering is by name, so the vocabulary keeps a stable order between calls.
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [ACTIVE, INACTIVE] }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page of categories.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data, page, limit, total]
+                properties:
+                  page: { type: integer }
+                  limit: { type: integer }
+                  total: { type: integer }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/PlaceCategory" }
+        "422": { $ref: "#/components/responses/ValidationError" }
   /v1/plans:
     post:
       tags: [Plans]
@@ -1663,6 +1698,17 @@ components:
                   - { field: password, code: too_short }
 
   schemas:
+    PlaceCategory:
+      type: object
+      additionalProperties: false
+      required: [coPlaceCategory, code, name, status]
+      properties:
+        coPlaceCategory: { type: string, format: uuid }
+        code:
+          type: string
+          description: Stable key, e.g. arepera. Use it in discovery filters.
+        name: { type: string }
+        status: { type: string, enum: [ACTIVE, INACTIVE] }
     Plan:
       type: object
       additionalProperties: false
@@ -1961,13 +2007,6 @@ components:
           minimum: 1
           description: Present only when `sort=trending` and a zone ranking ordered the row.
 
-    PlaceCategory:
-      type: object
-      required: [id, name]
-      properties:
-        id: { type: string, format: uuid }
-        name: { type: string, example: Arepera }
-
     Rating:
       type: object
       required: [average, count]
@@ -2044,6 +2083,16 @@ components:
       required: [coReview, coPlace, rating, comment, status, author, createdAt, updatedAt, viaFollowedAuthor]
       properties:
         coReview: { type: string, format: uuid }
+        place:
+          type: object
+          additionalProperties: false
+          required: [id, title]
+          description: |
+            Present on the moderator listing only. A moderator may hold review.moderate
+            without place.update and cannot resolve a bare coPlace uuid.
+          properties:
+            id: { type: string, format: uuid }
+            title: { type: string, nullable: true }
         viaFollowedAuthor:
           type: boolean
           description: |

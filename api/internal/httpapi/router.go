@@ -168,6 +168,13 @@ func New(opts Options) http.Handler {
 		mux.HandleFunc("DELETE /v1/plans/{coRoute}/members/{coUser}", RequireAuth(opts.TokenParser, plansHandler.leave))
 	}
 
+	// The category catalogue is public taxonomy: the panel renders a select from it and the
+	// mobile client renders the same list as discovery filters.
+	if opts.PlacesAdmin != nil {
+		categoriesHandler := &placesAdminHandlers{service: opts.PlacesAdmin, logger: logger}
+		mux.HandleFunc("GET /v1/place-categories", categoriesHandler.categories)
+	}
+
 	// Places backoffice (place-ownership): the catalogue is curated, so writing it is
 	// gated by admin.access for creation and by the ownership viewer for the rest.
 	if opts.PlacesAdmin != nil {
