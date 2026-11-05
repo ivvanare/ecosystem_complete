@@ -628,12 +628,15 @@ Table core.tb_review {
   Indexes {
     co_place
     co_user
-    // [PARTIAL UNIQUE] En SQL: UNIQUE (co_user, co_place) WHERE dt_deleted_at IS NULL.
-    // Una reseña por usuario y lugar. El filtro libera el slot SOLO para reseñas
-    // borradas lógicamente: el predicado es dt_deleted_at IS NULL, no tx_status.
-    // Una reseña MODERATED sin borrar sigue ocupando el slot y bloquea un POST nuevo
-    // con 409 (verificado 2026-11-02 con el índice real). Por eso moderar con retiro
-    // debe además fijar dt_deleted_at; ver Q7 en el change social-discovery.
+    // [PARTIAL UNIQUE] En SQL: UNIQUE (co_user, co_place)
+    //   WHERE dt_deleted_at IS NULL AND tx_status = 'ACTIVE'.
+    // Una reseña ACTIVA y viva por usuario y lugar. El predicado incluye tx_status
+    // desde la migración 20 (decisión Q7): una reseña MODERATED o INACTIVE libera el
+    // slot, así el autor puede volver a reseñar el lugar mientras conserva el registro
+    // de la moderación. Antes de 20 el filtro era solo dt_deleted_at IS NULL y una
+    // reseña moderada bloqueaba al autor para siempre con 409. El nombre del índice es
+    // load-bearing: el store de reseñas mapea SQLSTATE 23505 sobre él a
+    // review_already_exists.
     (co_user, co_place) [unique, name: 'ux_tb_review_user_place_active']
   }
 }
