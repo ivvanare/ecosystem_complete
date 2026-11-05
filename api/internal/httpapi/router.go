@@ -250,6 +250,11 @@ func New(opts Options) http.Handler {
 			RequirePermission(opts.Authorizer, PlaceUpdatePermission, logger, backoffice.attributes)))
 		mux.HandleFunc("PUT /v1/admin/places/{coPlace}/attributes", RequireAuth(opts.TokenParser,
 			RequirePermission(opts.Authorizer, PlaceUpdatePermission, logger, backoffice.attributes)))
+		mux.HandleFunc("GET /v1/admin/places/{coPlace}/menu", RequireAuth(opts.TokenParser,
+			RequirePermission(opts.Authorizer, PlaceUpdatePermission, logger, backoffice.menu)))
+		mux.HandleFunc("PUT /v1/admin/places/{coPlace}/menu", RequireAuth(opts.TokenParser,
+			RequirePermission(opts.Authorizer, PlaceUpdatePermission, logger, backoffice.menu)))
+		mux.HandleFunc("GET /v1/place-attributes", backoffice.attributeCatalogue)
 		mux.HandleFunc("DELETE /v1/admin/places/{coPlace}",
 			RequireAuth(opts.TokenParser,
 				RequirePermission(opts.Authorizer, PlaceDeletePermission, logger, backoffice.retire)))

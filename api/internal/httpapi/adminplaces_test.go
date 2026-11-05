@@ -28,6 +28,8 @@ type fakePlaceAdmin struct {
 	gotSchedules []placeadmin.Schedule
 	gotCodes     []string
 	gotStatus    string
+	menus        []placeadmin.Menu
+	gotMenus     []placeadmin.Menu
 }
 
 func (f *fakePlaceAdmin) List(_ context.Context, viewer placeadmin.Viewer, filter placeadmin.Filter, _, _ int) (placeadmin.Page, error) {
@@ -381,5 +383,76 @@ func TestScheduleValidationFailureIs422(t *testing.T) {
 		"/v1/admin/places/"+adminPlaceID+"/schedules", `{"schedules":[{"dayOfWeek":1,"open":"10:00","close":"10:00"}]}`)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want 422 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// The card: the last content of a place, and the one the price and dish filters read.
+
+func (f *fakePlaceAdmin) Menus(_ context.Context, _ placeadmin.Viewer, _ string) ([]placeadmin.Menu, error) {
+	f.calls++
+	return f.menus, f.err
+}
+
+func (f *fakePlaceAdmin) ReplaceMenus(_ context.Context, _ placeadmin.Viewer, _, _ string, menus []placeadmin.Menu) error {
+	f.calls++
+	f.gotMenus = menus
+	return f.err
+}
+
+func (f *fakePlaceAdmin) AttributeCatalogue(context.Context) ([]placeadmin.Category, error) {
+	f.calls++
+	return f.categories, f.err
+}
+
+func TestReplaceMenuSendsTheWholeCard(t *testing.T) {
+	service := &fakePlaceAdmin{}
+	body := `{"menus":[{"name":"Cena","items":[{"name":"Arepa","price":4.5,"currency":"USD"}]}]}`
+	rec := bearerDo(t, backoffice(service, "owner-1", adminScope), http.MethodPut,
+		"/v1/admin/places/"+adminPlaceID+"/menu", body)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if len(service.gotMenus) != 1 || len(service.gotMenus[0].Items) != 1 {
+		t.Fatalf("menus = %+v", service.gotMenus)
+	}
+	if service.gotMenus[0].Items[0].Currency != "USD" {
+		t.Fatalf("currency = %q", service.gotMenus[0].Items[0].Currency)
+	}
+}
+
+func TestUnknownCurrencyIsAFieldError(t *testing.T) {
+	// A price whose currency the catalogue does not carry is a number nobody can compare.
+	service := &fakePlaceAdmin{err: &placeadmin.UnknownCurrencyError{Codes: []string{"XXX"}}}
+	rec := bearerDo(t, backoffice(service, "owner-1", adminScope), http.MethodPut,
+		"/v1/admin/places/"+adminPlaceID+"/menu",
+		`{"menus":[{"name":"Cena","items":[{"name":"Arepa","price":1,"currency":"XXX"}]}]}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rec.Code)
+	}
+	_, fields := errorFields(t, rec)
+	if len(fields) == 0 || fields[0].Field != "menus" {
+		t.Fatalf("fields = %+v", fields)
+	}
+}
+
+func TestNegativePriceIs422NotAConstraintViolation(t *testing.T) {
+	service := &fakePlaceAdmin{err: errors.New("placeadmin: negative price")}
+	rec := bearerDo(t, backoffice(service, "owner-1", adminScope), http.MethodPut,
+		"/v1/admin/places/"+adminPlaceID+"/menu",
+		`{"menus":[{"name":"Cena","items":[{"name":"Arepa","price":-1,"currency":"USD"}]}]}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rec.Code)
+	}
+}
+
+func TestAttributeCatalogueIsPublic(t *testing.T) {
+	service := &fakePlaceAdmin{categories: []placeadmin.Category{{ID: "a1", Code: "terraza", Name: "Terraza", Status: "ACTIVE"}}}
+	// No bearer: the vocabulary is taxonomy, exactly like the categories.
+	rec := do(t, backoffice(service, "", adminScope), http.MethodGet, "/v1/place-attributes")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"code":"terraza"`) {
+		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
