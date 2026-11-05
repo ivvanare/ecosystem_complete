@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/ivvanare/ecosystem_complete/api/internal/invitations"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -95,8 +97,9 @@ type Store interface {
 
 // Service applies the authorization rules.
 type Service struct {
-	store  Store
-	logger *slog.Logger
+	store       Store
+	logger      *slog.Logger
+	invitations Invitations
 }
 
 // NewService wires the domain.
@@ -256,6 +259,44 @@ func (s *Service) Vote(ctx context.Context, actorID, planID, placeID string, val
 // List returns the plans the caller belongs to.
 func (s *Service) List(ctx context.Context, actorID string, page, limit int) ([]Plan, int, error) {
 	return s.store.ListFor(ctx, actorID, page, limit)
+}
+
+// Invitations is the seam the plan routes use for the invitation lifecycle. It is an interface
+// so the plan service does not depend on the invitations package's concrete store.
+type Invitations interface {
+	Create(ctx context.Context, actorID, planID string, in invitations.CreateInput) (invitations.Invitation, error)
+	ForPlan(ctx context.Context, actorID, planID string) ([]invitations.Invitation, error)
+	Mine(ctx context.Context, userID string) ([]invitations.Invitation, error)
+	Accept(ctx context.Context, actorID, invitationID string) error
+	Decline(ctx context.Context, actorID, invitationID string) error
+}
+
+// SetInvitations wires the invitation lifecycle into the plan surface.
+func (s *Service) SetInvitations(service Invitations) { s.invitations = service }
+
+// Invite delegates to the invitation lifecycle.
+func (s *Service) Invite(ctx context.Context, actorID, planID string, in invitations.CreateInput) (invitations.Invitation, error) {
+	return s.invitations.Create(ctx, actorID, planID, in)
+}
+
+// PlanInvitations is the host's RSVP view.
+func (s *Service) PlanInvitations(ctx context.Context, actorID, planID string) ([]invitations.Invitation, error) {
+	return s.invitations.ForPlan(ctx, actorID, planID)
+}
+
+// MyInvitations is the caller's own inbox.
+func (s *Service) MyInvitations(ctx context.Context, userID string) ([]invitations.Invitation, error) {
+	return s.invitations.Mine(ctx, userID)
+}
+
+// AcceptInvitation answers an invitation with a yes.
+func (s *Service) AcceptInvitation(ctx context.Context, actorID, invitationID string) error {
+	return s.invitations.Accept(ctx, actorID, invitationID)
+}
+
+// DeclineInvitation answers with a no; it creates nothing.
+func (s *Service) DeclineInvitation(ctx context.Context, actorID, invitationID string) error {
+	return s.invitations.Decline(ctx, actorID, invitationID)
 }
 
 // PostgresStore is the pgx implementation.

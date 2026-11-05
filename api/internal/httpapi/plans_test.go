@@ -7,22 +7,26 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ivvanare/ecosystem_complete/api/internal/invitations"
 	"github.com/ivvanare/ecosystem_complete/api/internal/plans"
 )
 
 // fakePlans scripts the collaboration service and records what it was asked.
 type fakePlans struct {
-	plan     plans.Plan
-	err      error
-	gotIn    plans.CreateInput
-	gotUpd   plans.UpdateInput
-	gotJoin  string
-	gotLeft  [2]string
-	places   []plans.PlanPlace
-	gotPlace string
-	gotOrder int
-	gotVote  int
-	calls    int
+	plan        plans.Plan
+	err         error
+	gotIn       plans.CreateInput
+	gotUpd      plans.UpdateInput
+	gotJoin     string
+	gotLeft     [2]string
+	places      []plans.PlanPlace
+	gotPlace    string
+	gotOrder    int
+	gotVote     int
+	gotInvite   invitations.CreateInput
+	invitations []invitations.Invitation
+	gotAnswer   string
+	calls       int
 }
 
 func (f *fakePlans) Create(_ context.Context, _ string, in plans.CreateInput) (plans.Plan, error) {
@@ -73,6 +77,30 @@ func (f *fakePlans) RemovePlace(context.Context, string, string, string) error {
 func (f *fakePlans) Vote(_ context.Context, _, _, placeID string, value int) error {
 	f.calls++
 	f.gotPlace, f.gotVote = placeID, value
+	return f.err
+}
+
+func (f *fakePlans) Invite(_ context.Context, _, _ string, in invitations.CreateInput) (invitations.Invitation, error) {
+	f.calls++
+	f.gotInvite = in
+	return invitations.Invitation{ID: "i1", Status: invitations.StatusPending, Mode: in.Mode}, f.err
+}
+func (f *fakePlans) PlanInvitations(context.Context, string, string) ([]invitations.Invitation, error) {
+	f.calls++
+	return f.invitations, f.err
+}
+func (f *fakePlans) MyInvitations(context.Context, string) ([]invitations.Invitation, error) {
+	f.calls++
+	return f.invitations, f.err
+}
+func (f *fakePlans) AcceptInvitation(_ context.Context, _, id string) error {
+	f.calls++
+	f.gotAnswer = "accept:" + id
+	return f.err
+}
+func (f *fakePlans) DeclineInvitation(_ context.Context, _, id string) error {
+	f.calls++
+	f.gotAnswer = "decline:" + id
 	return f.err
 }
 
@@ -249,5 +277,99 @@ func TestItineraryCarriesNetAndMyVote(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, `"netVotes":3`) || !strings.Contains(body, `"myVote":1`) {
 		t.Fatalf("body = %s", body)
+	}
+}
+
+// Invitations over the plan surface: the host's view, and the invitee's own inbox.
+
+func TestInvitePassesThePayloadAndAnswers201(t *testing.T) {
+	service := &fakePlans{}
+	rec := bearerDo(t, plansHandler(service, "host"), http.MethodPost,
+		"/v1/plans/"+planUUID+"/invitations",
+		`{"coUser":"`+planGuestUUID+`","expiresAt":"2030-01-01T00:00:00Z","hint":"llevá abrigo"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if service.gotInvite.UserID != planGuestUUID || service.gotInvite.Hint == nil {
+		t.Fatalf("payload = %+v", service.gotInvite)
+	}
+}
+
+func TestInviteRejectsMissingExpiryAndBadShape(t *testing.T) {
+	cases := []struct{ body, field string }{
+		{`{"coUser":"nope","expiresAt":"2030-01-01T00:00:00Z"}`, "coUser"},
+		{`{"coUser":"` + planGuestUUID + `"}`, "expiresAt"},
+		{`{"coUser":"` + planGuestUUID + `","expiresAt":"mañana"}`, "expiresAt"},
+	}
+	for _, tc := range cases {
+		service := &fakePlans{}
+		rec := bearerDo(t, plansHandler(service, "host"), http.MethodPost,
+			"/v1/plans/"+planUUID+"/invitations", tc.body)
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("%s: status = %d, want 422", tc.body, rec.Code)
+		}
+		_, fields := errorFields(t, rec)
+		if len(fields) == 0 || fields[0].Field != tc.field {
+			t.Fatalf("%s: fields = %+v, want %s", tc.body, fields, tc.field)
+		}
+		if service.calls != 0 {
+			t.Fatalf("%s: the service was reached", tc.body)
+		}
+	}
+}
+
+func TestInvitationAnswerRoutesCarryTheVerb(t *testing.T) {
+	service := &fakePlans{}
+	rec := bearerDo(t, plansHandler(service, "invitee"), http.MethodPost,
+		"/v1/invitations/"+planUUID+"/accept", "")
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("accept status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if service.gotAnswer != "accept:"+planUUID {
+		t.Fatalf("answer = %q", service.gotAnswer)
+	}
+
+	rec = bearerDo(t, plansHandler(service, "invitee"), http.MethodPost,
+		"/v1/invitations/"+planUUID+"/decline", "")
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("decline status = %d", rec.Code)
+	}
+	if service.gotAnswer != "decline:"+planUUID {
+		t.Fatalf("answer = %q", service.gotAnswer)
+	}
+}
+
+func TestAnInvisibleInvitationIs404(t *testing.T) {
+	service := &fakePlans{err: invitations.ErrNotFound}
+	rec := bearerDo(t, plansHandler(service, "stranger"), http.MethodPost,
+		"/v1/invitations/"+planUUID+"/accept", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestANonMemberInvitingIs403(t *testing.T) {
+	service := &fakePlans{err: invitations.ErrForbidden}
+	rec := bearerDo(t, plansHandler(service, "viewer"), http.MethodPost,
+		"/v1/plans/"+planUUID+"/invitations",
+		`{"coUser":"`+planGuestUUID+`","expiresAt":"2030-01-01T00:00:00Z"}`)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+}
+
+func TestADuplicateLiveInvitationIs409(t *testing.T) {
+	// The partial unique index owns "one live invitation per person and plan"; the transport
+	// answers a conflict so a client can resolve it instead of reading a 500.
+	service := &fakePlans{err: invitations.ErrAlreadyPending}
+	rec := bearerDo(t, plansHandler(service, "host"), http.MethodPost,
+		"/v1/plans/"+planUUID+"/invitations",
+		`{"coUser":"`+planGuestUUID+`","expiresAt":"2030-01-01T00:00:00Z"}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (%s)", rec.Code, rec.Body.String())
+	}
+	code, _ := errorFields(t, rec)
+	if code != "invitation_already_pending" {
+		t.Fatalf("code = %q", code)
 	}
 }

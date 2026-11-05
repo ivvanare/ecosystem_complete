@@ -418,6 +418,7 @@ El panel es un SPA en otro origen, así que cada llamada es cross-origin y el he
 | `review_already_exists` | 409 | ya tenés una reseña activa en ese lugar |
 | `not_near_place` | 422 | la coordenada enviada está fuera del radio del lugar |
 | `already_checked_in` | 409 | ya hiciste check-in en ese lugar hoy |
+| `invitation_already_pending` | 409 | esa persona ya tiene una invitación viva a ese plan |
 | `refresh_invalid` | 401 | refresh desconocido o vencido |
 | `refresh_reused` | 401 | reuso detectado; la familia está revocada |
 | `invalid_token` | 401 | el ID token del proveedor no valida |
@@ -887,3 +888,29 @@ lecturas seguidas devuelven el mismo orden, y una lista votada no se reordena so
   Por eso `nu_vote` es `-1` o `1` y no existe el `0` — no votar es simplemente no tener fila.
 - Sacar un lugar del plan borra sus votos: la FK es compuesta a `(co_route, co_place)`, así que
   tampoco se puede votar un lugar que no está en el plan.
+
+### 15.2 Invitaciones
+
+```http
+POST   /v1/plans/{coRoute}/invitations            { coUser, expiresAt, mode?, message?, hint? }
+GET    /v1/plans/{coRoute}/invitations            ← la vista del anfitrión
+GET    /v1/invitations                            ← mi bandeja
+POST   /v1/invitations/{coInvitation}/accept
+POST   /v1/invitations/{coInvitation}/decline
+```
+
+Una invitación tiene ciclo de vida propio (`PENDING → ACCEPTED | DECLINED | EXPIRED | REVOKED`),
+no es un flag ni una membresía con estado. Invitar es de `EDITOR` u `OWNER`; **un no-miembro no
+puede invitar**.
+
+- **Aceptar crea la membresía `VIEWER` en la misma transacción.** Aceptar nunca da `EDITOR`.
+- **Rechazar es terminal y no crea nada.**
+- **El vencimiento lo impone la lectura.** Toda lectura y todo aceptar exigen
+  `dt_expires_at > now()`: una invitación vencida no se puede aceptar aunque el sweeper esté
+  caído. La columna `expired` te dice el veredicto sin que tengas que comparar fechas.
+- **Visibilidad asimétrica:** el anfitrión ve el estado de todos; un invitado ve solo el suyo.
+  Quién rechazó no es información de la comunidad.
+- Una invitación vencida, ya respondida o ajena responden `404`, indistinguibles a propósito.
+- `SURPRISE` exige al menos `message` o `hint`: un sobre vacío no es una sorpresa. En este
+  commit el modo se guarda y se devuelve; el destape del lugar (`AT_SCHEDULED`/`ON_ACCEPT`) y el
+  sweeper de higiene llegan en el commit siguiente.

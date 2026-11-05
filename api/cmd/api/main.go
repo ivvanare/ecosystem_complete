@@ -24,6 +24,7 @@ import (
 	"github.com/ivvanare/ecosystem_complete/api/internal/httpapi"
 	"github.com/ivvanare/ecosystem_complete/api/internal/identity"
 	"github.com/ivvanare/ecosystem_complete/api/internal/invitation"
+	"github.com/ivvanare/ecosystem_complete/api/internal/invitations"
 	"github.com/ivvanare/ecosystem_complete/api/internal/login"
 	"github.com/ivvanare/ecosystem_complete/api/internal/password"
 	"github.com/ivvanare/ecosystem_complete/api/internal/placeadmin"
@@ -161,6 +162,8 @@ func run() error {
 
 	// Plans (P3a): visibility is an attribute, membership carries the role.
 	planService := plans.NewService(plans.NewPostgresStore(pool), logger)
+	// The invitation lifecycle is its own domain; the plan surface exposes it.
+	planService.SetInvitations(invitations.NewService(invitations.NewPostgresStore(pool), logger))
 
 	// Places backoffice (place-ownership): the ownership viewer is resolved per request
 	// from admin.access, so a owner-editor sees only their own rows.

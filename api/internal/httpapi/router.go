@@ -170,6 +170,11 @@ func New(opts Options) http.Handler {
 		mux.HandleFunc("POST /v1/plans/{coRoute}/places", RequireAuth(opts.TokenParser, plansHandler.addPlace))
 		mux.HandleFunc("DELETE /v1/plans/{coRoute}/places/{coPlace}", RequireAuth(opts.TokenParser, plansHandler.removePlace))
 		mux.HandleFunc("POST /v1/plans/{coRoute}/places/{coPlace}/votes", RequireAuth(opts.TokenParser, plansHandler.vote))
+		mux.HandleFunc("POST /v1/plans/{coRoute}/invitations", RequireAuth(opts.TokenParser, plansHandler.invite))
+		mux.HandleFunc("GET /v1/plans/{coRoute}/invitations", RequireAuth(opts.TokenParser, plansHandler.planInvitations))
+		mux.HandleFunc("GET /v1/invitations", RequireAuth(opts.TokenParser, plansHandler.myInvitations))
+		mux.HandleFunc("POST /v1/invitations/{coInvitation}/accept", RequireAuth(opts.TokenParser, plansHandler.accept))
+		mux.HandleFunc("POST /v1/invitations/{coInvitation}/decline", RequireAuth(opts.TokenParser, plansHandler.decline))
 	}
 
 	// The category catalogue is public taxonomy: the panel renders a select from it and the

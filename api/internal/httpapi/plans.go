@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ivvanare/ecosystem_complete/api/internal/invitations"
 	"github.com/ivvanare/ecosystem_complete/api/internal/plans"
 )
 
@@ -24,6 +25,11 @@ type PlanCollaboration interface {
 	AddPlace(ctx context.Context, actorID, planID, placeID string, order int) error
 	RemovePlace(ctx context.Context, actorID, planID, placeID string) error
 	Vote(ctx context.Context, actorID, planID, placeID string, value int) error
+	Invite(ctx context.Context, actorID, planID string, in invitations.CreateInput) (invitations.Invitation, error)
+	PlanInvitations(ctx context.Context, actorID, planID string) ([]invitations.Invitation, error)
+	MyInvitations(ctx context.Context, userID string) ([]invitations.Invitation, error)
+	AcceptInvitation(ctx context.Context, actorID, invitationID string) error
+	DeclineInvitation(ctx context.Context, actorID, invitationID string) error
 }
 
 type planHandlers struct {
@@ -426,4 +432,189 @@ func (h *planHandlers) vote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type invitationResponse struct {
+	CoInvitation string     `json:"coInvitation"`
+	CoRoute      string     `json:"coRoute"`
+	CoUser       string     `json:"coUser"`
+	Status       string     `json:"status"`
+	Mode         string     `json:"mode"`
+	Message      *string    `json:"message"`
+	Hint         *string    `json:"hint"`
+	ExpiresAt    time.Time  `json:"expiresAt"`
+	Expired      bool       `json:"expired"`
+	CreatedAt    time.Time  `json:"createdAt"`
+	RespondedAt  *time.Time `json:"respondedAt"`
+	InviteeName  *string    `json:"inviteeName"`
+	PlanName     *string    `json:"planName"`
+	PlanAt       *time.Time `json:"planScheduledAt"`
+}
+
+func toInvitationResponse(i invitations.Invitation) invitationResponse {
+	return invitationResponse{
+		CoInvitation: i.ID, CoRoute: i.PlanID, CoUser: i.UserID, Status: i.Status, Mode: i.Mode,
+		Message: i.Message, Hint: i.Hint, ExpiresAt: i.ExpiresAt, Expired: i.Expired,
+		CreatedAt: i.CreatedAt, RespondedAt: i.RespondedAt,
+		InviteeName: i.InviteeName, PlanName: i.PlanName, PlanAt: i.PlanAt,
+	}
+}
+
+type invitationRequest struct {
+	CoUser    string  `json:"coUser"`
+	ExpiresAt string  `json:"expiresAt"`
+	Mode      *string `json:"mode"`
+	Message   *string `json:"message"`
+	Hint      *string `json:"hint"`
+}
+
+// invite serves POST /v1/plans/{coRoute}/invitations: EDITOR or OWNER only.
+func (h *planHandlers) invite(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.caller(w, r)
+	if !ok {
+		return
+	}
+	planID, ok := planParam(w, r)
+	if !ok {
+		return
+	}
+	var body invitationRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+		return
+	}
+	var fields []fieldError
+	if !uuidPattern.MatchString(strings.TrimSpace(body.CoUser)) {
+		fields = append(fields, fieldError{Field: "coUser", Code: "invalid"})
+	}
+	if strings.TrimSpace(body.ExpiresAt) == "" {
+		fields = append(fields, fieldError{Field: "expiresAt", Code: "required"})
+	}
+	var expiresAt time.Time
+	if strings.TrimSpace(body.ExpiresAt) != "" {
+		parsed, err := time.Parse(time.RFC3339, body.ExpiresAt)
+		if err != nil {
+			fields = append(fields, fieldError{Field: "expiresAt", Code: "invalid"})
+		} else {
+			expiresAt = parsed
+		}
+	}
+	if body.Message != nil && len(*body.Message) > 500 {
+		fields = append(fields, fieldError{Field: "message", Code: "too_long"})
+	}
+	if body.Hint != nil && len(*body.Hint) > 200 {
+		fields = append(fields, fieldError{Field: "hint", Code: "too_long"})
+	}
+	if len(fields) > 0 {
+		writeValidationError(w, fields)
+		return
+	}
+
+	in := invitations.CreateInput{UserID: body.CoUser, ExpiresAt: expiresAt,
+		Message: body.Message, Hint: body.Hint}
+	if body.Mode != nil {
+		in.Mode = *body.Mode
+	}
+	created, err := h.service.Invite(r.Context(), userID, planID, in)
+	if err != nil {
+		h.writeInvitationError(w, err, "inviting")
+		return
+	}
+	writeJSON(w, http.StatusCreated, toInvitationResponse(created))
+}
+
+// writeInvitationError keeps 404 and 403 apart for the invitation routes too.
+func (h *planHandlers) writeInvitationError(w http.ResponseWriter, err error, action string) {
+	switch {
+	case errors.Is(err, invitations.ErrNotFound), errors.Is(err, invitations.ErrNotInvitee):
+		writeError(w, http.StatusNotFound, "not_found", "Invitation not found.")
+	case errors.Is(err, invitations.ErrForbidden), errors.Is(err, invitations.ErrNotMember):
+		writeError(w, http.StatusForbidden, "permission_denied", "You do not have permission to perform this action.")
+	case errors.Is(err, invitations.ErrExpiryNotFuture):
+		writeValidationError(w, []fieldError{{Field: "expiresAt", Code: "invalid"}})
+	case errors.Is(err, invitations.ErrSurpriseNeedsContent):
+		writeValidationError(w, []fieldError{{Field: "hint", Code: "required"}})
+	case errors.Is(err, invitations.ErrUnknownMode):
+		writeValidationError(w, []fieldError{{Field: "mode", Code: "invalid"}})
+	case errors.Is(err, invitations.ErrAlreadyPending):
+		writeError(w, http.StatusConflict, "invitation_already_pending",
+			"This person already has a live invitation to this plan.")
+	default:
+		h.logger.Error(action, slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, "internal_error", "The request could not be completed.")
+	}
+}
+
+// planInvitations serves GET /v1/plans/{coRoute}/invitations: the host's RSVP view.
+func (h *planHandlers) planInvitations(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.caller(w, r)
+	if !ok {
+		return
+	}
+	planID, ok := planParam(w, r)
+	if !ok {
+		return
+	}
+	rows, err := h.service.PlanInvitations(r.Context(), userID, planID)
+	if err != nil {
+		h.writeInvitationError(w, err, "listing plan invitations")
+		return
+	}
+	data := make([]invitationResponse, 0, len(rows))
+	for _, invitation := range rows {
+		data = append(data, toInvitationResponse(invitation))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": data, "total": len(data)})
+}
+
+// myInvitations serves GET /v1/invitations: only the caller's own.
+func (h *planHandlers) myInvitations(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.caller(w, r)
+	if !ok {
+		return
+	}
+	rows, err := h.service.MyInvitations(r.Context(), userID)
+	if err != nil {
+		h.writeInvitationError(w, err, "listing my invitations")
+		return
+	}
+	data := make([]invitationResponse, 0, len(rows))
+	for _, invitation := range rows {
+		data = append(data, toInvitationResponse(invitation))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": data, "total": len(data)})
+}
+
+// answerInvitation serves accept and decline; the path says which.
+func (h *planHandlers) answerInvitation(accept bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := h.caller(w, r)
+		if !ok {
+			return
+		}
+		invitationID := r.PathValue("coInvitation")
+		if !uuidPattern.MatchString(invitationID) {
+			writeValidationError(w, []fieldError{{Field: "coInvitation", Code: "invalid"}})
+			return
+		}
+		var err error
+		if accept {
+			err = h.service.AcceptInvitation(r.Context(), userID, invitationID)
+		} else {
+			err = h.service.DeclineInvitation(r.Context(), userID, invitationID)
+		}
+		if err != nil {
+			h.writeInvitationError(w, err, "answering invitation")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// accept serves POST /v1/invitations/{coInvitation}/accept.
+func (h *planHandlers) accept(w http.ResponseWriter, r *http.Request) { h.answerInvitation(true)(w, r) }
+
+// decline serves POST /v1/invitations/{coInvitation}/decline.
+func (h *planHandlers) decline(w http.ResponseWriter, r *http.Request) {
+	h.answerInvitation(false)(w, r)
 }
