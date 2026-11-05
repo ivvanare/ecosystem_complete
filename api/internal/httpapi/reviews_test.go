@@ -28,6 +28,11 @@ type fakeReviews struct {
 	moderated   reviews.Review
 	moderateErr error
 	panicOnCall bool
+	// Admin listing surface.
+	adminResult reviews.ListResult
+	adminFilter reviews.AdminFilter
+	adminPage   int
+	adminCalled bool
 
 	calls       int
 	gotViewer   reviews.Viewer
@@ -77,9 +82,19 @@ func (f *fakeReviews) Moderate(_ context.Context, actorID, reviewID, status stri
 	return f.moderated, f.moderateErr
 }
 
+// ListAll is the moderator listing.
+func (f *fakeReviews) ListAll(_ context.Context, filter reviews.AdminFilter, page, _ int) (reviews.ListResult, error) {
+	f.guard()
+	f.adminCalled = true
+	f.adminFilter = filter
+	f.adminPage = page
+	return f.adminResult, nil
+}
+
 const (
-	reviewPlace = "9f1c0e0a-0000-4000-8000-000000000001"
-	reviewID    = "7a2b0e0a-0000-4000-8000-000000000002"
+	reviewPlace    = "9f1c0e0a-0000-4000-8000-000000000001"
+	reviewID       = "7a2b0e0a-0000-4000-8000-000000000002"
+	reviewAuthorID = "3c4d0e0a-0000-4000-8000-000000000003"
 )
 
 // reviewBody is a complete Review as the contract documents it (openapi.yaml Review).
@@ -100,6 +115,13 @@ func newReviewsHandler(service ReviewService, parser TokenParser, authorizer Aut
 		Authorizer:  authorizer,
 		Logger:      slog.New(slog.DiscardHandler),
 	})
+}
+
+// authedParser accepts any token as the given user.
+func authedParser(userID string) *fakeParser {
+	parser := &fakeParser{}
+	parser.claims.Subject = userID
+	return parser
 }
 
 // authed sends a request with a bearer token the fake parser accepts as wantUser.
@@ -483,5 +505,71 @@ func TestReviewRoutesAreAbsentWhenNotWired(t *testing.T) {
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("%s %s = %d, want 404 when unwired", target.method, target.path, rec.Code)
 		}
+	}
+}
+
+// The moderator listing: without it the moderation route had no entry point (L14), so
+// these tests pin the filters, the vocabulary and the permission gate.
+
+func TestAdminReviewsListPassesFiltersThrough(t *testing.T) {
+	service := &fakeReviews{adminResult: reviews.ListResult{Total: 1, Page: 2, Limit: 20}}
+	handler := newReviewsHandler(service, authedParser(reviewAuthorID), &fakeAuthorizer{allowed: true})
+
+	rec := bearerDo(t, handler, http.MethodGet,
+		"/v1/admin/reviews?status=MODERATED&placeId="+reviewPlace+"&authorId="+reviewAuthorID+"&page=2&limit=20", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if service.adminFilter.Status != reviews.StatusModerated {
+		t.Errorf("status filter = %q, want MODERATED", service.adminFilter.Status)
+	}
+	if service.adminFilter.PlaceID != reviewPlace || service.adminFilter.AuthorID != reviewAuthorID {
+		t.Errorf("filters = %+v", service.adminFilter)
+	}
+	if service.adminPage != 2 {
+		t.Errorf("page = %d, want 2", service.adminPage)
+	}
+}
+
+func TestAdminReviewsRejectsAnUnknownStatusBeforeTheService(t *testing.T) {
+	service := &fakeReviews{}
+	rec := bearerDo(t, newReviewsHandler(service, authedParser(reviewAuthorID), &fakeAuthorizer{allowed: true}), http.MethodGet, "/v1/admin/reviews?status=DELETED", "")
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rec.Code)
+	}
+	code, fields := errorFields(t, rec)
+	if code != "validation_failed" || len(fields) == 0 || fields[0].Field != "status" {
+		t.Fatalf("error = %s %+v", code, fields)
+	}
+	if service.adminCalled {
+		t.Fatal("the service was called with an invalid status")
+	}
+}
+
+func TestAdminReviewsRejectsMalformedIDs(t *testing.T) {
+	rec := bearerDo(t, newReviewsHandler(&fakeReviews{}, authedParser(reviewAuthorID), &fakeAuthorizer{allowed: true}), http.MethodGet,
+		"/v1/admin/reviews?placeId=not-a-uuid", "")
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rec.Code)
+	}
+	_, fields := errorFields(t, rec)
+	if len(fields) == 0 || fields[0].Field != "placeId" {
+		t.Fatalf("fields = %+v, want placeId", fields)
+	}
+}
+
+func TestAdminReviewsRequiresTheModerationCapability(t *testing.T) {
+	// The route is gated by review.moderate: an authenticated caller without it is
+	// forbidden, and the service is never reached.
+	handler := New(Options{
+		Reviews:     &fakeReviews{},
+		TokenParser: authedParser(reviewAuthorID),
+		Authorizer:  &fakeAuthorizer{allowed: false},
+		Logger:      slog.New(slog.DiscardHandler),
+	})
+	rec := bearerDo(t, handler, http.MethodGet, "/v1/admin/reviews", "")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
 	}
 }

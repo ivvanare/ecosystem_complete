@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -27,6 +28,7 @@ type ReviewService interface {
 	Update(ctx context.Context, actorID, placeID, reviewID string, in reviews.UpdateInput) (reviews.Review, error)
 	Delete(ctx context.Context, actorID, placeID, reviewID string) error
 	Moderate(ctx context.Context, actorID, reviewID, status string) (reviews.Review, error)
+	ListAll(ctx context.Context, filter reviews.AdminFilter, page, limit int) (reviews.ListResult, error)
 }
 
 type reviewsHandlers struct {
@@ -263,6 +265,50 @@ var validReviewStatuses = map[string]bool{
 
 // moderate serves PATCH /v1/admin/reviews/{coReview}, behind the review.moderate
 // capability. It is not place-scoped: the admin route addresses the review directly.
+// adminList serves GET /v1/admin/reviews: the moderator listing.
+//
+// The route exists because the moderation route takes a coReview and nothing could
+// discover one. Authorization is the middleware's (review.moderate); this handler only
+// validates the filters and maps the page.
+func (h *reviewsHandlers) adminList(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	filter := reviews.AdminFilter{
+		Status:   strings.TrimSpace(query.Get("status")),
+		PlaceID:  strings.TrimSpace(query.Get("placeId")),
+		AuthorID: strings.TrimSpace(query.Get("authorId")),
+	}
+
+	var fields []fieldError
+	if filter.Status != "" && !validReviewStatuses[filter.Status] {
+		fields = append(fields, fieldError{Field: "status", Code: "invalid"})
+	}
+	if filter.PlaceID != "" && !uuidPattern.MatchString(filter.PlaceID) {
+		fields = append(fields, fieldError{Field: "placeId", Code: "invalid"})
+	}
+	if filter.AuthorID != "" && !uuidPattern.MatchString(filter.AuthorID) {
+		fields = append(fields, fieldError{Field: "authorId", Code: "invalid"})
+	}
+	if len(fields) > 0 {
+		writeValidationError(w, fields)
+		return
+	}
+
+	page, limit := pageAndLimit(r)
+	result, err := h.service.ListAll(r.Context(), filter, page, limit)
+	if err != nil {
+		h.writeServiceError(w, err, "listing reviews for moderation")
+		return
+	}
+
+	data := make([]reviewResponse, 0, len(result.Rows))
+	for _, review := range result.Rows {
+		data = append(data, toReviewResponse(review))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data": data, "page": result.Page, "limit": result.Limit, "total": result.Total,
+	})
+}
+
 func (h *reviewsHandlers) moderate(w http.ResponseWriter, r *http.Request) {
 	actorID, ok := userIDFrom(r.Context())
 	if !ok {

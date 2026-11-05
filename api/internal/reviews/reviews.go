@@ -21,6 +21,15 @@ const (
 	StatusModerated = "MODERATED"
 )
 
+// validStatuses is the closed set the enum carries.
+var validStatuses = map[string]bool{
+	StatusActive:    true,
+	StatusInactive:  true,
+	StatusModerated: true,
+}
+
+const ()
+
 var (
 	// ErrNotFound covers a soft-deleted or INACTIVE place and a missing or deleted
 	// review alike, so retired places cannot be enumerated through error differences
@@ -32,6 +41,9 @@ var (
 	// ErrAlreadyExists is the partial unique index ux_tb_review_user_place_active
 	// surfacing as a conflict (S10): one active review per user and place.
 	ErrAlreadyExists = errors.New("reviews: an active review already exists for this user and place")
+	// ErrInvalidStatus is the closed status vocabulary: a caller may not invent a value
+	// that the enum does not carry.
+	ErrInvalidStatus = errors.New("reviews: unknown status")
 )
 
 // Review is one review with the author's display-safe fields. The email never leaves
@@ -80,6 +92,14 @@ type ListResult struct {
 	Limit int
 }
 
+// AdminFilter is what a moderator narrows the backoffice listing by. Every field is
+// optional; the zero value lists everything, newest first.
+type AdminFilter struct {
+	Status   string
+	PlaceID  string
+	AuthorID string
+}
+
 // Store is the persistence seam. The Postgres implementation announces the actor per
 // write transaction and maps the partial unique to ErrAlreadyExists; tests fake it,
 // because the suite never needs PostgreSQL (AGENTS.md).
@@ -91,6 +111,10 @@ type Store interface {
 	Update(ctx context.Context, actorID, reviewID string, in UpdateInput) (Review, error)
 	Delete(ctx context.Context, actorID, reviewID string) error
 	Moderate(ctx context.Context, actorID, reviewID, status string) (Review, error)
+	// AdminList is the moderator listing (S17 backoffice): every row regardless of
+	// visibility, narrowable by status, place and author. It exists because a route that
+	// takes a coReview is useless when nothing can discover one.
+	AdminList(ctx context.Context, filter AdminFilter, page, limit int) ([]Review, int, error)
 }
 
 // Service orchestrates the rules that span calls: place liveness (S14) and the
@@ -98,6 +122,19 @@ type Store interface {
 type Service struct {
 	store  Store
 	logger *slog.Logger
+}
+
+// ListAll returns the moderator listing. Authorization is the transport's job (the route
+// is gated by review.moderate); the service only refuses to invent a status.
+func (s *Service) ListAll(ctx context.Context, filter AdminFilter, page, limit int) (ListResult, error) {
+	if filter.Status != "" && !validStatuses[filter.Status] {
+		return ListResult{}, ErrInvalidStatus
+	}
+	rows, total, err := s.store.AdminList(ctx, filter, page, limit)
+	if err != nil {
+		return ListResult{}, err
+	}
+	return ListResult{Rows: rows, Total: total, Page: page, Limit: limit}, nil
 }
 
 // NewService wires the reviews path.

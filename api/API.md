@@ -758,3 +758,22 @@ que purgar.
 
 Un check-in es un hecho **append-only**: no se edita ni se borra lógicamente, y por eso no está
 en el conjunto de tablas de historia.
+
+### 13.3 Moderación de reseñas
+
+```http
+GET /v1/admin/reviews?status=MODERATED&placeId=<uuid>&authorId=<uuid>&page=1&limit=20
+PATCH /v1/admin/reviews/{coReview}   { "status": "ACTIVE" | "INACTIVE" | "MODERATED" }
+```
+
+Ambas requieren el permiso `review.moderate`.
+
+El listado existe porque la ruta de moderación recibe un `coReview` y **nada más lo hacía
+descubrible**: una pantalla de moderación sin listado no tiene de dónde salir. A diferencia del
+listado público, este **no aplica el predicado de visibilidad**: devuelve todas las reseñas,
+incluidas las moderadas y las borradas lógicamente, con la más reciente primero. Todos los
+filtros son opcionales y el valor vacío lista todo.
+
+Ojo con la interacción ya conocida: moderar **no** borra. Una reseña `MODERATED` sigue visible
+para su autor y para el moderador, y desde la migración 20 el autor puede volver a reseñar ese
+lugar. Si querés impedir que alguien publique, eso es bloqueo de cuenta, no moderación.

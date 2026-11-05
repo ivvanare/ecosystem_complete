@@ -188,6 +188,11 @@ func New(opts Options) http.Handler {
 			mux.HandleFunc("PATCH /v1/admin/reviews/{coReview}",
 				RequireAuth(opts.TokenParser,
 					RequirePermission(opts.Authorizer, ReviewModeratePermission, logger, reviewsHandler.moderate)))
+			// The listing exists so a moderator can discover a coReview at all: the
+			// moderation route above is useless without it.
+			mux.HandleFunc("GET /v1/admin/reviews",
+				RequireAuth(opts.TokenParser,
+					RequirePermission(opts.Authorizer, ReviewModeratePermission, logger, reviewsHandler.adminList)))
 		}
 	}
 

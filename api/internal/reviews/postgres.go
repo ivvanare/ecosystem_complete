@@ -101,6 +101,58 @@ WHERE r.co_place = $1::uuid
         OR $3::boolean
       )`
 
+// adminFilterPredicate narrows the moderator listing. Every clause is optional and the
+// zero value lists everything, so the count and the page share one predicate and agree.
+const adminFilterPredicate = `
+WHERE ($1::public.review_status IS NULL OR r.tx_status = $1::public.review_status)
+  AND ($2::uuid IS NULL OR r.co_place = $2::uuid)
+  AND ($3::uuid IS NULL OR r.co_user = $3::uuid)`
+
+// AdminList returns one page of every review, newest first, for a moderator.
+//
+// This is the backoffice listing (S17): without it the moderation route has no entry
+// point, because nothing can discover a coReview. It deliberately does not apply the
+// public visibility predicate — a moderator sees the rows the public cannot.
+func (s *PostgresStore) AdminList(ctx context.Context, filter AdminFilter, page, limit int) ([]Review, int, error) {
+	args := []any{nullableText(filter.Status), nullableText(filter.PlaceID), nullableText(filter.AuthorID)}
+
+	var total int
+	if err := s.db.QueryRow(ctx, "SELECT COUNT(*) FROM core.tb_review r"+adminFilterPredicate, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("counting admin reviews: %w", err)
+	}
+
+	offset := (page - 1) * limit
+	rows, err := s.db.Query(ctx, reviewColumns+adminFilterPredicate+`
+ORDER BY r.dt_created_at DESC, r.co_review DESC
+LIMIT $4 OFFSET $5`, append(args, limit, offset)...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("selecting admin reviews: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]Review, 0, limit)
+	for rows.Next() {
+		review, err := scanReview(rows)
+		if err != nil {
+			return nil, 0, fmt.Errorf("scanning admin review: %w", err)
+		}
+		result = append(result, review)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("during admin review iteration: %w", err)
+	}
+	return result, total, nil
+}
+
+// nullableText turns an absent filter into a NULL bind, which the predicate above reads
+// as "no filter" rather than an empty-string comparison.
+func nullableText(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
 // PlaceActive reports whether the place is visible: not soft-deleted and ACTIVE (S14).
 func (s *PostgresStore) PlaceActive(ctx context.Context, placeID string) (bool, error) {
 	var active bool

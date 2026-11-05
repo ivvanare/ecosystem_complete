@@ -10,8 +10,12 @@ import (
 // fakeStore is a scriptable Store. The call counters prove the orchestration rules of
 // S11/S14 run before any write: a dead place or a foreign author stops the call chain.
 type fakeStore struct {
-	active    bool
-	activeErr error
+	adminRows   []Review
+	adminTotal  int
+	adminErr    error
+	adminFilter AdminFilter
+	active      bool
+	activeErr   error
 
 	listRows  []Review
 	listTotal int
@@ -83,6 +87,11 @@ func (f *fakeStore) Delete(_ context.Context, actorID, reviewID string) error {
 	f.deleteCalls++
 	f.gotActor, f.gotReviewID = actorID, reviewID
 	return f.deleteErr
+}
+
+func (f *fakeStore) AdminList(_ context.Context, filter AdminFilter, _, _ int) ([]Review, int, error) {
+	f.adminFilter = filter
+	return f.adminRows, f.adminTotal, f.adminErr
 }
 
 func (f *fakeStore) Moderate(_ context.Context, actorID, reviewID, status string) (Review, error) {

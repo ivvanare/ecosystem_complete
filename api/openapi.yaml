@@ -761,6 +761,49 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/admin/reviews:
+    get:
+      tags: [Admin]
+      operationId: listAdminReviews
+      summary: List reviews for moderation
+      description: |
+        Requires `review.moderate`. Exists because the moderation route takes a `coReview`
+        and nothing else can discover one: a moderator needs a page to work from.
+
+        Unlike the public listing this does not apply the visibility predicate — it returns
+        every review, including moderated and logically deleted ones, newest first. Each
+        filter is optional; the zero value lists everything.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [ACTIVE, INACTIVE, MODERATED] }
+        - name: placeId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: authorId
+          in: query
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page of reviews, newest first.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - type: object
+                    additionalProperties: false
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Review" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationError" }
   /v1/admin/reviews/{coReview}:
     patch:
       tags: [Admin, Reviews]
