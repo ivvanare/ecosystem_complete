@@ -535,9 +535,16 @@ Consequences that shape what comes next:
     the whole point of P2 — trivially fake.
   - Why this is enough: it turns lying from trivial into work. It is not cryptographic proof
     and the UI must never say "verified"; the words are "near" or "at the place".
-- **Q2 — Blocking before public launch.** P2 ships follow without block. A public social
-  surface needs block before it is exposed broadly; it is cheap to add and expensive to
-  retrofit once people expect the graph.
+- ~~**Q2 — Blocking before public launch.**~~ **Decided 2026-11-02 by delegation ("lo dejo a tu
+  criterio"): it stays a public-launch gate, not a P2 feature.** The reasoning: blocking is
+  cheap to add and expensive to retrofit only if the *graph* is already exposed. Today the graph
+  is reachable by two accounts in a dev database and no client exists, so building it now would
+  be building blind — the block semantics (does blocking hide their reviews? their check-ins?
+  both directions?) depend on what the mobile app actually shows, and that is not designed. The
+  decision is therefore a **hard gate**: no public exposure of follow/check-in until block ships,
+  and the gate is written into P3b's and P4's acceptance rather than remembered. What is *not*
+  deferred is the data-model consequence: block must be a relation (`tb_block`) read by every
+  viewer-relative projection, never a flag on the follow row.
 - **Q3 — Third visibility value.** `FOLLOWERS_ONLY` (a plan visible to followers but not
   public) was considered and deferred. Adding an enum value later is additive; adding it
   speculatively would force every authorization check to handle a case no UX needs yet.
@@ -555,6 +562,9 @@ Consequences that shape what comes next:
   (it adds a conjunct), zero duplicate pairs existed under the new predicate before the change,
   and a second ACTIVE review still fails with 23505 on the same index name, so the 409 mapping
   in the reviews store is unchanged.
-- **Q6 — Capacity on public plans.** A private plan needs a party size ("voy solo", "somos
-  dos"); a public festival may need a capacity and a waitlist. Both are plausible and they
-  are not the same column; P3a ships party size only, and capacity waits for a consumer.
+- ~~**Q6 — Capacity on public plans.**~~ **Decided 2026-11-02 by delegation: party size only, no
+  capacity and no waitlist.** `nu_party_size` already says how big the plan is, and nothing
+  consumes a hard limit: a capacity that nobody enforces is a field that lies, and a waitlist
+  needs a notification channel (P4) to be anything but a table nobody reads. Capacity arrives
+  with its consumer, as an additive column plus an accept-time check, and the accept path already
+  exists so the check has a home.
