@@ -27,6 +27,7 @@ import (
 	"github.com/ivvanare/ecosystem_complete/api/internal/invitation"
 	"github.com/ivvanare/ecosystem_complete/api/internal/invitations"
 	"github.com/ivvanare/ecosystem_complete/api/internal/login"
+	"github.com/ivvanare/ecosystem_complete/api/internal/notifications"
 	"github.com/ivvanare/ecosystem_complete/api/internal/password"
 	"github.com/ivvanare/ecosystem_complete/api/internal/placeadmin"
 	"github.com/ivvanare/ecosystem_complete/api/internal/places"
@@ -161,6 +162,21 @@ func run() error {
 		signupRequester = signup.New(signup.NewPostgresStore(pool), publisher, logger)
 	}
 
+	// Notifications (S13): preferences gate a best-effort email through the mail queue the
+	// service already owns. Push waits for the mobile client. The publisher is its own so the
+	// notifier does not depend on the signup block having run; delivery failures are logged and
+	// never propagate, because a courtesy must not fail the act it announces.
+	var notificationPublisher notifications.Publisher
+	if cfg.RabbitMQURL != "" {
+		mailPublisher := queue.NewAMQP(cfg.RabbitMQURL, cfg.MailQueue)
+		defer func() { _ = mailPublisher.Close() }()
+		notificationPublisher = mailPublisher
+	} else {
+		logger.Warn("RABBITMQ_URL is empty: notifications will be logged and dropped")
+	}
+	notificationService := notifications.NewService(
+		notifications.NewPostgresStore(pool), notificationPublisher, logger)
+
 	// Blocking (Q2): a relation the viewer-relative projections filter by.
 	blockService := blocks.NewService(blocks.NewPostgresStore(pool), logger)
 
@@ -168,6 +184,7 @@ func run() error {
 	planService := plans.NewService(plans.NewPostgresStore(pool), logger)
 	// The invitation lifecycle is its own domain; the plan surface exposes it.
 	planService.SetInvitations(invitations.NewService(invitations.NewPostgresStore(pool), logger))
+	planService.SetNotifier(notificationService)
 
 	// Places backoffice (place-ownership): the ownership viewer is resolved per request
 	// from admin.access, so a owner-editor sees only their own rows.
@@ -215,6 +232,7 @@ func run() error {
 			PlacesAdmin:        placeBackoffice,
 			Plans:              planService,
 			Blocks:             blockService,
+			Notifications:      notificationService,
 			Reviews:            reviewsService,
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,

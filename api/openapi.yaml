@@ -796,6 +796,57 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/PlaceCategory" }
         "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/notifications/preferences:
+    get:
+      tags: [Notifications]
+      operationId: getNotificationPreferences
+      summary: The notification catalogue with the caller's switches
+      description: |
+        Returns **every** kind, not only the disabled ones: a client renders one switch per
+        entry, and "absence of a preference means enabled" is a server rule, not something a
+        client should have to infer.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The catalogue.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data, total]
+                properties:
+                  total: { type: integer }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/NotificationPreference" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    patch:
+      tags: [Notifications]
+      operationId: setNotificationPreference
+      summary: Turn one kind on or off
+      description: |
+        An unknown kind is `422` with field `kind` and code `unknown`: a switch for a kind that
+        does not exist would be a switch that lies.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [kind, enabled]
+              properties:
+                kind: { type: string, example: invitation.received }
+                enabled: { type: boolean }
+      responses:
+        "204": { description: Preference stored. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
   /v1/blocks:
     post:
       tags: [Social]
@@ -2161,6 +2212,13 @@ components:
         longitude: { type: number, minimum: -180, maximum: 180 }
         address: { type: string, nullable: true, maxLength: 300 }
         status: { type: string, enum: [ACTIVE, INACTIVE] }
+    NotificationPreference:
+      type: object
+      additionalProperties: false
+      required: [kind, enabled]
+      properties:
+        kind: { type: string, example: invitation.received }
+        enabled: { type: boolean }
     Block:
       type: object
       additionalProperties: false
