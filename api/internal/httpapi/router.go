@@ -36,6 +36,7 @@ type Options struct {
 	EmailChange        EmailChangeService
 	Social             SocialAuthenticator
 	Discovery          PlaceDiscovery
+	Reviews            ReviewService
 }
 
 const defaultProbeTimeout = 2 * time.Second
@@ -149,6 +150,31 @@ func New(opts Options) http.Handler {
 	if opts.Discovery != nil {
 		placesHandler := &placesHandlers{discovery: opts.Discovery, logger: logger}
 		mux.HandleFunc("GET /v1/places", placesHandler.places)
+	}
+
+	// Reviews are the first domain write path (p1-discovery.md §6). The list is
+	// public; mutations require the bearer, and moderation reuses the seeded
+	// review.moderate capability (S12). Like the broker-gated routes, the routes are
+	// absent rather than accepted-and-failed when the service is not wired (T10).
+	if opts.Reviews != nil && opts.TokenParser != nil {
+		reviewsHandler := &reviewsHandlers{
+			service:    opts.Reviews,
+			parser:     opts.TokenParser,
+			authorizer: opts.Authorizer,
+			logger:     logger,
+		}
+		mux.HandleFunc("GET /v1/places/{coPlace}/reviews", reviewsHandler.list)
+		mux.HandleFunc("POST /v1/places/{coPlace}/reviews",
+			RequireAuth(opts.TokenParser, reviewsHandler.create))
+		mux.HandleFunc("PATCH /v1/places/{coPlace}/reviews/{coReview}",
+			RequireAuth(opts.TokenParser, reviewsHandler.update))
+		mux.HandleFunc("DELETE /v1/places/{coPlace}/reviews/{coReview}",
+			RequireAuth(opts.TokenParser, reviewsHandler.delete))
+		if opts.Authorizer != nil {
+			mux.HandleFunc("PATCH /v1/admin/reviews/{coReview}",
+				RequireAuth(opts.TokenParser,
+					RequirePermission(opts.Authorizer, ReviewModeratePermission, logger, reviewsHandler.moderate)))
+		}
 	}
 
 	mux.HandleFunc("/", notFound)

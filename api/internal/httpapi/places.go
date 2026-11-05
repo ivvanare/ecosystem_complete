@@ -28,9 +28,11 @@ type placesHandlers struct {
 // The shape guards of p1-discovery.md §3, applied at the edge: the database keeps its
 // CHECKs, but a bad value is rejected here, before any query runs.
 var (
-	countryPattern  = regexp.MustCompile(`^[A-Z]{2}$`)
-	regionPattern   = regexp.MustCompile(`^[A-Z]{2}-[A-Z0-9]{1,3}$`)
-	categoryPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	countryPattern = regexp.MustCompile(`^[A-Z]{2}$`)
+	regionPattern  = regexp.MustCompile(`^[A-Z]{2}-[A-Z0-9]{1,3}$`)
+	// uuidPattern is the uuid shape guard, shared by the category filter and the
+	// review path parameters.
+	uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 )
 
 // sortValues is the closed enum the contract accepts.
@@ -68,7 +70,7 @@ func filters(r *http.Request) (country, region, category string, fields []fieldE
 		fields = append(fields, fieldError{Field: "region", Code: "invalid"})
 	}
 	category = strings.TrimSpace(query.Get("category"))
-	if category != "" && !categoryPattern.MatchString(category) {
+	if category != "" && !uuidPattern.MatchString(category) {
 		fields = append(fields, fieldError{Field: "category", Code: "invalid"})
 	}
 	return country, region, category, fields

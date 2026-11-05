@@ -565,6 +565,218 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
+  /v1/places/{coPlace}/reviews:
+    get:
+      tags: [Reviews]
+      operationId: listPlaceReviews
+      summary: List the reviews of a place
+      description: |
+        Public and paginated, newest first. The read never aggregates reviews for
+        ordering: the place average belongs to the worker, not to a request.
+
+        Visibility depends on the viewer. Everyone sees reviews that are `ACTIVE` and
+        not deleted. The author additionally sees their own rows in any state
+        (`INACTIVE`, `MODERATED`, logically deleted), and so does a caller holding
+        `review.moderate`. Both are resolved from the bearer token when one is sent;
+        the route itself requires no authentication.
+
+        A place that is soft-deleted or `INACTIVE` answers `404`, exactly like a place
+        that does not exist, so retired places cannot be enumerated.
+      parameters:
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page of reviews.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReviewPage" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    post:
+      tags: [Reviews]
+      operationId: createReview
+      summary: Review a place
+      description: |
+        Creates the caller's review of the place. One active review per user and
+        place is enforced by the partial unique index `ux_tb_review_user_place_active`
+        and surfaced as `409 review_already_exists` — never a pre-check, which would
+        race. A logically deleted review does not block reviewing again, which is
+        exactly why the index is partial.
+
+        The write announces the actor with `set_config('app.current_user_id', ...)` in
+        its transaction, so the history trigger records `co_actor_user`. The service
+        never inserts into `core.tb_review_history` itself.
+
+        `rating` is an integer in `1..5` (the table CHECK); `comment` is bounded to
+        2000 characters at the edge, not in the database.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReviewUpsert" }
+      responses:
+        "201":
+          description: Review created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Review" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The caller already has an active (non-deleted) review for this place.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error:
+                  code: review_already_exists
+                  message: You already have a review for this place.
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /v1/places/{coPlace}/reviews/{coReview}:
+    patch:
+      tags: [Reviews]
+      operationId: updateReview
+      summary: Edit your own review
+      description: |
+        Author-only: anyone else gets `403 permission_denied`. At least one of
+        `rating` or `comment` is required. Editing does not change `tx_status` and
+        does not resurrect visibility of a `MODERATED` row. A logically deleted
+        review is `404`.
+
+        The write announces the actor with `set_config('app.current_user_id', ...)`,
+        so the history trigger records `co_actor_user`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: coReview
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReviewUpsert" }
+      responses:
+        "200":
+          description: Updated review.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Review" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      tags: [Reviews]
+      operationId: deleteReview
+      summary: Delete your own review
+      description: |
+        Author-only: anyone else gets `403 permission_denied`. The delete is logical
+        (`dt_deleted_at`), never physical: the history trigger records the UPDATE,
+        and because the one-review index is partial, the author may review the place
+        again afterwards.
+
+        The write announces the actor with `set_config('app.current_user_id', ...)`,
+        so the history trigger records `co_actor_user`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: coReview
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Review logically deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/admin/reviews/{coReview}:
+    patch:
+      tags: [Admin, Reviews]
+      operationId: moderateReview
+      summary: Moderate a review
+      description: |
+        Requires `review.moderate`. Sets `tx_status` to one of the existing
+        `review_status` values (`ACTIVE`, `INACTIVE`, `MODERATED`) — moderation
+        invents no new permission and no new enum value. A `MODERATED` review stops
+        being returned to readers other than its author and moderators.
+
+        The write announces the actor with `set_config('app.current_user_id', ...)`,
+        so the history trigger records `co_actor_user` — the moderation funnel stays
+        measurable from `core.tb_review_history`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coReview
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { $ref: "#/components/schemas/ReviewStatus" }
+      responses:
+        "200":
+          description: Moderated review.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Review" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /v1/admin/users:
     get:
       tags: [Admin]
@@ -1196,3 +1408,50 @@ components:
       properties:
         latitude: { type: number, format: double }
         longitude: { type: number, format: double }
+
+    ReviewStatus:
+      type: string
+      enum: [ACTIVE, INACTIVE, MODERATED]
+      description: Mirrors `public.review_status`. Moderation reuses it; no new enum value is invented.
+
+    ReviewUpsert:
+      type: object
+      properties:
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+          description: Required on create; optional on edit. Bounded by the table CHECK.
+        comment:
+          type: string
+          maxLength: 2000
+          description: Bounded at the edge, not in the database.
+
+    Review:
+      type: object
+      required: [coReview, coPlace, rating, comment, status, author, createdAt, updatedAt]
+      properties:
+        coReview: { type: string, format: uuid }
+        coPlace: { type: string, format: uuid }
+        rating: { type: integer, minimum: 1, maximum: 5 }
+        comment: { type: [string, "null"], maxLength: 2000 }
+        status: { $ref: "#/components/schemas/ReviewStatus" }
+        author:
+          type: object
+          required: [id, name]
+          description: Display-safe author fields. The email is never exposed.
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: [string, "null"], description: "`seg.tb_user.tx_name`; `null` when the account never gave one (social sign-in)." }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    ReviewPage:
+      allOf:
+        - $ref: "#/components/schemas/Page"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/Review" }

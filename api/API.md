@@ -415,6 +415,7 @@ El panel es un SPA en otro origen, así que cada llamada es cross-origin y el he
 | `rate_limited` | 429 | cuota de pedidos de código; trae `Retry-After` |
 | `invalid_password` | 400 | la contraseña actual no coincide |
 | `email_unavailable` | 409 | la dirección ya está en uso |
+| `review_already_exists` | 409 | ya tenés una reseña activa en ese lugar |
 | `refresh_invalid` | 401 | refresh desconocido o vencido |
 | `refresh_reused` | 401 | reuso detectado; la familia está revocada |
 | `invalid_token` | 401 | el ID token del proveedor no valida |
@@ -548,7 +549,86 @@ total.
 
 ---
 
-## 12. Recetas
+## 12. Reseñas
+
+Las reseñas son la primera escritura de dominio de la API. **Una por usuario y lugar**: lo
+garantiza el índice único parcial `ux_tb_review_user_place_active`, nunca una consulta
+previa (chequear antes de insertar tiene carrera).
+
+| Método | Ruta | Autenticación | Qué hace |
+|---|---|---|---|
+| `GET` | `/v1/places/{coPlace}/reviews?page&limit` | pública | lista paginada, la más reciente primero |
+| `POST` | `/v1/places/{coPlace}/reviews` | bearer | crea tu reseña (`201`) |
+| `PATCH` | `/v1/places/{coPlace}/reviews/{coReview}` | bearer, solo el autor | edita `rating` y/o `comment` |
+| `DELETE` | `/v1/places/{coPlace}/reviews/{coReview}` | bearer, solo el autor | borrado **lógico** (`204`) |
+| `PATCH` | `/v1/admin/reviews/{coReview}` | bearer + `review.moderate` | fija `status` (`ACTIVE`/`INACTIVE`/`MODERATED`) |
+
+Un lugar borrado lógico o `INACTIVE` responde `404` en **todas** estas rutas, igual que un
+lugar inexistente: no se pueden enumerar lugares retirados por diferencias de error.
+
+### Crear
+
+```http
+POST /v1/places/9f1c.../reviews
+Authorization: Bearer <access>
+{"rating": 5, "comment": "La mejor arepa de Chacao."}
+```
+
+→ `201` con la reseña. `rating` es entero de 1 a 5 (el CHECK de la tabla) y `comment`
+tiene tope de 2000 caracteres, validado en el borde (`422`, `field: comment`, `code:
+too_long`), no en la base.
+
+Si ya tenés una reseña activa (no borrada) en ese lugar → `409 review_already_exists`.
+Es la traducción del índice único parcial, nunca un chequeo previo ni un 500.
+
+### Visibilidad
+
+Todos ven las reseñas `ACTIVE` no borradas. Una reseña `INACTIVE`, `MODERATED` o borrada
+lógicamente solo la ven **su autora** y quienes tienen `review.moderate` — la lista es
+pública, pero si mandás el bearer la API sabe quién sos y te muestra también las tuyas. El
+email del autor nunca se expone: `author` trae solo `id` y `name`.
+
+### Editar y borrar (solo el autor)
+
+```http
+PATCH /v1/places/9f1c.../reviews/7a2b...
+Authorization: Bearer <access>
+{"rating": 4}
+```
+
+→ `200` con la reseña actualizada. Al menos un campo es obligatorio (`rating` o
+`comment`). Cualquier otro usuario → `403 permission_denied`. Editar no cambia `status`.
+
+```http
+DELETE /v1/places/9f1c.../reviews/7a2b...
+Authorization: Bearer <access>
+```
+
+→ `204`. El borrado es **lógico** (`dt_deleted_at`), así que podés reseñar ese lugar de
+nuevo después — por eso el índice único es parcial.
+
+### Moderación
+
+```http
+PATCH /v1/admin/reviews/7a2b...
+Authorization: Bearer <access>
+{"status": "MODERATED"}
+```
+
+Requiere el permiso `review.moderate` (ya sembrado); sin él → `403 permission_denied`.
+Solo usa valores del enum `review_status` existente: no hay permisos ni estados nuevos.
+Una reseña `MODERATED` deja de verse para todos salvo su autora y los moderadores.
+
+### Historia
+
+Cada escritura anuncia al actor con `set_config('app.current_user_id', ...)` al abrir su
+transacción, así el trigger existente registra `co_actor_user` en
+`core.tb_review_history`. El servicio **nunca** inserta en la tabla de historia: la
+escribe el trigger.
+
+---
+
+## 13. Recetas
 
 **Registro completo (móvil)**
 
@@ -595,7 +675,7 @@ curl -s localhost:9000/v1/me -H "Authorization: Bearer $TOKEN" | jq '.permission
 
 ---
 
-## 13. Checklist para un cliente nuevo
+## 14. Checklist para un cliente nuevo
 
 1. Login o registro → guardar `access_token` y `refresh_token` (el panel no recibe el refresh:
    va en cookie).
