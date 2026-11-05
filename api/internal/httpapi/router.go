@@ -36,6 +36,8 @@ type Options struct {
 	EmailChange        EmailChangeService
 	Social             SocialAuthenticator
 	Discovery          PlaceDiscovery
+	Follows            SocialGraph
+	Checkins           Checkins
 	Reviews            ReviewService
 }
 
@@ -150,6 +152,18 @@ func New(opts Options) http.Handler {
 	if opts.Discovery != nil {
 		placesHandler := &placesHandlers{discovery: opts.Discovery, logger: logger}
 		mux.HandleFunc("GET /v1/places", placesHandler.places)
+	}
+
+	// Social graph: the consumer is the mobile app (D21), so these are authenticated
+	// routes with no admin analogue. Absent when unwired, like the broker-gated routes.
+	if opts.Follows != nil {
+		graph := &graphHandlers{follows: opts.Follows, checkins: opts.Checkins, parser: opts.TokenParser, logger: logger}
+		mux.HandleFunc("POST /v1/follows", graph.createFollow)
+		mux.HandleFunc("DELETE /v1/follows/{coUser}", graph.deleteFollow)
+		mux.HandleFunc("GET /v1/follows", graph.listFollows)
+		if opts.Checkins != nil {
+			mux.HandleFunc("POST /v1/places/{coPlace}/checkins", graph.createCheckin)
+		}
 	}
 
 	// Reviews are the first domain write path (p1-discovery.md §6). The list is

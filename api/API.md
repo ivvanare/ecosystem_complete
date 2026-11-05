@@ -416,6 +416,8 @@ El panel es un SPA en otro origen, así que cada llamada es cross-origin y el he
 | `invalid_password` | 400 | la contraseña actual no coincide |
 | `email_unavailable` | 409 | la dirección ya está en uso |
 | `review_already_exists` | 409 | ya tenés una reseña activa en ese lugar |
+| `not_near_place` | 422 | la coordenada enviada está fuera del radio del lugar |
+| `already_checked_in` | 409 | ya hiciste check-in en ese lugar hoy |
 | `refresh_invalid` | 401 | refresh desconocido o vencido |
 | `refresh_reused` | 401 | reuso detectado; la familia está revocada |
 | `invalid_token` | 401 | el ID token del proveedor no valida |
@@ -716,3 +718,43 @@ curl -s localhost:9000/v1/me -H "Authorization: Bearer $TOKEN" | jq '.permission
 5. Leer `error.code`, nunca `message`.
 6. En el panel: mandar `X-CSRF-Token` en refresh y logout, y nunca leer la cookie
    `refresh_token`.
+
+---
+
+## 13. Grafo social
+
+### 13.1 Seguir
+
+```http
+POST /v1/follows          { "coUser": "<uuid>" }   → 204
+DELETE /v1/follows/{coUser}                        → 204
+GET /v1/follows?direction=following|followers&page=1&limit=20
+```
+
+El grafo es asimétrico: seguir a alguien no dice nada sobre si esa persona te sigue. Ambas
+mutaciones son **idempotentes** — repetir un follow o borrar uno que no existe también responde
+`204`, porque el grafo es un conjunto y no un historial de intenciones.
+
+`mutual: true` en el listado marca un amigo: existe también la arista inversa. Se calcula en
+cada lectura y **nunca se guarda**: el grafo cambia todos los días y un flag almacenado se
+pudre en uno. Seguirte a vos mismo es `422` con `field: coUser`.
+
+### 13.2 Check-in
+
+```http
+POST /v1/places/{coPlace}/checkins   { "near": "10.4806,-66.9036" }   → 201
+```
+
+La coordenada **prueba** la presencia y después se descarta: solo se guarda el veredicto
+(`PROXIMITY`). No se almacena la coordenada ni la distancia, así que no hay rastro de ubicación
+que purgar.
+
+- Fuera del radio del lugar → `422 not_near_place`. No se degrada a "afirmación libre": decir
+  "no estás ahí" es honesto; registrar lo que la persona no hizo envenena justamente la señal
+  que este endpoint existe para dar.
+- Segundo check-in el mismo día en el mismo lugar → `409 already_checked_in`. La regla vive en
+  el esquema (índice único sobre usuario, lugar y día), no en el servicio.
+- Un lugar borrado o inactivo → `404`, igual que en el resto de las rutas de lugar.
+
+Un check-in es un hecho **append-only**: no se edita ni se borra lógicamente, y por eso no está
+en el conjunto de tablas de historia.

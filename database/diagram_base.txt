@@ -641,6 +641,45 @@ Table core.tb_review {
   }
 }
 
+// ------------------------------------------------------------------------------
+// GRAFO SOCIAL — seguimiento asimétrico y check-ins (migraciones 21-23).
+// ------------------------------------------------------------------------------
+
+Table core.tb_follow {
+  co_follower uuid [not null, note: 'Cuenta que sigue. PK compuesta con co_followed']
+  co_followed uuid [not null, note: 'Cuenta seguida. "Amigo" es follow mutuo: se computa al leer, nunca se guarda como flag (D6)']
+  dt_created_at timestamp [not null, note: 'Sin dt_updated_at ni borrado lógico: con PK compuesta una fila borrada impediría volver a seguir a esa persona']
+
+  Indexes {
+    (co_follower, co_followed) [pk]
+    co_followed
+    // [CHECK] co_follower <> co_followed — el auto-follow lo rechaza la base, no solo el servicio.
+    // Sin historial: una arista es un hecho append-only, no un estado (S15).
+  }
+}
+
+Enum checkin_verification {
+  SELF_REPORTED
+  PROXIMITY
+}
+
+Table core.tb_checkin {
+  co_checkin uuid [pk, note: 'UUID del check-in']
+  co_user uuid [not null, note: 'Quién declaró la presencia. FK real a seg.tb_user']
+  co_place uuid [not null, note: 'Lugar del check-in. FK a core.tb_place']
+  tx_verification checkin_verification [not null, default: 'SELF_REPORTED', note: 'Cómo se estableció la presencia (Q1). La coordenada se valida en el borde y se descarta: nunca se guarda coordenada ni distancia (D11)']
+  js_metadata jsonb [note: 'Metadatos del cliente. No debe contener coordenadas']
+  dt_created_at timestamp [not null, note: 'Instante del check-in: inmutable, es un hecho histórico']
+  dt_day date [not null, note: 'GENERATED ALWAYS AS (dt_created_at::date) STORED. Existe para indexar la regla de un check-in por persona, lugar y día']
+
+  Indexes {
+    // [PARTIAL UNIQUE] En SQL: UNIQUE (co_user, co_place, dt_day) — la regla vive en el esquema.
+    co_place
+    co_user
+    // Append-only: sin borrado lógico y sin historial (S15, S10).
+  }
+}
+
 Table core.tb_route {
   co_route uuid [pk]
   co_user uuid [not null, note: 'Usuario creador. FK real a seg.tb_user (entre esquemas)']

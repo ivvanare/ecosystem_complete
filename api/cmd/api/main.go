@@ -16,9 +16,11 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/ivvanare/ecosystem_complete/api/internal/audit"
+	"github.com/ivvanare/ecosystem_complete/api/internal/checkin"
 	"github.com/ivvanare/ecosystem_complete/api/internal/config"
 	"github.com/ivvanare/ecosystem_complete/api/internal/db"
 	"github.com/ivvanare/ecosystem_complete/api/internal/emailchange"
+	"github.com/ivvanare/ecosystem_complete/api/internal/follow"
 	"github.com/ivvanare/ecosystem_complete/api/internal/httpapi"
 	"github.com/ivvanare/ecosystem_complete/api/internal/identity"
 	"github.com/ivvanare/ecosystem_complete/api/internal/invitation"
@@ -155,6 +157,11 @@ func run() error {
 		signupRequester = signup.New(signup.NewPostgresStore(pool), publisher, logger)
 	}
 
+	// Social graph (P2): follow and check-in belong to the mobile consumer (D21); the
+	// admin panel has no counterpart for them.
+	followService := follow.NewService(follow.NewPostgresStore(pool), logger)
+	checkinService := checkin.NewService(checkin.NewPostgresStore(pool), logger)
+
 	// Discovery read path (p1-discovery.md): the store runs the spatial predicates on
 	// co_location so the GiST index serves them. Rating aggregates and the zone ranking
 	// come from the worker in a later slice; until then both readers report "nothing
@@ -187,6 +194,8 @@ func run() error {
 			EmailChange:        emailChangeService,
 			Social:             socialService,
 			Discovery:          discovery,
+			Follows:            followService,
+			Checkins:           checkinService,
 			Reviews:            reviewsService,
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,

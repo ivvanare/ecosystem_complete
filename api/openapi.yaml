@@ -1092,6 +1092,138 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /v1/follows:
+    post:
+      tags: [Social]
+      operationId: followUser
+      summary: Follow another account
+      description: |
+        Asymmetric: following someone says nothing about whether they follow you back.
+        Idempotent — following twice leaves the graph unchanged and still answers `204`.
+        Following yourself is rejected by the service and by a CHECK constraint.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [coUser]
+              properties:
+                coUser: { type: string, format: uuid }
+      responses:
+        "204": { description: Following, already or newly. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    get:
+      tags: [Social]
+      operationId: listFollows
+      summary: List the graph in one direction
+      description: |
+        `mutual` marks a friend: the opposite edge exists too. Computed per request and
+        never stored, because the graph changes daily.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: direction
+          in: query
+          schema: { type: string, enum: [following, followers], default: following }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page of accounts.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [direction, page, limit, total, data]
+                properties:
+                  direction: { type: string }
+                  page: { type: integer }
+                  limit: { type: integer }
+                  total: { type: integer }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/GraphMember" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/follows/{coUser}:
+    delete:
+      tags: [Social]
+      operationId: unfollowUser
+      summary: Remove a follow
+      description: Idempotent — removing an edge that does not exist answers `204` too.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coUser
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Not following, anymore or never. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/places/{coPlace}/checkins:
+    post:
+      tags: [Social]
+      operationId: checkIn
+      summary: Record presence at a place
+      description: |
+        The coordinate proves presence and is then discarded: only the verdict `PROXIMITY`
+        is stored, never the coordinate and never the distance (D11). A claim outside the
+        place radius is refused with `422 not_near_place` rather than silently downgraded,
+        and a second check-in on the same day answers `409 already_checked_in` — the
+        uniqueness is a database rule, not a service guess.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [near]
+              properties:
+                near:
+                  type: string
+                  description: '`lat,long`. Validated at the edge, used to decide proximity, never stored.'
+      responses:
+        "201":
+          description: Check-in recorded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Checkin" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Already checked in today.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: already_checked_in, message: You already checked in to this place today. }
+        "422":
+          description: Validation failure, or the coordinate is outside the place radius.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: not_near_place, message: You are not within the radius of this place. }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1188,6 +1320,25 @@ components:
                   - { field: password, code: too_short }
 
   schemas:
+    GraphMember:
+      type: object
+      additionalProperties: false
+      required: [coUser, name, mutual]
+      properties:
+        coUser: { type: string, format: uuid }
+        name: { type: string }
+        mutual:
+          type: boolean
+          description: The opposite edge exists too — the computed friend.
+    Checkin:
+      type: object
+      additionalProperties: false
+      required: [coCheckin, coPlace, verification, createdAt]
+      properties:
+        coCheckin: { type: string, format: uuid }
+        coPlace: { type: string, format: uuid }
+        verification: { type: string, enum: [SELF_REPORTED, PROXIMITY] }
+        createdAt: { type: string, format: date-time }
     Error:
       type: object
       required: [code, message]
