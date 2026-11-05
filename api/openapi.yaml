@@ -513,6 +513,17 @@ paths:
         than silently truncated; if the cap is hit anyway, `truncated: true` and
         cluster counts describe the sample, not the total. A cluster is a zone: it
         carries counts and neutral aggregates and no administrative name.
+
+        `q`, `dish`, `attributes`, `maxPrice` and `openAt` are valid in both modes
+        and compose with the locator and with each other. `q` and `dish` are two
+        different questions: the first searches the place's commercial name, the
+        second searches menu items and returns the places that carry a match —
+        both accent-insensitive with no stemming. `attributes` is conjunctive: a
+        place must carry every listed code. `maxPrice` is always USD; an item
+        priced in another currency never matches, which is documented behaviour.
+        `openAt` is answered from the place's schedule in the place's own
+        timezone, including schedules that close after midnight. A search with no
+        matches is `200` with an empty page, never `404`.
       parameters:
         - name: near
           in: query
@@ -542,6 +553,26 @@ paths:
           in: query
           description: Place category UUID filter, both modes.
           schema: { type: string, format: uuid }
+        - name: q
+          in: query
+          description: Commercial-name search, both modes. Accent-insensitive, no stemming. Rejected `422`/`q`/`too_short` under 2 characters, `too_long` over 80.
+          schema: { type: string, minLength: 2, maxLength: 80, example: terraza }
+        - name: dish
+          in: query
+          description: Menu-item search returning the places that carry a matching dish, both modes. Same bounds as `q`.
+          schema: { type: string, minLength: 2, maxLength: 80, example: arepa }
+        - name: attributes
+          in: query
+          description: Comma-separated attribute codes, conjunctive (a place must carry ALL of them). Unknown codes are rejected `422`/`attributes`/`unknown`.
+          schema: { type: string, example: "terraza,petfriendly" }
+        - name: maxPrice
+          in: query
+          description: USD ceiling. Matches places with at least one active USD-priced item on an active menu at or under the amount. Items in other currencies never match. Negative or non-numeric is `422`/`maxPrice`/`invalid`.
+          schema: { type: number, minimum: 0, example: 10 }
+        - name: openAt
+          in: query
+          description: ISO-8601 instant. Keeps places open at that instant in the place's own timezone, honouring schedules that close after midnight. Not an instant is `422`/`openAt`/`invalid`.
+          schema: { type: string, format: date-time, example: "2026-11-08T03:30:00Z" }
         - name: sort
           in: query
           description: List mode only.

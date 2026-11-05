@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"github.com/ivvanare/ecosystem_complete/api/internal/geo"
 	"github.com/ivvanare/ecosystem_complete/api/internal/places"
@@ -58,22 +60,112 @@ func pageAndLimit(r *http.Request) (int, int) {
 	return page, limit
 }
 
-// filters validates the three filters both modes share.
-func filters(r *http.Request) (country, region, category string, fields []fieldError) {
+// discoveryFilters are the filters both modes share, already validated against
+// the matrix of p1-discovery.md §3: the search and filter parameters of §12
+// are valid in list mode and in map mode alike (S21).
+type discoveryFilters struct {
+	country    string
+	region     string
+	category   string
+	q          string
+	dish       string
+	attributes []string
+	maxPrice   *float64
+	openAt     *time.Time
+}
+
+// filters validates the filters both modes share.
+func filters(r *http.Request) (discoveryFilters, []fieldError) {
+	var f discoveryFilters
+	var fields []fieldError
 	query := r.URL.Query()
-	country = strings.TrimSpace(query.Get("country"))
-	if country != "" && !countryPattern.MatchString(country) {
+
+	f.country = strings.TrimSpace(query.Get("country"))
+	if f.country != "" && !countryPattern.MatchString(f.country) {
 		fields = append(fields, fieldError{Field: "country", Code: "invalid"})
 	}
-	region = strings.TrimSpace(query.Get("region"))
-	if region != "" && !regionPattern.MatchString(region) {
+	f.region = strings.TrimSpace(query.Get("region"))
+	if f.region != "" && !regionPattern.MatchString(f.region) {
 		fields = append(fields, fieldError{Field: "region", Code: "invalid"})
 	}
-	category = strings.TrimSpace(query.Get("category"))
-	if category != "" && !uuidPattern.MatchString(category) {
+	f.category = strings.TrimSpace(query.Get("category"))
+	if f.category != "" && !uuidPattern.MatchString(f.category) {
 		fields = append(fields, fieldError{Field: "category", Code: "invalid"})
 	}
-	return country, region, category, fields
+
+	f.q = searchTerm(query.Get("q"), "q", &fields)
+	f.dish = searchTerm(query.Get("dish"), "dish", &fields)
+	f.attributes = attributeFilter(query.Get("attributes"), &fields)
+
+	// maxPrice is a USD amount (S22): non-numeric or negative is invalid. NaN
+	// and infinities parse as numbers, so they are rejected explicitly.
+	if raw := strings.TrimSpace(query.Get("maxPrice")); raw != "" {
+		price, err := strconv.ParseFloat(raw, 64)
+		if err != nil || math.IsNaN(price) || math.IsInf(price, 0) || price < 0 {
+			fields = append(fields, fieldError{Field: "maxPrice", Code: "invalid"})
+		} else {
+			f.maxPrice = &price
+		}
+	}
+
+	// openAt is an ISO-8601 instant (S19); RFC 3339 is that profile.
+	if raw := strings.TrimSpace(query.Get("openAt")); raw != "" {
+		instant, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			fields = append(fields, fieldError{Field: "openAt", Code: "invalid"})
+		} else {
+			f.openAt = &instant
+		}
+	}
+
+	return f, fields
+}
+
+// searchTerm validates the 2..80 character bound both text questions share
+// (S21), counted in characters so accented names are not measured in bytes.
+func searchTerm(raw, field string, fields *[]fieldError) string {
+	term := strings.TrimSpace(raw)
+	if term == "" {
+		return ""
+	}
+	switch n := utf8.RuneCountInString(term); {
+	case n < 2:
+		*fields = append(*fields, fieldError{Field: field, Code: "too_short"})
+	case n > 80:
+		*fields = append(*fields, fieldError{Field: field, Code: "too_long"})
+	}
+	return term
+}
+
+// attributeFilter parses the comma-separated conjunctive filter (S18): empty
+// entries are ignored, duplicates collapse (the SQL counts the intersection
+// against the requested cardinality, so a repeated code must count once), and
+// a code the governed vocabulary does not know is rejected as unknown.
+func attributeFilter(raw string, fields *[]fieldError) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var codes []string
+	unknown := false
+	for _, part := range strings.Split(raw, ",") {
+		code := strings.TrimSpace(part)
+		if code == "" {
+			continue
+		}
+		if !places.KnownAttribute(code) {
+			unknown = true
+			continue
+		}
+		if !seen[code] {
+			seen[code] = true
+			codes = append(codes, code)
+		}
+	}
+	if unknown {
+		*fields = append(*fields, fieldError{Field: "attributes", Code: "unknown"})
+	}
+	return codes
 }
 
 // places serves GET /v1/places: one route, one locator, two response shapes.
@@ -108,7 +200,7 @@ func (h *placesHandlers) listMode(w http.ResponseWriter, r *http.Request, nearRa
 	if issue != nil {
 		fields = append(fields, fieldError{Field: issue.Field, Code: issue.Code})
 	}
-	country, region, category, filterFields := filters(r)
+	f, filterFields := filters(r)
 	fields = append(fields, filterFields...)
 
 	sort := strings.TrimSpace(r.URL.Query().Get("sort"))
@@ -126,14 +218,19 @@ func (h *placesHandlers) listMode(w http.ResponseWriter, r *http.Request, nearRa
 
 	page, limit := pageAndLimit(r)
 	result, err := h.discovery.List(r.Context(), places.ListQuery{
-		Near:     near,
-		Radius:   radius,
-		Country:  country,
-		Region:   region,
-		Category: category,
-		Sort:     sort,
-		Page:     page,
-		Limit:    limit,
+		Near:       near,
+		Radius:     radius,
+		Country:    f.country,
+		Region:     f.region,
+		Category:   f.category,
+		Q:          f.q,
+		Dish:       f.dish,
+		Attributes: f.attributes,
+		MaxPrice:   f.maxPrice,
+		OpenAt:     f.openAt,
+		Sort:       sort,
+		Page:       page,
+		Limit:      limit,
 	})
 	if err != nil {
 		h.logger.Error("place discovery failed", slog.String("error", err.Error()))
@@ -165,7 +262,7 @@ func (h *placesHandlers) mapMode(w http.ResponseWriter, r *http.Request) {
 		zoom = parsed
 	}
 
-	country, region, category, filterFields := filters(r)
+	f, filterFields := filters(r)
 	fields = append(fields, filterFields...)
 
 	if len(fields) > 0 {
@@ -177,9 +274,14 @@ func (h *placesHandlers) mapMode(w http.ResponseWriter, r *http.Request) {
 		Box:        box,
 		Zoom:       zoom,
 		Resolution: geo.ResolutionForZoom(zoom),
-		Country:    country,
-		Region:     region,
-		Category:   category,
+		Country:    f.country,
+		Region:     f.region,
+		Category:   f.category,
+		Q:          f.q,
+		Dish:       f.dish,
+		Attributes: f.attributes,
+		MaxPrice:   f.maxPrice,
+		OpenAt:     f.openAt,
 	})
 	if err != nil {
 		h.logger.Error("place map failed", slog.String("error", err.Error()))

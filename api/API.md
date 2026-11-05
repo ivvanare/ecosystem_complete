@@ -434,10 +434,10 @@ vocabulario de `code` es cerrado:
 |---|---|
 | `required` | falta un campo obligatorio |
 | `invalid` | el formato no sirve (email, código de 6 dígitos, fecha, provider) |
-| `too_short` | no llega al mínimo (contraseña: 12 caracteres) |
-| `too_long` | excede el máximo |
+| `too_short` | no llega al mínimo (contraseña: 12 caracteres; `q`/`dish`: 2) |
+| `too_long` | excede el máximo (`q`/`dish`: 80 caracteres; `radius`/`bbox`: su tope) |
 | `unchanged` | el email nuevo es igual al actual |
-| `unknown` | el rol pedido no existe o está inactivo |
+| `unknown` | el rol o el atributo pedido no existe o está inactivo |
 | `not_configured` | el proveedor social no está habilitado en este servidor |
 
 ---
@@ -459,7 +459,8 @@ El cruce del antimeridiano está fuera de alcance y se rechaza (`bbox` inválido
 
 Filtros en ambos modos: `country` (`^[A-Z]{2}$`), `region` (`^[A-Z]{2}-[A-Z0-9]{1,3}$`) y
 `category` (uuid). Un valor inválido → `422` con su `field`. Los parámetros ajenos al modo
-(`page` en modo mapa, `zoom` en modo lista) se ignoran.
+(`page` en modo mapa, `zoom` en modo lista) se ignoran. Búsqueda y filtros de la ficha del
+lugar (`q`, `dish`, `attributes`, `maxPrice`, `openAt`): ver §11.3.
 
 **La coordenada del pedido se evalúa y se descarta**: no se persiste, no se loguea y nunca
 es material de una clave de caché.
@@ -546,6 +547,36 @@ La consulta del viewport está topeada a **5000 filas**. Un bbox que supera el t
 too_long`), pidiendo acercar — truncar en silencio haría mentirosos los conteos. Si el
 tope se alcanza igualmente, `truncated: true` y los conteos describen la muestra, no el
 total.
+
+### 11.3 Búsqueda y filtros
+
+Cinco parámetros más, válidos en los dos modos y combinables entre sí y con el
+localizador:
+
+- **`q` — ¿cómo se llama?** Busca en el nombre comercial del lugar, sin importar
+  mayúsculas ni acentos: `terraza`, `Térraza` y `TERRAZA` son la misma consulta. Sin
+  stemming: `terrazas` **no** matchea `terraza`. Entre 2 y 80 caracteres
+  (`{field: "q", code: "too_short"}` / `too_long`).
+- **`dish` — ¿quién sirve este plato?** Busca en nombres y descripciones de ítems de
+  menú (activos, de menús activos) y devuelve los **lugares** que lo tienen. Misma cota
+  de 2 a 80 caracteres. Son dos preguntas distintas con índices distintos: una sola caja
+  haría que «arepa» devuelva un lugar llamado Arepa's y pierda el restaurante que las
+  sirve.
+- **`attributes` — conjuntivo.** `attributes=terraza,petfriendly` exige **ambos**. Un
+  código que no está en el catálogo gobernado → `422` `{field: "attributes", code:
+  "unknown"}`. Vocabulario vigente: `terraza`, `petfriendly`, `frente_playa`,
+  `aire_libre`, `musica_en_vivo`.
+- **`maxPrice` — siempre USD.** Matchea lugares con al menos un ítem activo, de un menú
+  activo, cuya moneda sea USD y cuyo precio no supere el monto. Un ítem en otra moneda
+  **no** matchea: es comportamiento documentado, no un defecto, y no existe parámetro
+  `currency`. Negativo o no numérico → `{field: "maxPrice", code: "invalid"}`.
+- **`openAt` — pregunta de horario, no de atributo.** Instantáneo ISO-8601
+  (`2026-11-08T03:30:00Z`); se evalúa en la zona horaria **del lugar** e incluye los
+  horarios que cruzan la medianoche: un local que abre 20:00 y cierra 02:00 figura
+  abierto a las 23:00. Si no es un instante válido → `{field: "openAt", code:
+  "invalid"}`.
+
+Una búsqueda sin resultados es `200` con la página vacía, nunca `404`.
 
 ---
 

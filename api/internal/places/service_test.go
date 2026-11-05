@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/ivvanare/ecosystem_complete/api/internal/geo"
 )
@@ -243,5 +244,65 @@ func TestMapPropagatesTruncationAndFailure(t *testing.T) {
 	broken := newTestService(&fakeStore{mapErr: errors.New("boom")}, NoStats{}, NoRanking{})
 	if _, err := broken.Map(context.Background(), MapQuery{Zoom: 12, Resolution: 7}); err == nil {
 		t.Fatal("Map returned nil error, want the store failure wrapped")
+	}
+}
+
+// The validated search filters travel from the service contract down to the
+// store untouched: the store, not the service, owns how they become SQL.
+func TestListPassesSearchFiltersToTheStore(t *testing.T) {
+	store := &fakeStore{listRows: []ListRow{{ID: "p1", Title: "Alfa"}}, listTotal: 1}
+	service := newTestService(store, &fakeStats{}, NoRanking{})
+
+	maxPrice := 10.0
+	openAt := time.Date(2026, 11, 8, 3, 30, 0, 0, time.UTC)
+	q := nearQuery
+	q.Q = "terraza"
+	q.Dish = "pepiada"
+	q.Attributes = []string{"terraza", "petfriendly"}
+	q.MaxPrice = &maxPrice
+	q.OpenAt = &openAt
+
+	if _, err := service.List(context.Background(), q); err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	got := store.lastList
+	if got.q != "terraza" || got.dish != "pepiada" {
+		t.Errorf("q/dish = %q/%q", got.q, got.dish)
+	}
+	if len(got.attributes) != 2 || got.attributes[0] != "terraza" || got.attributes[1] != "petfriendly" {
+		t.Errorf("attributes = %v", got.attributes)
+	}
+	if got.maxPrice == nil || *got.maxPrice != 10.0 {
+		t.Errorf("maxPrice = %v", got.maxPrice)
+	}
+	if got.openAt == nil || !got.openAt.Equal(openAt) {
+		t.Errorf("openAt = %v", got.openAt)
+	}
+}
+
+func TestMapPassesSearchFiltersToTheStore(t *testing.T) {
+	store := &fakeStore{}
+	service := newTestService(store, &fakeStats{}, NoRanking{})
+
+	maxPrice := 10.0
+	openAt := time.Date(2026, 11, 8, 3, 30, 0, 0, time.UTC)
+	_, err := service.Map(context.Background(), MapQuery{
+		Box:        geo.BBox{MinLng: -66.99, MinLat: 10.41, MaxLng: -66.82, MaxLat: 10.54},
+		Zoom:       12,
+		Q:          "terraza",
+		Dish:       "pepiada",
+		Attributes: []string{"terraza"},
+		MaxPrice:   &maxPrice,
+		OpenAt:     &openAt,
+	})
+	if err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+	got := store.lastMap
+	if got.q != "terraza" || got.dish != "pepiada" || len(got.attributes) != 1 || got.attributes[0] != "terraza" {
+		t.Errorf("filters = %+v", got)
+	}
+	if got.maxPrice == nil || *got.maxPrice != 10.0 || got.openAt == nil || !got.openAt.Equal(openAt) {
+		t.Errorf("maxPrice/openAt = %v/%v", got.maxPrice, got.openAt)
 	}
 }

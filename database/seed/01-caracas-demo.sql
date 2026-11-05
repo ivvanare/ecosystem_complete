@@ -9,13 +9,17 @@
 --
 -- Why it exists: the discovery read path answers over core.tb_place, and an empty
 -- table proves nothing about a map. These rows give the radius query, the viewport
--- query, the H3 clustering and (later) the open-at filter something to work on.
+-- query, the H3 clustering, the attribute/price/open-at filters and the name/dish
+-- search something to work on. The attribute links and menus need ledger 18
+-- (tb_place_attribute) applied first.
 --
 -- Nature of the data, stated rather than implied: the coordinates are approximate
 -- positions inside the named zones, and the place names are illustrative development
 -- data — this is not a verified directory and no rating, price or availability claim
 -- is made about any business. Public landmarks keep their real names because they are
--- public geography.
+-- public geography. The attributes are illustrative too: they exist so every filter
+-- has rows to match and rows to exclude, and frente_playa on a Caracas demo is
+-- vocabulary exercise, not a claim about the city.
 --
 -- Idempotent: fixed UUIDs plus ON CONFLICT DO NOTHING, so re-running is a no-op.
 -- ============================================================================
@@ -84,15 +88,80 @@ FROM (VALUES
 ) AS v(co_place, dow, opens, closes)
 ON CONFLICT (co_place, nu_day_of_week, dt_open_time) DO NOTHING;
 
+-- ---------------------------------------------------------------------------
+-- Attributes (S23): the three the seed must demonstrate, spread so that the
+-- conjunctive filter has intersections to find — terraza and petfriendly share
+-- place ...0001 on purpose — plus the rest of the vocabulary where it reads
+-- naturally. Links are resolved by tx_code, the governed key.
+-- ---------------------------------------------------------------------------
+INSERT INTO core.tb_place_attribute_link (co_place, co_attribute, dt_created_at, dt_updated_at)
+SELECT v.co_place::uuid, a.co_attribute, now(), now()
+FROM (VALUES
+    -- terraza: areperas con mesa afuera
+    ('a0000001-0000-4000-8000-000000000001', 'terraza'),
+    ('a0000001-0000-4000-8000-000000000002', 'terraza'),
+    ('a0000001-0000-4000-8000-000000000014', 'terraza'),
+    -- petfriendly: parques y una arepera
+    ('a0000001-0000-4000-8000-000000000001', 'petfriendly'),
+    ('a0000001-0000-4000-8000-00000000000b', 'petfriendly'),
+    ('a0000001-0000-4000-8000-00000000000d', 'petfriendly'),
+    ('a0000001-0000-4000-8000-00000000000e', 'petfriendly'),
+    -- frente_playa: vocabulary exercise (see the header)
+    ('a0000001-0000-4000-8000-000000000007', 'frente_playa'),
+    ('a0000001-0000-4000-8000-000000000013', 'frente_playa'),
+    -- aire_libre: los parques
+    ('a0000001-0000-4000-8000-000000000007', 'aire_libre'),
+    ('a0000001-0000-4000-8000-000000000009', 'aire_libre'),
+    ('a0000001-0000-4000-8000-00000000000b', 'aire_libre'),
+    ('a0000001-0000-4000-8000-00000000000d', 'aire_libre'),
+    ('a0000001-0000-4000-8000-00000000000e', 'aire_libre'),
+    ('a0000001-0000-4000-8000-000000000012', 'aire_libre'),
+    -- musica_en_vivo: un hotel y una arepera
+    ('a0000001-0000-4000-8000-000000000004', 'musica_en_vivo'),
+    ('a0000001-0000-4000-8000-000000000005', 'musica_en_vivo')
+) AS v(co_place, attr_code)
+JOIN core.tb_place_attribute a ON a.tx_code = v.attr_code AND a.dt_deleted_at IS NULL
+ON CONFLICT (co_place, co_attribute) DO NOTHING;
+
+-- ---------------------------------------------------------------------------
+-- Menus and items (S23): at least two USD-priced items, one under 10 and one
+-- over, so maxPrice has both sides of the line. One VES item ships on purpose:
+-- maxPrice is USD-only and that item must never match it (documented behaviour,
+-- spec.md S22). The dish search reads tx_name and tx_description of these rows.
+-- ---------------------------------------------------------------------------
+INSERT INTO core.tb_menu (co_menu, co_place, tx_name, tx_description, tx_status, dt_created_at, dt_updated_at)
+VALUES
+    ('a0000002-0000-4000-8000-000000000001', 'a0000001-0000-4000-8000-000000000001', 'Todo el día', NULL, 'ACTIVE', now(), now()),
+    ('a0000002-0000-4000-8000-000000000002', 'a0000001-0000-4000-8000-000000000002', 'Carta',       NULL, 'ACTIVE', now(), now())
+ON CONFLICT (co_menu) DO NOTHING;
+
+INSERT INTO core.tb_menu_item
+    (co_menu_item, co_menu, tx_name, tx_description, nu_price, co_currency, tx_status, dt_created_at, dt_updated_at)
+SELECT v.co_menu_item::uuid, v.co_menu::uuid, v.tx_name, v.tx_description,
+       v.nu_price::numeric(10,2), c.co_currency, 'ACTIVE', now(), now()
+FROM (VALUES
+    ('a0000003-0000-4000-8000-000000000001', 'a0000002-0000-4000-8000-000000000001', 'Arepa Reina Pepiada', 'Aguacate y pollo',        '4.50',  'USD'),
+    ('a0000003-0000-4000-8000-000000000002', 'a0000002-0000-4000-8000-000000000001', 'Pabellón Criollo',   'El plato nacional',        '12.00', 'USD'),
+    ('a0000003-0000-4000-8000-000000000003', 'a0000002-0000-4000-8000-000000000002', 'Arepa Dominó',       'Caraotas negras y queso',  '3.80',  'USD'),
+    ('a0000003-0000-4000-8000-000000000004', 'a0000002-0000-4000-8000-000000000002', 'Asado Negro',        'Con arroz y tajadas',      '14.00', 'USD'),
+    ('a0000003-0000-4000-8000-000000000005', 'a0000002-0000-4000-8000-000000000002', 'Refresco de Papelón', 'Frío, con limón',         '2.00',  'VES')
+) AS v(co_menu_item, co_menu, tx_name, tx_description, nu_price, currency_code)
+JOIN core.tb_currency c ON c.tx_code = v.currency_code AND c.dt_deleted_at IS NULL
+ON CONFLICT (co_menu_item) DO NOTHING;
+
 COMMIT;
 
 -- ---------------------------------------------------------------------------
--- Sanity check: run it and expect 20 places, 15 schedules and zero rows without a
--- derived location.
+-- Sanity check: run it and expect 20 places, 15 schedules, 17 attribute links,
+-- 2 menus, 5 items and zero rows without a derived location.
 -- ---------------------------------------------------------------------------
 SELECT
     (SELECT count(*) FROM core.tb_place WHERE co_place::text LIKE 'a0000001-%')            AS demo_places,
     (SELECT count(*) FROM core.tb_place WHERE co_place::text LIKE 'a0000001-%'
         AND co_location IS NULL)                                                          AS missing_location,
     (SELECT count(*) FROM core.tb_place_schedule
-        WHERE co_place::text LIKE 'a0000001-%')                                            AS demo_schedules;
+        WHERE co_place::text LIKE 'a0000001-%')                                            AS demo_schedules,
+    (SELECT count(*) FROM core.tb_place_attribute_link
+        WHERE co_place::text LIKE 'a0000001-%')                                            AS demo_attribute_links,
+    (SELECT count(*) FROM core.tb_menu WHERE co_menu::text LIKE 'a0000002-%')              AS demo_menus,
+    (SELECT count(*) FROM core.tb_menu_item WHERE co_menu_item::text LIKE 'a0000003-%')    AS demo_menu_items;

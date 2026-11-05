@@ -659,13 +659,16 @@ END $$;
 -- ---- S20: locale catalogs exist, seeded, and the storage convention is UTC ---
 DO $$
 BEGIN
-    -- Both catalogs exist with exactly their seeds, and nothing else.
-    IF (SELECT count(*) FROM core.tb_place_category WHERE dt_deleted_at IS NULL) <> 3
+    -- Both catalogs exist with exactly their seeds, and nothing else. The
+    -- categories are six: the original three plus rumba/restaurante/bar, which
+    -- 18-place-attributes.sql seeds because 06/10 are applied (S15).
+    IF (SELECT count(*) FROM core.tb_place_category WHERE dt_deleted_at IS NULL) <> 6
        OR (SELECT count(*) FROM core.tb_place_category
             WHERE dt_deleted_at IS NULL
               AND (tx_code, tx_name) IN (('hotel', 'Hotel'), ('arepera', 'Arepera'),
-                                         ('parque', 'Parque'))) <> 3 THEN
-        RAISE EXCEPTION 'S20 FAIL: expected exactly the 3 seeded place categories';
+                                         ('parque', 'Parque'), ('rumba', 'Rumba'),
+                                         ('restaurante', 'Restaurante'), ('bar', 'Bar'))) <> 6 THEN
+        RAISE EXCEPTION 'S20 FAIL: expected exactly the 6 seeded place categories';
     END IF;
     IF (SELECT count(*) FROM core.tb_currency WHERE dt_deleted_at IS NULL) <> 3
        OR (SELECT count(*) FROM core.tb_currency

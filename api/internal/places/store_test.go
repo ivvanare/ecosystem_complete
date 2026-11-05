@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -187,8 +188,8 @@ func TestListCountsThenSelectsWithTheSamePredicate(t *testing.T) {
 	if !ok || point != "SRID=4326;POINT(-66.9036 10.4806)" {
 		t.Errorf("point arg = %v, want EWKT SRID=4326;POINT(-66.9036 10.4806)", count.args[0])
 	}
-	if len(count.args) != 5 {
-		t.Errorf("count args = %d, want 5 (point, country, region, category, radius)", len(count.args))
+	if len(count.args) != 10 {
+		t.Errorf("count args = %d, want 10 (point, country, region, category, radius, q, dish, attributes, maxPrice, openAt)", len(count.args))
 	}
 
 	// KNN ordering: the index walks places in true distance order, so no sort of the
@@ -199,13 +200,13 @@ func TestListCountsThenSelectsWithTheSamePredicate(t *testing.T) {
 	if !strings.Contains(sel.sql, "ST_Distance(p.co_location, $1::geography)") {
 		t.Errorf("select does not compute the distance:\n%s", sel.sql)
 	}
-	if !strings.Contains(sel.sql, "LIMIT $6 OFFSET $7") {
+	if !strings.Contains(sel.sql, "LIMIT $11 OFFSET $12") {
 		t.Errorf("select is not paginated:\n%s", sel.sql)
 	}
-	if got := sel.args[5]; got != 20 {
+	if got := sel.args[10]; got != 20 {
 		t.Errorf("limit arg = %v, want 20", got)
 	}
-	if got := sel.args[6]; got != 20 {
+	if got := sel.args[11]; got != 20 {
 		t.Errorf("offset arg = %v, want 20 (page 2 of 20)", got)
 	}
 
@@ -277,7 +278,7 @@ func TestMapPointsUsesTheEnvelopeOperatorAndTheCapProbe(t *testing.T) {
 	if !strings.Contains(q0.sql, "p.co_location && ST_MakeEnvelope($1, $2, $3, $4, 4326)::geography") {
 		t.Errorf("viewport predicate is not the envelope operator on co_location:\n%s", q0.sql)
 	}
-	if !strings.Contains(q0.sql, "LIMIT $8") {
+	if !strings.Contains(q0.sql, "LIMIT $13") {
 		t.Errorf("viewport query is not capped:\n%s", q0.sql)
 	}
 	// Longitude first, like GeoJSON (p1-discovery.md §1).
@@ -287,7 +288,7 @@ func TestMapPointsUsesTheEnvelopeOperatorAndTheCapProbe(t *testing.T) {
 			t.Errorf("arg %d = %v, want %v", i, q0.args[i], w)
 		}
 	}
-	if got := q0.args[7]; got != MapRowCap+1 {
+	if got := q0.args[12]; got != MapRowCap+1 {
 		t.Errorf("cap arg = %v, want %d (cap + 1 probe)", got, MapRowCap+1)
 	}
 }
@@ -324,5 +325,191 @@ func TestStoreWrapsFailures(t *testing.T) {
 	countBroken := &PostgresStore{pool: &fakeQueryer{rowErr: errors.New("count failed")}}
 	if _, _, err := countBroken.List(context.Background(), listQuery()); err == nil {
 		t.Error("List returned nil error on count failure, want it wrapped")
+	}
+}
+
+// searchFilterQuery returns a list query with every commit-3 filter set.
+func searchFilterQuery() listStoreQuery {
+	q := listQuery()
+	q.q = "terraza"
+	q.dish = "pepiada"
+	q.attributes = []string{"terraza", "petfriendly"}
+	maxPrice := 10.0
+	q.maxPrice = &maxPrice
+	openAt := time.Date(2026, 11, 8, 3, 30, 0, 0, time.UTC)
+	q.openAt = &openAt
+	return q
+}
+
+// The commit-3 filters (p1-discovery.md §12) compose with the spatial predicate
+// in list mode: the count and the page carry the same WHERE, every predicate is
+// optional through a NULL bind, and the GiST-served ST_DWithin is untouched.
+func TestListComposesSearchFilters(t *testing.T) {
+	fake := &fakeQueryer{listRows: listFixture, count: 3}
+	store := &PostgresStore{pool: fake}
+
+	if _, _, err := store.List(context.Background(), searchFilterQuery()); err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(fake.recorded) != 2 {
+		t.Fatalf("recorded %d queries, want count + select", len(fake.recorded))
+	}
+
+	for i, q := range fake.recorded {
+		// The spatial predicate stays on co_location: the GiST index keeps
+		// serving the radius read (S4/S16 of the change, repo rule).
+		if !strings.Contains(q.sql, "ST_DWithin(p.co_location, $1::geography, $5)") {
+			t.Errorf("query %d lost the ST_DWithin on co_location:\n%s", i, q.sql)
+		}
+		// q: the stored vector and the query vector come from the same
+		// immutable-wrapper expression, with 'simple' so names never stem
+		// into each other (S16).
+		if !strings.Contains(q.sql, "p.search_name @@ plainto_tsquery('simple', public.unaccent_immutable($6::text))") {
+			t.Errorf("query %d misses the name search through the immutable wrapper:\n%s", i, q.sql)
+		}
+		if strings.Contains(q.sql, "'spanish'") {
+			t.Errorf("query %d uses a stemming configuration:\n%s", i, q.sql)
+		}
+		// dish: an EXISTS over menu -> item that returns PLACES, respecting
+		// soft delete and ACTIVE on both levels (S17).
+		for _, want := range []string{
+			"FROM core.tb_menu m",
+			"JOIN core.tb_menu_item mi ON mi.co_menu = m.co_menu",
+			"m.dt_deleted_at IS NULL AND m.tx_status = 'ACTIVE'",
+			"mi.dt_deleted_at IS NULL AND mi.tx_status = 'ACTIVE'",
+			"mi.search_text @@ plainto_tsquery('simple', public.unaccent_immutable($7::text))",
+		} {
+			if !strings.Contains(q.sql, want) {
+				t.Errorf("query %d misses %q (dish):\n%s", i, want, q.sql)
+			}
+		}
+		// attributes: conjunctive by counting the intersection against the
+		// requested cardinality — never a JOIN ... IN, which degrades to
+		// "any of them" (S18).
+		for _, want := range []string{
+			"SELECT count(*) FROM core.tb_place_attribute_link l",
+			"a.tx_code = ANY($8::text[])",
+			"= cardinality($8::text[])",
+			"a.dt_deleted_at IS NULL",
+		} {
+			if !strings.Contains(q.sql, want) {
+				t.Errorf("query %d misses %q (conjunctive attributes):\n%s", i, want, q.sql)
+			}
+		}
+		// maxPrice: USD only, at least one active item under the amount on an
+		// active menu (S22). No currency parameter exists.
+		for _, want := range []string{
+			"JOIN core.tb_currency c ON c.co_currency = mi.co_currency",
+			"c.tx_code = 'USD'",
+			"mi.nu_price <= $9::numeric",
+		} {
+			if !strings.Contains(q.sql, want) {
+				t.Errorf("query %d misses %q (maxPrice):\n%s", i, want, q.sql)
+			}
+		}
+		// openAt: evaluated in the place's own timezone, with the normal AND
+		// the overnight branch — without the second, a place open 20:00-02:00
+		// reports closed at 23:00 (S19).
+		for _, want := range []string{
+			"FROM core.tb_place_schedule sc",
+			"EXTRACT(ISODOW FROM ($10::timestamptz AT TIME ZONE p.tx_timezone))",
+			"sc.dt_close_time > sc.dt_open_time",
+			"BETWEEN sc.dt_open_time AND sc.dt_close_time",
+			"sc.dt_close_time <= sc.dt_open_time",
+		} {
+			if !strings.Contains(q.sql, want) {
+				t.Errorf("query %d misses %q (openAt):\n%s", i, want, q.sql)
+			}
+		}
+	}
+
+	// Argument order: the existing five, then the new five.
+	args := fake.recorded[0].args
+	if args[5] != "terraza" || args[6] != "pepiada" {
+		t.Errorf("q/dish args = %v/%v", args[5], args[6])
+	}
+	codes, ok := args[7].([]string)
+	if !ok || len(codes) != 2 || codes[0] != "terraza" || codes[1] != "petfriendly" {
+		t.Errorf("attributes arg = %v, want [terraza petfriendly]", args[7])
+	}
+	if args[8] != 10.0 {
+		t.Errorf("maxPrice arg = %v, want 10", args[8])
+	}
+	wantOpen := time.Date(2026, 11, 8, 3, 30, 0, 0, time.UTC)
+	instant, ok := args[9].(time.Time)
+	if !ok || !instant.Equal(wantOpen) {
+		t.Errorf("openAt arg = %v, want %v", args[9], wantOpen)
+	}
+}
+
+// Without the new filters the predicates stay but bind NULL, so the WHERE is
+// exactly the old behaviour (the optional-filter shape of p1-discovery.md §2).
+func TestListWithoutSearchFiltersBindsNulls(t *testing.T) {
+	fake := &fakeQueryer{listRows: listFixture, count: 1}
+	store := &PostgresStore{pool: fake}
+
+	if _, _, err := store.List(context.Background(), listQuery()); err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	args := fake.recorded[0].args
+	for i, name := range []string{"q", "dish", "attributes", "maxPrice", "openAt"} {
+		if args[5+i] != nil {
+			t.Errorf("%s arg = %v, want nil (no filter)", name, args[5+i])
+		}
+	}
+}
+
+// The same filters compose with the viewport predicate in map mode (S21).
+func TestMapPointsComposesSearchFilters(t *testing.T) {
+	fake := &fakeQueryer{mapRows: [][]any{{"p1", 10.4806, -66.9036}}}
+	store := &PostgresStore{pool: fake}
+
+	openAt := time.Date(2026, 11, 8, 3, 30, 0, 0, time.UTC)
+	maxPrice := 10.0
+	q := mapStoreQuery{
+		box:        geo.BBox{MinLng: -66.99, MinLat: 10.41, MaxLng: -66.82, MaxLat: 10.54},
+		q:          "terraza",
+		dish:       "pepiada",
+		attributes: []string{"terraza"},
+		maxPrice:   &maxPrice,
+		openAt:     &openAt,
+	}
+	if _, _, err := store.MapPoints(context.Background(), q); err != nil {
+		t.Fatalf("MapPoints: %v", err)
+	}
+
+	if len(fake.recorded) != 1 {
+		t.Fatalf("recorded %d queries, want 1", len(fake.recorded))
+	}
+	q0 := fake.recorded[0]
+	if !strings.Contains(q0.sql, "p.co_location && ST_MakeEnvelope($1, $2, $3, $4, 4326)::geography") {
+		t.Errorf("viewport predicate is not the envelope operator on co_location:\n%s", q0.sql)
+	}
+	for _, want := range []string{
+		"p.search_name @@ plainto_tsquery('simple', public.unaccent_immutable($8::text))",
+		"mi.search_text @@ plainto_tsquery('simple', public.unaccent_immutable($9::text))",
+		"a.tx_code = ANY($10::text[])",
+		"= cardinality($10::text[])",
+		"c.tx_code = 'USD'",
+		"mi.nu_price <= $11::numeric",
+		"EXTRACT(ISODOW FROM ($12::timestamptz AT TIME ZONE p.tx_timezone))",
+		"sc.dt_close_time <= sc.dt_open_time",
+		"LIMIT $13",
+	} {
+		if !strings.Contains(q0.sql, want) {
+			t.Errorf("viewport query misses %q:\n%s", want, q0.sql)
+		}
+	}
+	if q0.args[7] != "terraza" || q0.args[8] != "pepiada" {
+		t.Errorf("q/dish args = %v/%v", q0.args[7], q0.args[8])
+	}
+	if q0.args[10] != 10.0 {
+		t.Errorf("maxPrice arg = %v, want 10", q0.args[10])
+	}
+	if instant, ok := q0.args[11].(time.Time); !ok || !instant.Equal(openAt) {
+		t.Errorf("openAt arg = %v, want %v", q0.args[11], openAt)
+	}
+	if got := q0.args[12]; got != MapRowCap+1 {
+		t.Errorf("cap arg = %v, want %d", got, MapRowCap+1)
 	}
 }

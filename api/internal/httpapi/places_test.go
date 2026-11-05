@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ivvanare/ecosystem_complete/api/internal/geo"
 	"github.com/ivvanare/ecosystem_complete/api/internal/places"
@@ -96,6 +97,19 @@ func TestPlacesValidationMatrix(t *testing.T) {
 		{"region not ISO 3166-2", "?near=10,-66&region=ve-a", "region", "invalid"},
 		{"category not a uuid", "?near=10,-66&category=not-a-uuid", "category", "invalid"},
 		{"sort outside the enum", "?near=10,-66&sort=popular", "sort", "invalid"},
+		// Commit 3 (p1-discovery.md §3): the search and filter parameters, same
+		// closed vocabulary, validated before any database call (S21).
+		{"q too short", "?near=10,-66&q=a", "q", "too_short"},
+		{"q too long", "?near=10,-66&q=" + strings.Repeat("a", 81), "q", "too_long"},
+		{"dish too short", "?near=10,-66&dish=x", "dish", "too_short"},
+		{"dish too long", "?near=10,-66&dish=" + strings.Repeat("a", 81), "dish", "too_long"},
+		{"maxPrice not numeric", "?near=10,-66&maxPrice=abc", "maxPrice", "invalid"},
+		{"maxPrice negative", "?near=10,-66&maxPrice=-1", "maxPrice", "invalid"},
+		{"openAt not an instant", "?near=10,-66&openAt=not-a-date", "openAt", "invalid"},
+		{"attributes unknown", "?near=10,-66&attributes=terraza,brcoli", "attributes", "unknown"},
+		{"q too short in map mode", "?bbox=-67,10.4,-66.8,10.75&zoom=12&q=a", "q", "too_short"},
+		{"attributes unknown in map mode", "?bbox=-67,10.4,-66.8,10.75&zoom=12&attributes=brcoli", "attributes", "unknown"},
+		{"maxPrice invalid in map mode", "?bbox=-67,10.4,-66.8,10.75&zoom=12&maxPrice=-5", "maxPrice", "invalid"},
 	}
 
 	for _, tc := range cases {
@@ -306,6 +320,52 @@ func TestPlacesListFiltersAndPaging(t *testing.T) {
 	do(t, newPlacesHandler(bounded), http.MethodGet, "/v1/places?near=10,-66&page=0&limit=500")
 	if bounded.lastList.Page != 1 || bounded.lastList.Limit != 100 {
 		t.Errorf("page/limit = %d/%d, want 1/100", bounded.lastList.Page, bounded.lastList.Limit)
+	}
+}
+
+// The commit-3 filters map onto the list query: q and dish are separate
+// questions (S17), attributes collapse duplicates and empty entries (the SQL
+// counts the intersection against the cardinality, so a repeated code must
+// count once), maxPrice is a number and openAt an instant.
+func TestPlacesListMapsSearchFilters(t *testing.T) {
+	discovery := &fakeDiscovery{listResult: places.ListResult{SortApplied: places.SortDistance}}
+	rec := do(t, newPlacesHandler(discovery), http.MethodGet,
+		"/v1/places?near=10,-66&q=terraza&dish=pepiada&attributes=terraza,terraza,petfriendly,&maxPrice=10.5&openAt=2026-11-08T03:30:00Z")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	q := discovery.lastList
+	if q.Q != "terraza" || q.Dish != "pepiada" {
+		t.Errorf("q/dish = %q/%q", q.Q, q.Dish)
+	}
+	if len(q.Attributes) != 2 || q.Attributes[0] != "terraza" || q.Attributes[1] != "petfriendly" {
+		t.Errorf("attributes = %v, want [terraza petfriendly] deduplicated", q.Attributes)
+	}
+	if q.MaxPrice == nil || *q.MaxPrice != 10.5 {
+		t.Errorf("maxPrice = %v, want 10.5", q.MaxPrice)
+	}
+	want := time.Date(2026, 11, 8, 3, 30, 0, 0, time.UTC)
+	if q.OpenAt == nil || !q.OpenAt.Equal(want) {
+		t.Errorf("openAt = %v, want %v", q.OpenAt, want)
+	}
+}
+
+// The same filters are valid in map mode (S21).
+func TestPlacesMapMapsSearchFilters(t *testing.T) {
+	discovery := &fakeDiscovery{mapResult: places.MapResult{}}
+	rec := do(t, newPlacesHandler(discovery), http.MethodGet,
+		"/v1/places?bbox=-67,10.4,-66.8,10.75&zoom=12&q=hotel&attributes=petfriendly&maxPrice=25&openAt=2026-11-08T03:30:00Z")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	q := discovery.lastMap
+	if q.Q != "hotel" || len(q.Attributes) != 1 || q.Attributes[0] != "petfriendly" {
+		t.Errorf("filters = %+v", q)
+	}
+	if q.MaxPrice == nil || *q.MaxPrice != 25 || q.OpenAt == nil {
+		t.Errorf("maxPrice/openAt = %v/%v", q.MaxPrice, q.OpenAt)
 	}
 }
 

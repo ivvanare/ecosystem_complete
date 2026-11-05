@@ -7,6 +7,7 @@ import (
 	"context"
 	"log/slog"
 	"sort"
+	"time"
 
 	"github.com/ivvanare/ecosystem_complete/api/internal/geo"
 )
@@ -27,10 +28,42 @@ type ListQuery struct {
 	Country  string
 	Region   string
 	Category string
-	Sort     string
-	Page     int
-	Limit    int
+	// Q searches the place's commercial name; Dish searches menu items and
+	// returns the places that carry a match — two different questions with
+	// separate indexes, never one box (S17). Both arrive length-validated.
+	Q    string
+	Dish string
+	// Attributes is the conjunctive filter (S18): a place must carry EVERY
+	// code. The edge already deduplicated it and checked it against the
+	// vocabulary.
+	Attributes []string
+	// MaxPrice is a USD ceiling (S22): a place matches with at least one
+	// active USD-priced item on an active menu. There is no currency
+	// parameter; items in other currencies never match, on purpose.
+	MaxPrice *float64
+	// OpenAt asks the schedule question at one instant, answered in the
+	// place's own timezone including intervals that cross midnight (S19).
+	OpenAt *time.Time
+	Sort   string
+	Page   int
+	Limit  int
 }
+
+// attributeVocabulary mirrors the governed catalogue seeded by ledger file
+// 18-place-attributes.sql (S15/S23): an attribute the catalogue does not know
+// is rejected, never created on the fly. Until attribute CRUD exists the seed
+// IS the catalogue and this set is its code mirror; when CRUD lands this
+// becomes a catalogue read.
+var attributeVocabulary = map[string]bool{
+	"terraza":        true,
+	"petfriendly":    true,
+	"frente_playa":   true,
+	"aire_libre":     true,
+	"musica_en_vivo": true,
+}
+
+// KnownAttribute reports whether code is live governed vocabulary (S18).
+func KnownAttribute(code string) bool { return attributeVocabulary[code] }
 
 // Rating is the worker-published aggregate of one place. It is nil on a row when no
 // aggregate exists: absence is a normal state, never an error (S12 spirit).
@@ -72,7 +105,8 @@ type ListResult struct {
 	Degraded    bool
 }
 
-// MapQuery is a validated map-mode request.
+// MapQuery is a validated map-mode request. The search and filter
+// parameters are valid in both modes (S21).
 type MapQuery struct {
 	Box        geo.BBox
 	Zoom       int
@@ -80,6 +114,11 @@ type MapQuery struct {
 	Country    string
 	Region     string
 	Category   string
+	Q          string
+	Dish       string
+	Attributes []string
+	MaxPrice   *float64
+	OpenAt     *time.Time
 }
 
 // MapResult is the clustered viewport.
@@ -192,14 +231,19 @@ func (s *Service) List(ctx context.Context, q ListQuery) (ListResult, error) {
 	}
 
 	rows, total, err := s.store.List(ctx, listStoreQuery{
-		near:     q.Near,
-		radius:   q.Radius,
-		country:  q.Country,
-		region:   q.Region,
-		category: q.Category,
-		sort:     storeSort,
-		page:     q.Page,
-		limit:    q.Limit,
+		near:       q.Near,
+		radius:     q.Radius,
+		country:    q.Country,
+		region:     q.Region,
+		category:   q.Category,
+		q:          q.Q,
+		dish:       q.Dish,
+		attributes: q.Attributes,
+		maxPrice:   q.MaxPrice,
+		openAt:     q.OpenAt,
+		sort:       storeSort,
+		page:       q.Page,
+		limit:      q.Limit,
 	})
 	if err != nil {
 		return ListResult{}, err
@@ -279,10 +323,15 @@ func (s *Service) Map(ctx context.Context, q MapQuery) (MapResult, error) {
 	}
 
 	points, truncated, err := s.store.MapPoints(ctx, mapStoreQuery{
-		box:      q.Box,
-		country:  q.Country,
-		region:   q.Region,
-		category: q.Category,
+		box:        q.Box,
+		country:    q.Country,
+		region:     q.Region,
+		category:   q.Category,
+		q:          q.Q,
+		dish:       q.Dish,
+		attributes: q.Attributes,
+		maxPrice:   q.MaxPrice,
+		openAt:     q.OpenAt,
 	})
 	if err != nil {
 		return MapResult{}, err
