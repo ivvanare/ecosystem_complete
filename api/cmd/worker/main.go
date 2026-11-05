@@ -23,6 +23,7 @@ import (
 	"github.com/ivvanare/ecosystem_complete/api/internal/db"
 	"github.com/ivvanare/ecosystem_complete/api/internal/invitations"
 	"github.com/ivvanare/ecosystem_complete/api/internal/mailer"
+	"github.com/ivvanare/ecosystem_complete/api/internal/taste"
 	"github.com/ivvanare/ecosystem_complete/api/internal/trending"
 	"github.com/ivvanare/ecosystem_complete/api/internal/worker"
 )
@@ -179,6 +180,15 @@ func registerTrending(ctx context.Context, scheduler *worker.Scheduler, logger *
 	// Invitation expiry is hygiene, not enforcement: the read predicate already refuses an
 	// expired invitation. The job keeps the table honest.
 	scheduler.Register("invitation-expiry", invitations.NewSweeper(invitations.NewPostgresStore(pool), logger).Run)
+
+	// Taste profiles: a derived cache rebuilt from explicit acts. It reads the same pool and
+	// writes one row per user, so a failure here cannot affect mail, ranking or invitations.
+	tasteBatch := taste.NewBatch(
+		taste.NewPostgresLoader(pool),
+		taste.NewPostgresStore(pool),
+		logger,
+	)
+	scheduler.Register(tasteBatch.Name(), tasteBatch.Run)
 }
 
 // single adapts one delivery into a closed channel so the drain path reuses the same code.
