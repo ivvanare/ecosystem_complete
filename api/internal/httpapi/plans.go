@@ -32,6 +32,154 @@ type PlanCollaboration interface {
 	DeclineInvitation(ctx context.Context, actorID, invitationID string) error
 }
 
+// PlanModeration is the backoffice surface over plans and invitations (D21): it moderates,
+// it never participates.
+type PlanModeration interface {
+	AdminList(ctx context.Context, filter plans.AdminFilter, page, limit int) ([]plans.Plan, int, error)
+	Moderate(ctx context.Context, actorID, planID, status string) error
+	InvitationAdmins(ctx context.Context, filter invitations.AdminFilter, page, limit int) ([]invitations.Invitation, int, error)
+	RevokeInvitation(ctx context.Context, actorID, invitationID string) error
+}
+
+type planModerationHandlers struct {
+	service PlanModeration
+	logger  *slog.Logger
+}
+
+// adminPlans serves GET /v1/admin/plans.
+func (h *planModerationHandlers) adminPlans(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	filter := plans.AdminFilter{
+		Status:     strings.TrimSpace(query.Get("status")),
+		OwnerID:    strings.TrimSpace(query.Get("ownerId")),
+		Visibility: strings.TrimSpace(query.Get("visibility")),
+	}
+	var fields []fieldError
+	if filter.Status != "" && filter.Status != "ACTIVE" && filter.Status != "INACTIVE" {
+		fields = append(fields, fieldError{Field: "status", Code: "invalid"})
+	}
+	if filter.OwnerID != "" && !uuidPattern.MatchString(filter.OwnerID) {
+		fields = append(fields, fieldError{Field: "ownerId", Code: "invalid"})
+	}
+	if filter.Visibility != "" && filter.Visibility != plans.VisibilityPublic && filter.Visibility != plans.VisibilityPrivate {
+		fields = append(fields, fieldError{Field: "visibility", Code: "invalid"})
+	}
+	if len(fields) > 0 {
+		writeValidationError(w, fields)
+		return
+	}
+
+	page, limit := pageAndLimit(r)
+	rows, total, err := h.service.AdminList(r.Context(), filter, page, limit)
+	if err != nil {
+		h.logger.Error("listing plans for moderation failed", slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, "internal_error", "The request could not be completed.")
+		return
+	}
+	data := make([]planResponse, 0, len(rows))
+	for _, plan := range rows {
+		data = append(data, toPlanResponse(plan))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": data, "page": page, "limit": limit, "total": total})
+}
+
+type planStatusRequest struct {
+	Status *string `json:"status"`
+}
+
+// moderatePlan serves PATCH /v1/admin/plans/{coRoute}.
+func (h *planModerationHandlers) moderatePlan(w http.ResponseWriter, r *http.Request) {
+	actorID, ok := userIDFrom(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication is required.")
+		return
+	}
+	planID, ok := planParam(w, r)
+	if !ok {
+		return
+	}
+	var body planStatusRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+		return
+	}
+	if body.Status == nil {
+		writeValidationError(w, []fieldError{{Field: "status", Code: "required"}})
+		return
+	}
+	if *body.Status != "ACTIVE" && *body.Status != "INACTIVE" {
+		writeValidationError(w, []fieldError{{Field: "status", Code: "invalid"}})
+		return
+	}
+	if err := h.service.Moderate(r.Context(), actorID, planID, *body.Status); err != nil {
+		h.logger.Error("moderating a plan failed", slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, "internal_error", "The request could not be completed.")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// adminInvitations serves GET /v1/admin/invitations.
+func (h *planModerationHandlers) adminInvitations(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	filter := invitations.AdminFilter{
+		Status:    strings.TrimSpace(query.Get("status")),
+		PlanID:    strings.TrimSpace(query.Get("planId")),
+		InviteeID: strings.TrimSpace(query.Get("inviteeId")),
+	}
+	var fields []fieldError
+	if filter.PlanID != "" && !uuidPattern.MatchString(filter.PlanID) {
+		fields = append(fields, fieldError{Field: "planId", Code: "invalid"})
+	}
+	if filter.InviteeID != "" && !uuidPattern.MatchString(filter.InviteeID) {
+		fields = append(fields, fieldError{Field: "inviteeId", Code: "invalid"})
+	}
+	if len(fields) > 0 {
+		writeValidationError(w, fields)
+		return
+	}
+
+	page, limit := pageAndLimit(r)
+	rows, total, err := h.service.InvitationAdmins(r.Context(), filter, page, limit)
+	if err != nil {
+		h.logger.Error("listing invitations for moderation failed", slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, "internal_error", "The request could not be completed.")
+		return
+	}
+	data := make([]invitationResponse, 0, len(rows))
+	for _, invitation := range rows {
+		data = append(data, toInvitationResponse(invitation))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": data, "page": page, "limit": limit, "total": total})
+}
+
+// revokeInvitation serves DELETE /v1/admin/invitations/{coInvitation}.
+func (h *planModerationHandlers) revokeInvitation(w http.ResponseWriter, r *http.Request) {
+	actorID, ok := userIDFrom(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication is required.")
+		return
+	}
+	invitationID := r.PathValue("coInvitation")
+	if !uuidPattern.MatchString(invitationID) {
+		writeValidationError(w, []fieldError{{Field: "coInvitation", Code: "invalid"}})
+		return
+	}
+	if err := h.service.RevokeInvitation(r.Context(), actorID, invitationID); err != nil {
+		h.logger.Error("revoking an invitation failed", slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, "internal_error", "The request could not be completed.")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Capabilities of the plan backoffice. They are not admin.access: that one only means "may
+// enter the panel", and the seeded EDITOR role already holds it.
+const (
+	PlanModeratePermission       = "plan.moderate"
+	InvitationModeratePermission = "invitation.moderate"
+)
+
 type planHandlers struct {
 	service PlanCollaboration
 	logger  *slog.Logger

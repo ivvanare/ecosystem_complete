@@ -26,6 +26,7 @@ type fakePlans struct {
 	gotInvite   invitations.CreateInput
 	invitations []invitations.Invitation
 	gotAnswer   string
+	gotStatus   string
 	calls       int
 }
 
@@ -92,6 +93,24 @@ func (f *fakePlans) PlanInvitations(context.Context, string, string) ([]invitati
 func (f *fakePlans) MyInvitations(context.Context, string) ([]invitations.Invitation, error) {
 	f.calls++
 	return f.invitations, f.err
+}
+func (f *fakePlans) AdminList(context.Context, plans.AdminFilter, int, int) ([]plans.Plan, int, error) {
+	f.calls++
+	return []plans.Plan{f.plan}, 1, f.err
+}
+func (f *fakePlans) Moderate(_ context.Context, _, _, status string) error {
+	f.calls++
+	f.gotStatus = status
+	return f.err
+}
+func (f *fakePlans) InvitationAdmins(context.Context, invitations.AdminFilter, int, int) ([]invitations.Invitation, int, error) {
+	f.calls++
+	return f.invitations, 1, f.err
+}
+func (f *fakePlans) RevokeInvitation(_ context.Context, _, id string) error {
+	f.calls++
+	f.gotAnswer = "revoke:" + id
+	return f.err
 }
 func (f *fakePlans) VenueHidden(context.Context, string, string) (bool, error) { return false, nil }
 func (f *fakePlans) AcceptInvitation(_ context.Context, _, id string) error {

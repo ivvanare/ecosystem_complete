@@ -17,6 +17,7 @@ type fakeStore struct {
 	created    CreateInput
 	planListed bool
 	userListed bool
+	revoked    string
 }
 
 func (f *fakeStore) Role(context.Context, string, string) (string, string, error) {
@@ -34,6 +35,13 @@ func (f *fakeStore) ListForPlan(context.Context, string) ([]Invitation, error) {
 func (f *fakeStore) ListForUser(context.Context, string) ([]Invitation, error) {
 	f.userListed = true
 	return []Invitation{{ID: "i1"}}, nil
+}
+func (f *fakeStore) AdminList(context.Context, AdminFilter, int, int) ([]Invitation, int, error) {
+	return []Invitation{{ID: "i1"}}, 1, nil
+}
+func (f *fakeStore) Revoke(_ context.Context, _, id string) error {
+	f.revoked = id
+	return nil
 }
 func (f *fakeStore) VenueHidden(context.Context, string, string) (bool, error) { return false, nil }
 func (f *fakeStore) Expire(context.Context, time.Time) (int64, error)          { return 0, nil }
@@ -202,3 +210,24 @@ func (s *sweeperStore) ListForPlan(context.Context, string) ([]Invitation, error
 func (s *sweeperStore) ListForUser(context.Context, string) ([]Invitation, error)       { return nil, nil }
 func (s *sweeperStore) VenueHidden(context.Context, string, string) (bool, error)       { return false, nil }
 func (s *sweeperStore) Answer(context.Context, string, string, string, time.Time) error { return nil }
+func (s *sweeperStore) AdminList(context.Context, AdminFilter, int, int) ([]Invitation, int, error) {
+	return nil, 0, nil
+}
+func (s *sweeperStore) Revoke(context.Context, string, string) error { return nil }
+
+func TestRevokeDelegatesWithoutCreatingMembership(t *testing.T) {
+	store := &fakeStore{}
+	if err := service(store).Revoke(context.Background(), "admin", "i1"); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+	if store.revoked != "i1" {
+		t.Fatalf("revoked = %q, want i1", store.revoked)
+	}
+}
+
+func TestAdminListRejectsAnUnknownStatus(t *testing.T) {
+	store := &fakeStore{}
+	if _, _, err := service(store).AdminList(context.Background(), AdminFilter{Status: "GONE"}, 1, 20); err == nil {
+		t.Fatal("an unknown invitation status was accepted")
+	}
+}

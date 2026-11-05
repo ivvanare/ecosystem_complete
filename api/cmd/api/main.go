@@ -233,6 +233,7 @@ func run() error {
 			Plans:              planService,
 			Blocks:             blockService,
 			Notifications:      notificationService,
+			PlanModeration:     planService,
 			Reviews:            reviewsService,
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,
