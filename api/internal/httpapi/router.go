@@ -40,6 +40,7 @@ type Options struct {
 	Checkins           Checkins
 	PlacesAdmin        PlaceBackoffice
 	Plans              PlanCollaboration
+	Blocks             Blocking
 	Reviews            ReviewService
 }
 
@@ -154,6 +155,14 @@ func New(opts Options) http.Handler {
 	if opts.Discovery != nil {
 		placesHandler := &placesHandlers{discovery: opts.Discovery, logger: logger}
 		mux.HandleFunc("GET /v1/places", placesHandler.places)
+	}
+
+	// Blocking (decision Q2): the relation that gates every viewer-relative projection.
+	if opts.Blocks != nil {
+		blockHandler := &blockHandlers{service: opts.Blocks, logger: logger}
+		mux.HandleFunc("POST /v1/blocks", RequireAuth(opts.TokenParser, blockHandler.create))
+		mux.HandleFunc("GET /v1/blocks", RequireAuth(opts.TokenParser, blockHandler.listed))
+		mux.HandleFunc("DELETE /v1/blocks/{coUser}", RequireAuth(opts.TokenParser, blockHandler.remove))
 	}
 
 	// Plans (P3a): the mobile consumer's collaborative planning (D21). Authorization is

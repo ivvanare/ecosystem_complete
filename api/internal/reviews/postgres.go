@@ -99,7 +99,13 @@ WHERE r.co_place = $1::uuid
         (r.dt_deleted_at IS NULL AND r.tx_status = 'ACTIVE')
         OR ($2::uuid IS NOT NULL AND r.co_user = $2::uuid)
         OR $3::boolean
-      )`
+      )
+  -- Blocking (Q2): a block hides the content in both directions. A moderator still sees
+  -- everything, because moderation is not a social relationship.
+  AND ($3::boolean OR $2::uuid IS NULL OR NOT EXISTS (
+        SELECT 1 FROM core.tb_block b
+         WHERE (b.co_blocker = $2::uuid AND b.co_blocked = r.co_user)
+            OR (b.co_blocker = r.co_user AND b.co_blocked = $2::uuid)))`
 
 // adminFilterPredicate narrows the moderator listing. Every clause is optional and the
 // zero value lists everything, so the count and the page share one predicate and agree.
