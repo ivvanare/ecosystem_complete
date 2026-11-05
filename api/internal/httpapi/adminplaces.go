@@ -24,6 +24,9 @@ type PlaceBackoffice interface {
 	ReplaceSchedules(ctx context.Context, viewer placeadmin.Viewer, actorID, placeID string, schedules []placeadmin.Schedule) error
 	Attributes(ctx context.Context, viewer placeadmin.Viewer, placeID string) ([]string, error)
 	ReplaceAttributes(ctx context.Context, viewer placeadmin.Viewer, actorID, placeID string, codes []string) error
+	Menus(ctx context.Context, viewer placeadmin.Viewer, placeID string) ([]placeadmin.Menu, error)
+	ReplaceMenus(ctx context.Context, viewer placeadmin.Viewer, actorID, placeID string, menus []placeadmin.Menu) error
+	AttributeCatalogue(ctx context.Context) ([]placeadmin.Category, error)
 }
 
 // Permissions the places backoffice is built from. place.create/update/delete are seeded in
@@ -103,6 +106,7 @@ type placeResponse struct {
 	// Content, populated by the detail read so the edit form fills with one call.
 	Schedules  []placeadmin.Schedule `json:"schedules"`
 	Attributes []string              `json:"attributes"`
+	Menus      []placeadmin.Menu     `json:"menus"`
 	CreatedAt  time.Time             `json:"createdAt"`
 	UpdatedAt  time.Time             `json:"updatedAt"`
 	DeletedAt  *time.Time            `json:"deletedAt"`
@@ -115,6 +119,7 @@ func toPlaceResponse(place placeadmin.Place) placeResponse {
 		Country: place.Country, Region: place.Region, Timezone: place.Timezone,
 		Latitude: place.Latitude, Longitude: place.Longitude, Address: place.Address,
 		Status: place.Status, Schedules: place.Schedules, Attributes: place.Attributes,
+		Menus:     place.Menus,
 		CreatedAt: place.CreatedAt, UpdatedAt: place.UpdatedAt,
 		DeletedAt: place.DeletedAt,
 	}
@@ -532,4 +537,75 @@ func (h *placesAdminHandlers) attributes(w http.ResponseWriter, r *http.Request)
 // isScheduleValidation reports whether the failure was the edge validation of the hours.
 func isScheduleValidation(err error) bool {
 	return strings.Contains(err.Error(), "placeadmin:")
+}
+
+// menu serves GET and PUT /v1/admin/places/{coPlace}/menu: the whole card.
+//
+// Replacement, like the weekly hours: a menu applied in halves shows a price that a filter reads
+// and a customer never sees.
+func (h *placesAdminHandlers) menu(w http.ResponseWriter, r *http.Request) {
+	viewer, ok := h.viewer(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication is required.")
+		return
+	}
+	placeID, ok := placeAdminParam(w, r)
+	if !ok {
+		return
+	}
+
+	if r.Method == http.MethodGet {
+		menus, err := h.service.Menus(r.Context(), viewer, placeID)
+		if err != nil {
+			h.writePlaceError(w, err, "reading the menu")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"data": menus, "total": len(menus)})
+		return
+	}
+
+	var body struct {
+		Menus []placeadmin.Menu `json:"menus"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+		return
+	}
+	if err := h.service.ReplaceMenus(r.Context(), viewer, viewer.UserID, placeID, body.Menus); err != nil {
+		var unknownCurrency *placeadmin.UnknownCurrencyError
+		switch {
+		case errors.As(err, &unknownCurrency):
+			writeValidationError(w, []fieldError{{Field: "menus", Code: "unknown"}})
+		case strings.Contains(err.Error(), "placeadmin:"):
+			// The model's shapes, caught at the edge so a negative price or a nameless item is a
+			// 422 instead of a constraint violation the client cannot read.
+			writeValidationError(w, []fieldError{{Field: "menus", Code: "invalid"}})
+		default:
+			h.writePlaceError(w, err, "replacing the menu")
+		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// attributeCatalogue serves GET /v1/place-attributes: the vocabulary, public.
+//
+// It exists for the same reason the category catalogue does: the panel renders a select and the
+// mobile client renders the same list as discovery filters, and hiding taxonomy behind a
+// backoffice permission would have forced two routes with identical content.
+func (h *placesAdminHandlers) attributeCatalogue(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.service.AttributeCatalogue(r.Context())
+	if err != nil {
+		h.logger.Error("listing the attribute catalogue failed", slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, "internal_error", "The request could not be completed.")
+		return
+	}
+	data := make([]map[string]any, 0, len(rows))
+	for _, attribute := range rows {
+		data = append(data, map[string]any{
+			"coPlaceAttribute": attribute.ID, "code": attribute.Code,
+			"name": attribute.Name, "status": attribute.Status,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": data, "total": len(data)})
 }

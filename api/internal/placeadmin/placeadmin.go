@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -50,6 +51,7 @@ type Place struct {
 	// not need them, and fetching them per row would be a query per row.
 	Schedules  []Schedule
 	Attributes []string
+	Menus      []Menu
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 	DeletedAt  *time.Time
@@ -61,6 +63,22 @@ type Schedule struct {
 	DayOfWeek int    `json:"dayOfWeek"`
 	Open      string `json:"open"`
 	Close     string `json:"close"`
+}
+
+// MenuItem is one dish with its price. The currency is mandatory: a number without one does
+// not mean anything, which is why the model refuses it too.
+type MenuItem struct {
+	Name        string  `json:"name"`
+	Description *string `json:"description"`
+	Price       float64 `json:"price"`
+	Currency    string  `json:"currency"`
+}
+
+// Menu is one section of the card (breakfast, dinner, ...).
+type Menu struct {
+	Name        string     `json:"name"`
+	Description *string    `json:"description"`
+	Items       []MenuItem `json:"items"`
 }
 
 // Filter narrows the listing. Every field is optional; the zero value lists every row the
@@ -136,6 +154,10 @@ type Store interface {
 	Attributes(ctx context.Context, placeID string) ([]string, error)
 	ReplaceAttributes(ctx context.Context, actorID, placeID string, codes []string) error
 	UnknownAttributes(ctx context.Context, codes []string) ([]string, error)
+	Menus(ctx context.Context, placeID string) ([]Menu, error)
+	ReplaceMenus(ctx context.Context, actorID, placeID string, menus []Menu) error
+	UnknownCurrencies(ctx context.Context, codes []string) ([]string, error)
+	AttributeCatalogue(ctx context.Context) ([]Category, error)
 }
 
 // Service applies the ownership rules.
@@ -280,6 +302,79 @@ func validateSchedules(schedules []Schedule) error {
 	return nil
 }
 
+// AttributeCatalogue returns the attribute vocabulary. It reuses the Category shape: a code, a
+// display name and a status are all a select needs, and the panel and the mobile filters need
+// exactly the same list.
+func (s *Service) AttributeCatalogue(ctx context.Context) ([]Category, error) {
+	return s.store.AttributeCatalogue(ctx)
+}
+
+// Menus returns the card of a place.
+func (s *Service) Menus(ctx context.Context, viewer Viewer, placeID string) ([]Menu, error) {
+	if _, err := s.store.Get(ctx, viewer, placeID); err != nil {
+		return nil, err
+	}
+	return s.store.Menus(ctx, placeID)
+}
+
+// ReplaceMenus replaces the whole card, refusing a currency the catalogue does not carry and an
+// unknown dish price.
+//
+// Replacement, like the weekly hours: an operator edits "the card of this place", and a menu
+// half-applied would show prices that a filter reads and a customer never sees.
+func (s *Service) ReplaceMenus(ctx context.Context, viewer Viewer, actorID, placeID string, menus []Menu) error {
+	if _, err := s.store.Get(ctx, viewer, placeID); err != nil {
+		return err
+	}
+	if err := validateMenus(menus); err != nil {
+		return err
+	}
+	currencies := make([]string, 0, 4)
+	for _, menu := range menus {
+		for _, item := range menu.Items {
+			currencies = append(currencies, item.Currency)
+		}
+	}
+	unknown, err := s.store.UnknownCurrencies(ctx, currencies)
+	if err != nil {
+		return err
+	}
+	if len(unknown) > 0 {
+		return &UnknownCurrencyError{Codes: unknown}
+	}
+	return s.store.ReplaceMenus(ctx, actorID, placeID, menus)
+}
+
+// UnknownCurrencyError names the currency codes the catalogue does not carry.
+type UnknownCurrencyError struct{ Codes []string }
+
+func (e *UnknownCurrencyError) Error() string {
+	return fmt.Sprintf("placeadmin: unknown currencies %v", e.Codes)
+}
+
+// validateMenus enforces the shapes the model enforces, so a bad row is a 422 and not a 500.
+func validateMenus(menus []Menu) error {
+	for _, menu := range menus {
+		if strings.TrimSpace(menu.Name) == "" {
+			return fmt.Errorf("placeadmin: a menu needs a name")
+		}
+		for _, item := range menu.Items {
+			if strings.TrimSpace(item.Name) == "" {
+				return fmt.Errorf("placeadmin: an item needs a name")
+			}
+			// The model has CHECK (nu_price >= 0); catching it here keeps a negative price a
+			// validation failure instead of a constraint violation the client cannot read.
+			if item.Price < 0 {
+				return fmt.Errorf("placeadmin: negative price")
+			}
+			if strings.TrimSpace(item.Currency) == "" {
+				return fmt.Errorf("placeadmin: an item needs a currency")
+			}
+		}
+	}
+	return nil
+}
+
 // Categories lists the catalogue. An empty status means "every live category", so a client
 // that wants only the selectable ones passes ACTIVE and a client browsing passes nothing.
 func (s *Service) Categories(ctx context.Context, status string, page, limit int) ([]Category, int, error) {
@@ -382,6 +477,9 @@ WHERE p.co_place = $3::uuid AND `+scopePredicate, viewer.ManageAll, uuidOrNil(vi
 		return Place{}, err
 	}
 	if place.Attributes, err = s.Attributes(ctx, place.ID); err != nil {
+		return Place{}, err
+	}
+	if place.Menus, err = s.Menus(ctx, place.ID); err != nil {
 		return Place{}, err
 	}
 	return place, nil
@@ -631,6 +729,136 @@ func (s *PostgresStore) ReplaceAttributes(ctx context.Context, actorID, placeID 
 				 WHERE a.tx_code = $2 AND a.dt_deleted_at IS NULL
 				ON CONFLICT DO NOTHING`, placeID, code); err != nil {
 				return fmt.Errorf("linking attribute: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
+// AttributeCatalogue reads the attribute vocabulary.
+func (s *PostgresStore) AttributeCatalogue(ctx context.Context) ([]Category, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT co_attribute::text, tx_code, tx_name, tx_status::text
+		FROM core.tb_place_attribute
+		WHERE dt_deleted_at IS NULL
+		ORDER BY tx_name`)
+	if err != nil {
+		return nil, fmt.Errorf("listing attributes: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]Category, 0, 8)
+	for rows.Next() {
+		var attribute Category
+		if err := rows.Scan(&attribute.ID, &attribute.Code, &attribute.Name, &attribute.Status); err != nil {
+			return nil, fmt.Errorf("scanning attribute: %w", err)
+		}
+		result = append(result, attribute)
+	}
+	return result, rows.Err()
+}
+
+// Menus reads the card: sections in order, items in order.
+func (s *PostgresStore) Menus(ctx context.Context, placeID string) ([]Menu, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT m.co_menu::text, m.tx_name, m.tx_description,
+		       i.tx_name, i.tx_description, i.nu_price::float8, c.tx_code
+		FROM core.tb_menu m
+		LEFT JOIN core.tb_menu_item i ON i.co_menu = m.co_menu
+		                            AND i.dt_deleted_at IS NULL AND i.tx_status = 'ACTIVE'
+		LEFT JOIN core.tb_currency c ON c.co_currency = i.co_currency
+		WHERE m.co_place = $1::uuid AND m.dt_deleted_at IS NULL AND m.tx_status = 'ACTIVE'
+		ORDER BY m.dt_created_at, m.co_menu, i.dt_created_at, i.co_menu_item`, placeID)
+	if err != nil {
+		return nil, fmt.Errorf("reading menus: %w", err)
+	}
+	defer rows.Close()
+
+	menus := make([]Menu, 0, 3)
+	index := map[string]int{}
+	for rows.Next() {
+		var menuID string
+		var name string
+		var description *string
+		var itemName, itemDescription, currency *string
+		var price *float64
+
+		if err := rows.Scan(&menuID, &name, &description, &itemName, &itemDescription, &price, &currency); err != nil {
+			return nil, fmt.Errorf("scanning menu row: %w", err)
+		}
+		position, seen := index[menuID]
+		if !seen {
+			menus = append(menus, Menu{Name: name, Description: description, Items: []MenuItem{}})
+			position = len(menus) - 1
+			index[menuID] = position
+		}
+		// A section with no items is a real state: the LEFT JOIN yields a row with NULLs.
+		if itemName != nil && price != nil && currency != nil {
+			menus[position].Items = append(menus[position].Items, MenuItem{
+				Name: *itemName, Description: itemDescription, Price: *price, Currency: *currency,
+			})
+		}
+	}
+	return menus, rows.Err()
+}
+
+// UnknownCurrencies returns the codes the currency catalogue does not carry.
+func (s *PostgresStore) UnknownCurrencies(ctx context.Context, codes []string) ([]string, error) {
+	if len(codes) == 0 {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT code FROM unnest($1::text[]) AS code
+		 WHERE NOT EXISTS (
+		       SELECT 1 FROM core.tb_currency c
+		        WHERE c.tx_code = code AND c.dt_deleted_at IS NULL)`, codes)
+	if err != nil {
+		return nil, fmt.Errorf("checking currencies: %w", err)
+	}
+	defer rows.Close()
+
+	unknown := make([]string, 0, 2)
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			return nil, fmt.Errorf("scanning unknown currency: %w", err)
+		}
+		unknown = append(unknown, code)
+	}
+	return unknown, rows.Err()
+}
+
+// ReplaceMenus replaces the whole card in one transaction. Menus and their items go together:
+// a section without its items, or items without a section, is not a state worth exposing.
+func (s *PostgresStore) ReplaceMenus(ctx context.Context, actorID, placeID string, menus []Menu) error {
+	return s.withActor(ctx, actorID, func(tx pgx.Tx) error {
+		// Items first: they reference the menus being removed.
+		if _, err := tx.Exec(ctx, `
+			DELETE FROM core.tb_menu_item i USING core.tb_menu m
+			 WHERE i.co_menu = m.co_menu AND m.co_place = $1::uuid`, placeID); err != nil {
+			return fmt.Errorf("clearing menu items: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM core.tb_menu WHERE co_place = $1::uuid`, placeID); err != nil {
+			return fmt.Errorf("clearing menus: %w", err)
+		}
+		for _, menu := range menus {
+			var menuID string
+			if err := tx.QueryRow(ctx, `
+				INSERT INTO core.tb_menu (co_menu, co_place, tx_name, tx_description, dt_created_at, dt_updated_at)
+				VALUES (gen_random_uuid(), $1::uuid, $2, $3, now(), now())
+				RETURNING co_menu::text`, placeID, menu.Name, menu.Description).Scan(&menuID); err != nil {
+				return fmt.Errorf("inserting menu: %w", err)
+			}
+			for _, item := range menu.Items {
+				if _, err := tx.Exec(ctx, `
+					INSERT INTO core.tb_menu_item
+					    (co_menu_item, co_menu, tx_name, tx_description, nu_price, co_currency, dt_created_at, dt_updated_at)
+					SELECT gen_random_uuid(), $1::uuid, $2, $3, $4, c.co_currency, now(), now()
+					  FROM core.tb_currency c
+					 WHERE c.tx_code = $5 AND c.dt_deleted_at IS NULL`,
+					menuID, item.Name, item.Description, item.Price, item.Currency); err != nil {
+					return fmt.Errorf("inserting menu item: %w", err)
+				}
 			}
 		}
 		return nil

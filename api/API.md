@@ -1009,3 +1009,23 @@ Ambos requieren `place.update` y respetan el alcance por ownership del resto del
 
 Estos dos endpoints son los que vuelven operables los filtros **`openAt`** y de **atributos** de
 discovery, que hasta ahora solo se podían alimentar por SQL.
+
+### 14.2 Menú y platos
+
+```http
+GET /v1/admin/places/{coPlace}/menu     PUT /v1/admin/places/{coPlace}/menu   { menus: [...] }
+GET /v1/place-attributes                (público)
+```
+
+El `PUT` reemplaza **la carta completa** en una transacción: un menú aplicado a medias mostraría
+un precio que el filtro de discovery lee y el cliente nunca ve.
+
+- Cada plato exige `currency` del catálogo de monedas: un número sin moneda no significa nada, y
+  el modelo tampoco lo acepta. Una moneda desconocida es `422` con `field: menus`.
+- Un precio negativo es `422`, no una violación de constraint: el cliente tiene que poder leer
+  por qué falló.
+- Una sección **sin platos es válida**: es un estado real (carta cargada, platos todavía no).
+
+`GET /v1/place-attributes` es el vocabulario **público** de atributos — el `select` del panel y
+los filtros del móvil necesitan la misma lista, igual que con las categorías. Usá `code` en los
+filtros (`terraza`, `petfriendly`); el uuid es del catálogo y cambia entre entornos.

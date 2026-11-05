@@ -761,6 +761,93 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/admin/places/{coPlace}/menu:
+    get:
+      tags: [Admin]
+      operationId: getPlaceMenu
+      summary: The card of a place
+      description: Sections in order, each with its items. A section with no items is a real state.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The card.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data, total]
+                properties:
+                  total: { type: integer }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/PlaceMenu" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Admin]
+      operationId: replacePlaceMenu
+      summary: Replace the card
+      description: |
+        Replaces the whole card in one transaction: a menu applied in halves would show a price
+        that the discovery filter reads and a customer never sees.
+
+        Every item needs a `currency` from the currency catalogue — a number without one does
+        not mean anything, which is why the model refuses it too. A negative price is `422`, not
+        a constraint violation, and an unknown currency is `422` with field `menus`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [menus]
+              properties:
+                menus:
+                  type: array
+                  items: { $ref: "#/components/schemas/PlaceMenu" }
+      responses:
+        "204": { description: Replaced. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/place-attributes:
+    get:
+      tags: [Discovery]
+      operationId: listPlaceAttributes
+      summary: The attribute vocabulary
+      description: |
+        Public taxonomy, like the category catalogue: the panel renders a select from it and the
+        mobile client renders the same list as discovery filters.
+      responses:
+        "200":
+          description: The vocabulary, ordered by name.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data, total]
+                properties:
+                  total: { type: integer }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/PlaceAttribute" }
   /v1/place-categories:
     get:
       tags: [Discovery]
@@ -2422,6 +2509,33 @@ components:
           nullable: true
           description: Absent means "no date yet", which is a real state.
         partySize: { type: integer, minimum: 1, maximum: 50 }
+    PlaceMenu:
+      type: object
+      additionalProperties: false
+      required: [name, description, items]
+      properties:
+        name: { type: string, example: Cena }
+        description: { type: string, nullable: true }
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, description, price, currency]
+            properties:
+              name: { type: string }
+              description: { type: string, nullable: true }
+              price: { type: number, minimum: 0 }
+              currency: { type: string, example: USD, description: ISO-4217 code from the currency catalogue. }
+    PlaceAttribute:
+      type: object
+      additionalProperties: false
+      required: [coPlaceAttribute, code, name, status]
+      properties:
+        coPlaceAttribute: { type: string, format: uuid }
+        code: { type: string, example: terraza }
+        name: { type: string }
+        status: { type: string, enum: [ACTIVE, INACTIVE] }
     PlaceSchedule:
       type: object
       additionalProperties: false
