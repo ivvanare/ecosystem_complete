@@ -239,7 +239,93 @@ items with USD prices, one under 10 and one over. Idempotent, still outside `dat
 
 ---
 
+---
+
+# Commit 4 — the trending producer and the ranked read path
+
+The last piece of P1, and the one that makes the words "trending" and "rating" true. Until
+now `NoRanking` and `NoStats` report "nothing was ever published", so every place renders
+`rating: null` and every `sort=trending` degrades to `rating`.
+
+## Specs
+
+**S24 — The worker computes, the request only reads.** A scheduled job (the scheduler from P0)
+computes a score per place, aggregates it per H3 zone cell at
+`geo.TrendingZoneResolution`, and writes the ordered result to Redis. No request ever
+aggregates `tb_review`: the discovery path reads a precomputed zset.
+
+**S25 — The score is deterministic and recency-weighted.** Inputs: reviews in the last 7 days,
+reviews in the last 30 days, and the volume-weighted average rating. The weights are a code
+constant with a test, not a setting. Properties the test pins: 10 reviews this week outrank
+100 from last year; a place with no reviews scores by rating alone and never outranks a
+genuinely active one; the same inputs always produce the same order (tie-break by `co_place`),
+so a rerun does not reshuffle the list.
+
+**S26 — The aggregate is published with the ranking.** `melia:place:stats:{coPlace}` (HASH:
+`ratingAvg`, `reviewCount`, `computedAt`, TTL 24 h) is written in the same pipeline pass, so
+the read path can answer `rating` without touching `tb_review`. A place with no published
+aggregate stays `null`, never `0`.
+
+**S27 — Zone keys contain nothing about the viewer.** `melia:trending:z:{h3Cell}` (ZSET,
+member `co_place`, score = trending score, TTL 1 h). No key contains the request coordinate,
+the user, or anything derived from either. A zone is written whole, in one pipeline, so a
+reader never sees half a ranking.
+
+**S28 — Degradation is a state, not an error.** The read path asks the zone key; on a miss it
+asks the parent cell once, then falls back to `rating`-then-name with `degraded: true`. A
+Redis failure is the same degraded answer, logged, never a 5xx.
+
+**S29 — Redis readers replace the stubs.** `internal/places` gains Redis implementations of
+`StatsReader` and `RankingReader`; `cmd/api` wires them instead of `NoStats`/`NoRanking`, and
+`cmd/worker` registers the producer job. Absence of Redis is the existing required-probe
+behaviour, not a new crash path.
+
+**S30 — Tests without services.** The score, the zone aggregation and the pipeline writes are
+pure functions tested against a fake Redis client; the read path's degradation is tested
+against fake readers. `go test ./...` still needs no Redis.
+
+## Repo rules that bite here
+
+- Redis is already a required probe; do not add a second connection path. Reuse the client the
+  probes use, or build one in the same package style.
+- The worker's job must use the P0 scheduler registry and share the graceful shutdown path.
+- No new environment variable unless it is genuinely tunable; if one is added, it must be
+  documented in `api/README.md` and `api/.env.example`.
+
+## Tasks
+
+- T20 — `internal/trending`: score function, per-place aggregate, zone grouping and the
+  pipeline payloads.
+- T21 — `internal/trending`: the Redis writer (one pipeline per zone, TTLs, no partial zone).
+- T22 — `internal/places`: `RedisStats` and `RedisRanking`, plus the parent-cell fallback.
+- T23 — `cmd/worker`: register the producer job on the P0 scheduler.
+- T24 — `cmd/api`: wire the Redis readers in place of the stubs.
+- T25 — tests: score determinism and recency dominance, zone aggregation, parent-cell fallback,
+  degraded on miss and on Redis failure.
+- T26 — verify: suite green without services; a live run that publishes a zone, reads it back
+  through the HTTP endpoint with `degraded:false` and a non-null `rating`, and a check that no
+  cache key contains a coordinate or a user id.
+
+---
+
 ## Log
+
+- L15 — Commit 4 (the trending producer) shipped as 79ab4ba. The worker job reads review
+  counts for 7 and 30 days plus the lifetime rating per live place, scores each, groups by H3
+  zone, and publishes the ranking zset and the per-place aggregate in one pipeline per zone.
+  Degradation stays a state: a zone miss tries the parent cell once, then falls back to
+  rating-then-name; a Redis failure is the same answer, logged, never a 5xx.
+  - **Correction 1, found by the HTTP smoke test:** the ranked read path paged by title and
+    reordered afterwards, so the best-ranked place could fall off the page whenever it sorted
+    past the boundary. The order looked plausible and was wrong. Trending now slices the
+    ranking and fetches exactly those ids through `Store.ByIDs`, which is what p1-discovery.md
+    §2 always said; a test pins page one and page two.
+  - **Correction 2, found by enabling the producer:** the compose worker had neither
+    `DATABASE_URL` nor `REDIS_ADDR`, so the job silently never registered and the read path
+    degraded forever with no error anywhere. Both are now set, and their absence still leaves
+    the mail duty alive, by design.
+  - Verified end to end: 12 zone keys with TTL 3599 and the aggregate of the reviewed place;
+    `sort=trending` answered `degraded:false` with the reviewed place at rank 1 and rating 4.
 
 - L1 — Human authorization, verbatim: "no pushemos todavia, hasta que se pruebe, la imagen la
   puedes reconstruir esta bien aun estamos en desarrollo del mvp ... continua con P1".
@@ -259,7 +345,7 @@ items with USD prices, one under 10 and one over. Idempotent, still outside `dat
   p1-discovery said DELETE was author-or-moderator while S17 says author-only, and the diagram
   claimed the partial index frees moderated reviews when the predicate is only
   dt_deleted_at IS NULL (recorded as Q7).
-- L6 — Human instruction for this slice: continue, and tell the melia-admin session the
+- L7 — Human instruction for this slice: continue, and tell the melia-admin session the
   endpoints exist. Done: a message went to that session with the routes, the coordinate-order
   trap (near is lat,long; bbox is longitude-first), the MapLibre decision with the warning not
   to use its own clustering, and the note that sort=trending still degrades.
