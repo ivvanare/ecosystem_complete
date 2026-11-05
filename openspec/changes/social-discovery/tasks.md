@@ -234,6 +234,21 @@ Table: `core.tb_user_taste_profile`.
   instead of the catalogue being widened for one endpoint. Result: Phase 1 introduces exactly
   one new error code, `review_already_exists`.
 
+- L13 — P1 commit 2 (the reviews write path) shipped as 9741b3e: five routes, the only new
+  error code `review_already_exists` mapped from SQLSTATE 23505 on
+  `ux_tb_review_user_place_active`, logical delete, moderation behind the existing
+  `review.moderate`, and `set_config('app.current_user_id', …, true)` as the first statement of
+  every write transaction so the existing trigger stamps `co_actor_user`.
+  - Two inconsistencies in this change's own documents were found while reviewing it. The
+    first was mine: `p1-discovery.md` §6 said `DELETE` is "author or moderator" while spec S17
+    and the ODD task said author-only. Implemented author-only, which is what S17 (the spec of
+    record) says, and §6 was corrected: a moderator retires content through the admin route.
+  - The second is a schema-truth defect recorded as **Q7**: the diagram's comment promised the
+    partial unique frees moderated *and* deleted reviews, but the predicate is
+    `WHERE dt_deleted_at IS NULL`, so a moderated-but-not-deleted review still blocks a new
+    `POST` with `409`. The comment now states what the index actually does, and the two
+    candidate fixes are written down rather than guessed.
+
 - L12 — The truncated requirement is resolved by the human (2026-11-02). Verbatim answer to
   the four readings offered: "si era la A" — "saber que mi [invitado aceptó]": the host wants
   to see who answered the invitation, not a feed, not a discovery badge.

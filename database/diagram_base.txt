@@ -583,8 +583,11 @@ Table core.tb_review {
     co_place
     co_user
     // [PARTIAL UNIQUE] En SQL: UNIQUE (co_user, co_place) WHERE dt_deleted_at IS NULL.
-    // Una reseña por usuario y lugar. Sin el filtro, una reseña moderada o borrada
-    // dejaría al usuario sin poder volver a reseñar ese lugar.
+    // Una reseña por usuario y lugar. El filtro libera el slot SOLO para reseñas
+    // borradas lógicamente: el predicado es dt_deleted_at IS NULL, no tx_status.
+    // Una reseña MODERATED sin borrar sigue ocupando el slot y bloquea un POST nuevo
+    // con 409 (verificado 2026-11-02 con el índice real). Por eso moderar con retiro
+    // debe además fijar dt_deleted_at; ver Q7 en el change social-discovery.
     (co_user, co_place) [unique, name: 'ux_tb_review_user_place_active']
   }
 }

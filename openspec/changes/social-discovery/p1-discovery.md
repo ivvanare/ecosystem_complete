@@ -291,7 +291,7 @@ matter:
 | `GET` | `/v1/places/{coPlace}/reviews` | none | Paginated. Hides `INACTIVE`/`MODERATED`/deleted rows from everyone but the author and holders of `review.moderate` |
 | `POST` | `/v1/places/{coPlace}/reviews` | bearer | Body `{rating: 1..5, comment?}`. `409 review_already_exists` on the partial unique index |
 | `PATCH` | `/v1/places/{coPlace}/reviews/{coReview}` | bearer, author | `403 permission_denied` for anyone else |
-| `DELETE` | `/v1/places/{coPlace}/reviews/{coReview}` | bearer, author or moderator | Logical delete (`dt_deleted_at`), so the author may review again later |
+| `DELETE` | `/v1/places/{coPlace}/reviews/{coReview}` | bearer, author only | Logical delete (`dt_deleted_at`), so the author may review again later. A moderator retires content through the admin route (S17) |
 | `PATCH` | `/v1/admin/reviews/{coReview}` | bearer, `review.moderate` | `{status: ACTIVE\|INACTIVE\|MODERATED}` |
 
 Details that are easy to get wrong and are therefore pinned:

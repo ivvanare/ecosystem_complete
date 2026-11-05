@@ -510,6 +510,16 @@ What the design owes in exchange, cheaply:
 - ~~**Q5 — When a surprise unlocks.**~~ **Resolved 2026-11-02:** `SURPRISE` hides the venue,
   the host picks `AT_SCHEDULED` (default) or `ON_ACCEPT`, and the coarse area stays visible
   (D20).
+- **Q7 — Does moderation let the author review that place again?** Found on 2026-11-02 while
+  implementing the reviews write path: `ux_tb_review_user_place_active` is
+  `UNIQUE (co_user, co_place) WHERE dt_deleted_at IS NULL`, so a `MODERATED` review that is not
+  soft-deleted still occupies the slot and a new `POST` answers `409`. The diagram's comment
+  claimed the filter freed moderated *and* deleted reviews; it only frees deleted ones, and the
+  comment has been corrected. Two ways to close it, both small: **(a)** retiring a review by
+  moderation also sets `dt_deleted_at`, which needs no migration and matches the documented
+  intent; **(b)** change the partial predicate to `dt_deleted_at IS NULL AND tx_status = 'ACTIVE'`
+  in a new ledger file, which is cleaner semantics but rewrites an applied index. Blocks
+  nothing in P1; it decides what a moderated author experiences.
 - **Q6 — Capacity on public plans.** A private plan needs a party size ("voy solo", "somos
   dos"); a public festival may need a capacity and a waitlist. Both are plausible and they
   are not the same column; P3a ships party size only, and capacity waits for a consumer.
