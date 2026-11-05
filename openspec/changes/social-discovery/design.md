@@ -492,13 +492,49 @@ What the design owes in exchange, cheaply:
   yes, for a guest who needs to prepare logistically).
 - Declining never reveals. There is no path that shows the venue to someone who said no.
 
+## D21 — The mobile app is the consumer; the admin panel only administers
+
+> Stated by the human on 2026-11-02: "la web melia-admin sera netamente administrativa y de
+> gestion, la aplicacion movil aun no esta hecha, por eso tenemos chance de hacer la base de
+> lo que sera el rumbo de la app".
+
+This settles a question the change had left implicit. Discovery, reviews, follow, check-ins,
+plans and personalization are **mobile surfaces**. `melia-admin` is a backoffice: it manages
+users, roles, places and moderation. It renders data; it is not where a person discovers a
+place or checks in.
+
+Consequences that shape what comes next:
+
+- The admin panel is **not** a test bed for consumer UX. A feature that only makes sense in
+  the mobile app does not need an admin screen to be "complete", and an admin screen is not
+  evidence that the mobile flow works.
+- Because the mobile client does not exist yet, the **API contract is the specification of
+  the app's direction**. Getting `GET /v1/places`, the review list and the check-in rules
+  right now is cheaper than changing them after a client is built against them — which is
+  why this phase invests in contract-first routes and honest error codes rather than in
+  either UI.
+- The admin routes that remain in scope are the ones a moderator or an operator needs:
+  reviews listing and moderation, place ownership and management. The SPA session's scope
+  note ("nada de esto habilita la pantalla admin de Places") is correct and expected.
+- Anything consumer-facing that would need an admin analogue should be asked once, in the
+  change, rather than assumed: the moderation list (`GET /v1/admin/reviews`) was exactly that
+  gap and was found by the SPA session, not by this plan.
+
 ## Open decisions (non-blocking for P1)
 
-- **Q1 — Check-in validation depth.** Free self-assertion (shipped in P2, simple, spoofable)
-  versus proximity proof (a short-lived signed token issued when the app is within the
-  radius). The second is meaningfully stronger and meaningfully more work, and it needs a
-  decision on tolerance for fake check-ins before it is built. Until decided, UI copy must
-  not present check-ins as verified presence.
+- ~~**Q1 — Check-in validation depth.**~~ **Resolved 2026-11-02: option B, a coordinate
+  validated at the edge.** The client sends its position with the check-in; the server
+  validates it is within the place's radius using the same edge validation the discovery
+  query already uses, and stores **one enum value** — never the coordinate and never the
+  distance (D11 still holds). A check-in made outside the radius is rejected, not silently
+  downgraded: telling someone "you are not there" is honest, and recording a check-in they
+  did not make is not.
+  - Rejected for now: the signed proximity token (real proof, but a slice of its own: issue
+    endpoint, TTL, single use, binding, replay protection). It arrives only if abuse appears.
+  - Rejected: free self-assertion, because it makes the "my friend was here" highlight —
+    the whole point of P2 — trivially fake.
+  - Why this is enough: it turns lying from trivial into work. It is not cryptographic proof
+    and the UI must never say "verified"; the words are "near" or "at the place".
 - **Q2 — Blocking before public launch.** P2 ships follow without block. A public social
   surface needs block before it is exposed broadly; it is cheap to add and expensive to
   retrofit once people expect the graph.
