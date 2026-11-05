@@ -964,3 +964,26 @@ móvil, y un canal que nadie puede recibir no es un canal.
   cortesía no puede hacer fallar aquello que anuncia.
 
 Tipos disponibles hoy: `invitation.received`.
+
+---
+
+## 18. Moderación de planes e invitaciones
+
+```http
+GET    /v1/admin/plans?status=ACTIVE|INACTIVE&ownerId=&visibility=&page=&limit=      plan.moderate
+PATCH  /v1/admin/plans/{coRoute}          { "status": "INACTIVE" }                   plan.moderate
+GET    /v1/admin/invitations?status=&planId=&inviteeId=&page=&limit=                invitation.moderate
+DELETE /v1/admin/invitations/{coInvitation}                                        invitation.moderate
+```
+
+El panel **modera, no participa**: no se une a un plan, no invita, no vota. Por eso los permisos
+son propios (`plan.moderate`, `invitation.moderate`) y no `admin.access`, que solo significa
+"puede entrar al panel".
+
+- **Suspender un plan** (`status: INACTIVE`) lo saca de circulación: deja de ser visible para
+  quien no es miembro. Los miembros conservan la lectura para no perder su itinerario.
+- **Revocar una invitación** la pasa a `REVOKED` y **ya no se puede aceptar** — el aceptar solo
+  matchea filas `PENDING`, así que la regla no necesita código extra. Revocar no crea membresía.
+- Los dos listados devuelven todo el sitio, sin alcance por ownership: moderar exige ver.
+- `expiresAt` y `revealed` viajan en la fila de invitación, así el moderador ve qué está vivo,
+  qué venció y qué nunca se respondió.

@@ -42,6 +42,7 @@ type Options struct {
 	Plans              PlanCollaboration
 	Blocks             Blocking
 	Notifications      NotificationPreferences
+	PlanModeration     PlanModeration
 	Reviews            ReviewService
 }
 
@@ -156,6 +157,24 @@ func New(opts Options) http.Handler {
 	if opts.Discovery != nil {
 		placesHandler := &placesHandlers{discovery: opts.Discovery, logger: logger}
 		mux.HandleFunc("GET /v1/places", placesHandler.places)
+	}
+
+	// Plan and invitation moderation (D21): the backoffice moderates, it does not participate.
+	// The capabilities are their own, not admin.access, which only means "may enter the panel".
+	if opts.PlanModeration != nil && opts.Authorizer != nil {
+		moderation := &planModerationHandlers{service: opts.PlanModeration, logger: logger}
+		mux.HandleFunc("GET /v1/admin/plans",
+			RequireAuth(opts.TokenParser,
+				RequirePermission(opts.Authorizer, PlanModeratePermission, logger, moderation.adminPlans)))
+		mux.HandleFunc("PATCH /v1/admin/plans/{coRoute}",
+			RequireAuth(opts.TokenParser,
+				RequirePermission(opts.Authorizer, PlanModeratePermission, logger, moderation.moderatePlan)))
+		mux.HandleFunc("GET /v1/admin/invitations",
+			RequireAuth(opts.TokenParser,
+				RequirePermission(opts.Authorizer, InvitationModeratePermission, logger, moderation.adminInvitations)))
+		mux.HandleFunc("DELETE /v1/admin/invitations/{coInvitation}",
+			RequireAuth(opts.TokenParser,
+				RequirePermission(opts.Authorizer, InvitationModeratePermission, logger, moderation.revokeInvitation)))
 	}
 
 	// Notification preferences (S13): every kind is individually disableable.

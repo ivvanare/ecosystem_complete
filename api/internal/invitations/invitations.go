@@ -89,6 +89,13 @@ type CreateInput struct {
 	Hint      *string
 }
 
+// AdminFilter narrows the moderation listing. Every field is optional.
+type AdminFilter struct {
+	Status    string
+	PlanID    string
+	InviteeID string
+}
+
 // Store is the persistence seam; tests fake it, because the suite never needs PostgreSQL.
 type Store interface {
 	// Role returns the caller's role in the plan and its visibility, or "" when not a member.
@@ -100,6 +107,11 @@ type Store interface {
 	// VenueHidden reports whether an unrevealed SURPRISE invitation still hides the venue from
 	// this caller in this plan.
 	VenueHidden(ctx context.Context, userID, planID string) (bool, error)
+	// AdminList is the moderation listing: every invitation of the site.
+	AdminList(ctx context.Context, filter AdminFilter, page, limit int) ([]Invitation, int, error)
+	// Revoke cancels a live invitation. A revoked one cannot be accepted: the accept matches
+	// only PENDING rows, so it answers 404 without extra rules.
+	Revoke(ctx context.Context, actorID, invitationID string) error
 	// Expire flips the stale PENDING rows to EXPIRED. It is hygiene, not enforcement: the read
 	// predicate already treats those rows as unusable.
 	Expire(ctx context.Context, now time.Time) (int64, error)
@@ -192,6 +204,28 @@ func (s *Service) answer(ctx context.Context, actorID, invitationID, status stri
 
 func isEmpty(value *string) bool { return value == nil || *value == "" }
 
+// AdminList is the moderation listing (D21): the backoffice reads invitations to moderate
+// them, it never answers one.
+func (s *Service) AdminList(ctx context.Context, filter AdminFilter, page, limit int) ([]Invitation, int, error) {
+	if filter.Status != "" && !isKnownStatus(filter.Status) {
+		return nil, 0, fmt.Errorf("invitations: unknown status %q", filter.Status)
+	}
+	return s.store.AdminList(ctx, filter, page, limit)
+}
+
+// Revoke cancels an invitation. Revoking is not participating: no membership is created.
+func (s *Service) Revoke(ctx context.Context, actorID, invitationID string) error {
+	return s.store.Revoke(ctx, actorID, invitationID)
+}
+
+func isKnownStatus(status string) bool {
+	switch status {
+	case StatusPending, StatusAccepted, StatusDeclined, StatusExpired, StatusRevoked:
+		return true
+	}
+	return false
+}
+
 // VenueHidden is true when the caller holds a SURPRISE invitation for the plan that has not
 // been revealed yet. A member is never hidden from: they are already inside the plan.
 func (s *PostgresStore) VenueHidden(ctx context.Context, userID, planID string) (bool, error) {
@@ -212,6 +246,79 @@ SELECT EXISTS (
 		return false, fmt.Errorf("checking the reveal rule: %w", err)
 	}
 	return hidden, nil
+}
+
+// AdminList returns one page of every invitation, newest first, with the optional filters.
+func (s *PostgresStore) AdminList(ctx context.Context, filter AdminFilter, page, limit int) ([]Invitation, int, error) {
+	const predicate = `
+WHERE ($1::public.plan_invitation_status IS NULL OR i.tx_status = $1::public.plan_invitation_status)
+  AND ($2::uuid IS NULL OR i.co_route = $2::uuid)
+  AND ($3::uuid IS NULL OR i.co_user = $3::uuid)`
+
+	args := []any{nullableText(filter.Status), nullableUUID(filter.PlanID), nullableUUID(filter.InviteeID)}
+
+	var total int
+	if err := s.pool.QueryRow(ctx, "SELECT COUNT(*) FROM core.tb_plan_invitation i"+predicate, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("counting invitations: %w", err)
+	}
+
+	offset := (page - 1) * limit
+	rows, err := s.pool.Query(ctx, invitationColumns+predicate+`
+ORDER BY i.dt_created_at DESC, i.co_invitation
+LIMIT $4 OFFSET $5`, append(args, limit, offset)...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing invitations: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]Invitation, 0, limit)
+	for rows.Next() {
+		invitation, err := scanInvitation(rows)
+		if err != nil {
+			return nil, 0, fmt.Errorf("scanning invitation: %w", err)
+		}
+		result = append(result, invitation)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("during invitation iteration: %w", err)
+	}
+	return result, total, nil
+}
+
+// Revoke cancels a live invitation; the accept path already refuses anything not PENDING.
+func (s *PostgresStore) Revoke(ctx context.Context, actorID, invitationID string) error {
+	const query = `
+UPDATE core.tb_plan_invitation
+   SET tx_status = 'REVOKED', dt_responded_at = now()
+ WHERE co_invitation = $1::uuid AND tx_status = 'PENDING'`
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.current_user_id', $1, true)`, actorID); err != nil {
+		return fmt.Errorf("announcing the actor: %w", err)
+	}
+	if _, err := tx.Exec(ctx, query, invitationID); err != nil {
+		return fmt.Errorf("revoking invitation: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
+// nullableText binds an absent filter as NULL.
+func nullableText(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+// nullableUUID binds an absent id as NULL: "" is an invalid cast for uuid.
+func nullableUUID(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 // Expire flips stale PENDING rows to EXPIRED and reports how many it touched.

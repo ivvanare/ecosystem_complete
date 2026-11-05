@@ -1311,6 +1311,142 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/admin/plans:
+    get:
+      tags: [Admin]
+      operationId: listAdminPlans
+      summary: List plans for moderation
+      description: |
+        Requires `plan.moderate`. Every plan of the site, regardless of membership: the
+        backoffice moderates, it does not participate (D21). Filters are optional and the zero
+        value lists everything, newest first.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [ACTIVE, INACTIVE] }
+        - name: ownerId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: visibility
+          in: query
+          schema: { type: string, enum: [PRIVATE, PUBLIC] }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page of plans, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data, page, limit, total]
+                properties:
+                  page: { type: integer }
+                  limit: { type: integer }
+                  total: { type: integer }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Plan" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/admin/plans/{coRoute}:
+    patch:
+      tags: [Admin]
+      operationId: moderatePlan
+      summary: Suspend or restore a plan
+      description: |
+        Requires `plan.moderate`. A suspended plan stops being visible to non-members; its
+        members keep read access so nobody loses their itinerary. The moderator never joins the
+        plan: taking something out of circulation is not participating in it.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coRoute
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [status]
+              properties:
+                status: { type: string, enum: [ACTIVE, INACTIVE] }
+      responses:
+        "204": { description: Status applied. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/admin/invitations:
+    get:
+      tags: [Admin]
+      operationId: listAdminInvitations
+      summary: List invitations for moderation
+      description: |
+        Requires `invitation.moderate`. Every invitation of the site with its `expiresAt` and
+        `revealed`, so a moderator can see what is live, what expired and what never answered.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [PENDING, ACCEPTED, DECLINED, EXPIRED, REVOKED] }
+        - name: planId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: inviteeId
+          in: query
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page of invitations, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data, page, limit, total]
+                properties:
+                  page: { type: integer }
+                  limit: { type: integer }
+                  total: { type: integer }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Invitation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/admin/invitations/{coInvitation}:
+    delete:
+      tags: [Admin]
+      operationId: revokeInvitation
+      summary: Revoke an invitation
+      description: |
+        Requires `invitation.moderate`. Flips a live invitation to `REVOKED`; it can no longer be
+        accepted, because the accept path only matches rows that are still `PENDING`. Revoking
+        creates no membership — moderation is not participation.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coInvitation
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Revoked (or was no longer live). }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationError" }
   /v1/admin/places:
     get:
       tags: [Admin]

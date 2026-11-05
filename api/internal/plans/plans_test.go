@@ -9,15 +9,17 @@ import (
 
 // fakeStore scripts roles and records what the service asked for.
 type fakeStore struct {
-	role       string
-	visibility string
-	roleErr    error
-	joined     string // role the service chose for the self-join
-	removed    string
-	created    bool
-	updated    UpdateInput
-	addedOrder int
-	voted      int
+	role        string
+	visibility  string
+	roleErr     error
+	joined      string // role the service chose for the self-join
+	removed     string
+	created     bool
+	updated     UpdateInput
+	addedOrder  int
+	adminListed bool
+	status      string
+	voted       int
 }
 
 func (f *fakeStore) Create(_ context.Context, _ string, _ CreateInput) (Plan, error) {
@@ -47,6 +49,14 @@ func (f *fakeStore) Vote(_ context.Context, _, _, _ string, value int) error {
 	return nil
 }
 
+func (f *fakeStore) AdminList(_ context.Context, _ AdminFilter, _, _ int) ([]Plan, int, error) {
+	f.adminListed = true
+	return []Plan{{ID: "p1"}}, 1, nil
+}
+func (f *fakeStore) SetStatus(_ context.Context, _, _, status string) error {
+	f.status = status
+	return nil
+}
 func (f *fakeStore) ListFor(context.Context, string, int, int) ([]Plan, int, error) {
 	return []Plan{{ID: "p1"}}, 1, nil
 }
@@ -226,5 +236,39 @@ func TestVoteValueIsOneOrMinusOne(t *testing.T) {
 	store := &fakeStore{role: RoleOwner, visibility: VisibilityPrivate}
 	if err := service(store).Vote(context.Background(), "owner", "p1", "place", 0); err == nil {
 		t.Fatal("a zero vote was accepted")
+	}
+}
+
+// The moderation rules: taking something out of circulation is not joining it.
+
+func TestModerateRejectsAnUnknownStatus(t *testing.T) {
+	store := &fakeStore{}
+	if err := service(store).Moderate(context.Background(), "admin", "p1", "DELETED"); err == nil {
+		t.Fatal("an unknown plan status was accepted")
+	}
+}
+
+func TestModerateSuspendsAndRestores(t *testing.T) {
+	store := &fakeStore{}
+	svc := service(store)
+	for _, status := range []string{"INACTIVE", "ACTIVE"} {
+		if err := svc.Moderate(context.Background(), "admin", "p1", status); err != nil {
+			t.Fatalf("Moderate(%s): %v", status, err)
+		}
+		if store.status != status {
+			t.Fatalf("stored status = %q, want %q", store.status, status)
+		}
+	}
+}
+
+func TestAdminListDoesNotRequireMembership(t *testing.T) {
+	// A moderator lists every plan without belonging to any: the ownership scoping of the
+	// consumer surface must not apply here (D21).
+	store := &fakeStore{}
+	if _, _, err := service(store).AdminList(context.Background(), AdminFilter{Status: "ACTIVE"}, 1, 20); err != nil {
+		t.Fatalf("AdminList: %v", err)
+	}
+	if !store.adminListed {
+		t.Fatal("the moderation listing was not requested")
 	}
 }

@@ -80,6 +80,13 @@ type PlanPlace struct {
 	CreatedAt time.Time
 }
 
+// AdminFilter narrows the moderation listing. Every field is optional.
+type AdminFilter struct {
+	Status     string
+	OwnerID    string
+	Visibility string
+}
+
 // Store is the persistence seam; tests fake it, because the suite never needs PostgreSQL.
 type Store interface {
 	Create(ctx context.Context, actorID string, in CreateInput) (Plan, error)
@@ -93,6 +100,8 @@ type Store interface {
 	RemovePlace(ctx context.Context, planID, placeID string) error
 	Places(ctx context.Context, actorID, planID string) ([]PlanPlace, error)
 	Vote(ctx context.Context, actorID, planID, placeID string, value int) error
+	AdminList(ctx context.Context, filter AdminFilter, page, limit int) ([]Plan, int, error)
+	SetStatus(ctx context.Context, actorID, planID, status string) error
 }
 
 // Service applies the authorization rules.
@@ -273,6 +282,20 @@ func (s *Service) Vote(ctx context.Context, actorID, planID, placeID string, val
 	return s.store.Vote(ctx, actorID, planID, placeID, value)
 }
 
+// AdminList is the moderation listing: every plan, regardless of membership.
+func (s *Service) AdminList(ctx context.Context, filter AdminFilter, page, limit int) ([]Plan, int, error) {
+	return s.store.AdminList(ctx, filter, page, limit)
+}
+
+// Moderate takes a plan out of circulation, or puts it back. It is not participation: the
+// moderator never joins, adds places or votes (D21).
+func (s *Service) Moderate(ctx context.Context, actorID, planID, status string) error {
+	if status != "ACTIVE" && status != "INACTIVE" {
+		return fmt.Errorf("plans: unknown status %q", status)
+	}
+	return s.store.SetStatus(ctx, actorID, planID, status)
+}
+
 // List returns the plans the caller belongs to.
 func (s *Service) List(ctx context.Context, actorID string, page, limit int) ([]Plan, int, error) {
 	return s.store.ListFor(ctx, actorID, page, limit)
@@ -288,6 +311,8 @@ type Invitations interface {
 	Decline(ctx context.Context, actorID, invitationID string) error
 	// VenueHidden reports whether an unrevealed SURPRISE invitation still hides the venue.
 	VenueHidden(ctx context.Context, userID, planID string) (bool, error)
+	AdminList(ctx context.Context, filter invitations.AdminFilter, page, limit int) ([]invitations.Invitation, int, error)
+	Revoke(ctx context.Context, actorID, invitationID string) error
 }
 
 // SetNotifier wires the courtesy channel.
@@ -311,6 +336,16 @@ func (s *Service) Invite(ctx context.Context, actorID, planID string, in invitat
 		s.notifier.InvitationReceived(ctx, created.UserID, planName)
 	}
 	return created, nil
+}
+
+// InvitationAdmins is the moderation listing of every invitation in the site.
+func (s *Service) InvitationAdmins(ctx context.Context, filter invitations.AdminFilter, page, limit int) ([]invitations.Invitation, int, error) {
+	return s.invitations.AdminList(ctx, filter, page, limit)
+}
+
+// RevokeInvitation cancels an invitation without becoming a participant.
+func (s *Service) RevokeInvitation(ctx context.Context, actorID, invitationID string) error {
+	return s.invitations.Revoke(ctx, actorID, invitationID)
 }
 
 // PlanInvitations is the host's RSVP view.
@@ -350,6 +385,17 @@ SELECT r.co_route::text, r.co_user::text, r.tx_name, r.tx_description,
        (SELECT count(*) FROM core.tb_route_member m2 WHERE m2.co_route = r.co_route)
 FROM core.tb_route r`
 
+// adminPlanColumns is the moderation projection. It deliberately omits the viewer-role
+// subquery: the moderator is not a participant, and reusing planColumns would bind the
+// filter arguments to $1 where the subquery expects the viewer id.
+const adminPlanColumns = `
+SELECT r.co_route::text, r.co_user::text, r.tx_name, r.tx_description,
+       r.tx_visibility::text, r.tx_status::text, r.dt_scheduled_at, r.nu_party_size,
+       r.dt_created_at, r.dt_updated_at,
+       '' AS viewer_role,
+       (SELECT count(*) FROM core.tb_route_member m2 WHERE m2.co_route = r.co_route)
+FROM core.tb_route r`
+
 // Create inserts the plan and its OWNER row in one transaction: a plan without an owner is
 // invalid, so the two writes succeed or fail together (S4).
 func (s *PostgresStore) Create(ctx context.Context, actorID string, in CreateInput) (Plan, error) {
@@ -384,6 +430,11 @@ func (s *PostgresStore) Get(ctx context.Context, actorID, planID string) (Plan, 
 	row := s.pool.QueryRow(ctx, planColumns+`
 WHERE r.co_route = $2::uuid
   AND r.dt_deleted_at IS NULL
+  -- A suspended plan stops being visible to non-members; members keep it so nobody loses
+  -- their itinerary (S8). Without this clause suspending a plan did nothing on read.
+  AND (r.tx_status = 'ACTIVE' OR EXISTS (
+        SELECT 1 FROM core.tb_route_member m6
+         WHERE m6.co_route = r.co_route AND m6.co_user = $1::uuid))
   AND (r.tx_visibility = 'PUBLIC' OR EXISTS (
         SELECT 1 FROM core.tb_route_member m3
          WHERE m3.co_route = r.co_route AND m3.co_user = $1::uuid))`, actorID, planID)
@@ -569,6 +620,73 @@ ON CONFLICT (co_route, co_place, co_user) DO UPDATE
 		return fmt.Errorf("voting: %w", err)
 	}
 	return nil
+}
+
+// AdminList returns one page of every plan, newest first, with the optional filters.
+func (s *PostgresStore) AdminList(ctx context.Context, filter AdminFilter, page, limit int) ([]Plan, int, error) {
+	const predicate = `
+WHERE r.dt_deleted_at IS NULL
+  AND ($1::public.activatable_status IS NULL OR r.tx_status = $1::public.activatable_status)
+  AND ($2::uuid IS NULL OR r.co_user = $2::uuid)
+  AND ($3::public.plan_visibility IS NULL OR r.tx_visibility = $3::public.plan_visibility)`
+
+	args := []any{nullableText(filter.Status), nullableUUID(filter.OwnerID), nullableText(filter.Visibility)}
+
+	var total int
+	if err := s.pool.QueryRow(ctx, "SELECT COUNT(*) FROM core.tb_route r"+predicate, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("counting plans for moderation: %w", err)
+	}
+
+	offset := (page - 1) * limit
+	rows, err := s.pool.Query(ctx, adminPlanColumns+predicate+`
+ORDER BY r.dt_created_at DESC, r.co_route
+LIMIT $4 OFFSET $5`, append(args, limit, offset)...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing plans for moderation: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]Plan, 0, limit)
+	for rows.Next() {
+		plan, err := scanPlan(rows)
+		if err != nil {
+			return nil, 0, fmt.Errorf("scanning plan for moderation: %w", err)
+		}
+		result = append(result, plan)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("during moderation plan iteration: %w", err)
+	}
+	return result, total, nil
+}
+
+// SetStatus suspends or restores a plan. The actor is announced for any observer of the write.
+func (s *PostgresStore) SetStatus(ctx context.Context, actorID, planID, status string) error {
+	const query = `
+UPDATE core.tb_route SET tx_status = $2::public.activatable_status, dt_updated_at = now()
+WHERE co_route = $1::uuid AND dt_deleted_at IS NULL`
+	return s.withActor(ctx, actorID, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, query, planID, status); err != nil {
+			return fmt.Errorf("setting plan status: %w", err)
+		}
+		return nil
+	})
+}
+
+// nullableText binds an absent filter as NULL, which the predicates read as "no filter".
+func nullableText(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+// nullableUUID binds an absent id as NULL, because "" is an invalid cast for uuid.
+func nullableUUID(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 // withActor runs one write with the caller announced, so any trigger observes the actor.
