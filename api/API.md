@@ -987,3 +987,25 @@ son propios (`plan.moderate`, `invitation.moderate`) y no `admin.access`, que so
 - Los dos listados devuelven todo el sitio, sin alcance por ownership: moderar exige ver.
 - `expiresAt` y `revealed` viajan en la fila de invitación, así el moderador ve qué está vivo,
   qué venció y qué nunca se respondió.
+
+### 14.1 Horarios y atributos de un lugar
+
+```http
+GET /v1/admin/places/{coPlace}/schedules     PUT /v1/admin/places/{coPlace}/schedules   { schedules: [...] }
+GET /v1/admin/places/{coPlace}/attributes    PUT /v1/admin/places/{coPlace}/attributes  { codes: [...] }
+```
+
+Ambos requieren `place.update` y respetan el alcance por ownership del resto del backoffice.
+
+- **Se reemplaza el conjunto completo**, no slot por slot. Un operador edita "el horario de este
+  lugar", y un conjunto semanal aplicado a medias respondería "cerrado" un día que nadie tocó.
+- Un `close` igual o anterior a `open` **cruza medianoche**: así el modelo ya dice "abre 20:00,
+  cierra 02:00". Horas iguales se rechazan, porque se leen como cerrado todo el día o abierto
+  todo el día según quién pregunte.
+- Un atributo fuera del catálogo es `422` con `field: codes, code: unknown`. Descartarlo en
+  silencio dejaría al operador creyendo que el filtro va a encontrarlo.
+- El `GET /v1/admin/places/{coPlace}` ya trae `schedules` y `attributes`, así el formulario de
+  edición se llena con una sola llamada. El listado NO los trae: serían dos consultas por fila.
+
+Estos dos endpoints son los que vuelven operables los filtros **`openAt`** y de **atributos** de
+discovery, que hasta ahora solo se podían alimentar por SQL.

@@ -46,9 +46,21 @@ type Place struct {
 	Longitude    float64
 	Address      *string
 	Status       string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	DeletedAt    *time.Time
+	// Schedules and Attributes are populated by the detail read only: a page of places does
+	// not need them, and fetching them per row would be a query per row.
+	Schedules  []Schedule
+	Attributes []string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	DeletedAt  *time.Time
+}
+
+// Schedule is one weekly opening interval. A close time at or before the open time crosses
+// midnight, which is how the model already expresses a bar open 20:00-02:00.
+type Schedule struct {
+	DayOfWeek int    `json:"dayOfWeek"`
+	Open      string `json:"open"`
+	Close     string `json:"close"`
 }
 
 // Filter narrows the listing. Every field is optional; the zero value lists every row the
@@ -119,6 +131,11 @@ type Store interface {
 	Retire(ctx context.Context, viewer Viewer, actorID, placeID string) error
 	CategoryExists(ctx context.Context, categoryID string) (bool, error)
 	Categories(ctx context.Context, status string, page, limit int) ([]Category, int, error)
+	Schedules(ctx context.Context, placeID string) ([]Schedule, error)
+	ReplaceSchedules(ctx context.Context, actorID, placeID string, schedules []Schedule) error
+	Attributes(ctx context.Context, placeID string) ([]string, error)
+	ReplaceAttributes(ctx context.Context, actorID, placeID string, codes []string) error
+	UnknownAttributes(ctx context.Context, codes []string) ([]string, error)
 }
 
 // Service applies the ownership rules.
@@ -182,6 +199,83 @@ func (s *Service) requireCategory(ctx context.Context, categoryID string) error 
 	}
 	if !exists {
 		return ErrUnknownCategory
+	}
+	return nil
+}
+
+// Schedules returns the weekly hours of a place the viewer may see.
+func (s *Service) Schedules(ctx context.Context, viewer Viewer, placeID string) ([]Schedule, error) {
+	if _, err := s.store.Get(ctx, viewer, placeID); err != nil {
+		return nil, err
+	}
+	return s.store.Schedules(ctx, placeID)
+}
+
+// ReplaceSchedules replaces the whole weekly set.
+//
+// Replacement rather than per-slot editing is deliberate: an operator edits "the hours of this
+// place", and a half-applied weekly set is worse than none — it would answer "closed" for a day
+// nobody touched.
+func (s *Service) ReplaceSchedules(ctx context.Context, viewer Viewer, actorID, placeID string, schedules []Schedule) error {
+	if _, err := s.store.Get(ctx, viewer, placeID); err != nil {
+		return err
+	}
+	if err := validateSchedules(schedules); err != nil {
+		return err
+	}
+	return s.store.ReplaceSchedules(ctx, actorID, placeID, schedules)
+}
+
+// Attributes returns the codes present on a place.
+func (s *Service) Attributes(ctx context.Context, viewer Viewer, placeID string) ([]string, error) {
+	if _, err := s.store.Get(ctx, viewer, placeID); err != nil {
+		return nil, err
+	}
+	return s.store.Attributes(ctx, placeID)
+}
+
+// ReplaceAttributes replaces the whole set, refusing codes the catalogue does not carry.
+func (s *Service) ReplaceAttributes(ctx context.Context, viewer Viewer, actorID, placeID string, codes []string) error {
+	if _, err := s.store.Get(ctx, viewer, placeID); err != nil {
+		return err
+	}
+	unknown, err := s.store.UnknownAttributes(ctx, codes)
+	if err != nil {
+		return err
+	}
+	if len(unknown) > 0 {
+		return &UnknownAttributeError{Codes: unknown}
+	}
+	return s.store.ReplaceAttributes(ctx, actorID, placeID, codes)
+}
+
+// UnknownAttributeError names the codes the catalogue does not carry, so the transport can
+// reject the request instead of silently dropping an attribute the operator believes is set.
+type UnknownAttributeError struct{ Codes []string }
+
+func (e *UnknownAttributeError) Error() string {
+	return fmt.Sprintf("placeadmin: unknown attributes %v", e.Codes)
+}
+
+// validateSchedules enforces the model's shapes at the edge.
+func validateSchedules(schedules []Schedule) error {
+	for _, schedule := range schedules {
+		if schedule.DayOfWeek < 1 || schedule.DayOfWeek > 7 {
+			return fmt.Errorf("placeadmin: day of week out of range")
+		}
+		opens, err := time.Parse("15:04", schedule.Open)
+		if err != nil {
+			return fmt.Errorf("placeadmin: invalid open time %q", schedule.Open)
+		}
+		closes, err := time.Parse("15:04", schedule.Close)
+		if err != nil {
+			return fmt.Errorf("placeadmin: invalid close time %q", schedule.Close)
+		}
+		// Equal times are ambiguous: it reads as closed all day or open all day depending on
+		// who is asking. Rejecting is the only honest option.
+		if opens.Equal(closes) {
+			return fmt.Errorf("placeadmin: open and close are the same time")
+		}
 	}
 	return nil
 }
@@ -281,6 +375,14 @@ WHERE p.co_place = $3::uuid AND `+scopePredicate, viewer.ManageAll, uuidOrNil(vi
 	place, err := scanPlace(row)
 	if err != nil {
 		return Place{}, ErrNotFound
+	}
+	// The detail read carries the weekly hours and the attributes: an operator cannot edit what
+	// the form does not show, and fetching them per list row would be a query per row.
+	if place.Schedules, err = s.Schedules(ctx, place.ID); err != nil {
+		return Place{}, err
+	}
+	if place.Attributes, err = s.Attributes(ctx, place.ID); err != nil {
+		return Place{}, err
 	}
 	return place, nil
 }
@@ -419,6 +521,120 @@ LIMIT $2 OFFSET $3`, statusParam, limit, offset)
 		return nil, 0, fmt.Errorf("during category iteration: %w", err)
 	}
 	return result, total, nil
+}
+
+// Schedules reads the weekly hours.
+func (s *PostgresStore) Schedules(ctx context.Context, placeID string) ([]Schedule, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT nu_day_of_week, to_char(dt_open_time, 'HH24:MI'), to_char(dt_close_time, 'HH24:MI')
+		FROM core.tb_place_schedule
+		WHERE co_place = $1::uuid
+		ORDER BY nu_day_of_week, dt_open_time`, placeID)
+	if err != nil {
+		return nil, fmt.Errorf("reading schedules: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]Schedule, 0, 7)
+	for rows.Next() {
+		var schedule Schedule
+		if err := rows.Scan(&schedule.DayOfWeek, &schedule.Open, &schedule.Close); err != nil {
+			return nil, fmt.Errorf("scanning schedule: %w", err)
+		}
+		result = append(result, schedule)
+	}
+	return result, rows.Err()
+}
+
+// ReplaceSchedules replaces the weekly set in one transaction: delete then insert, so a reader
+// never sees half the hours.
+func (s *PostgresStore) ReplaceSchedules(ctx context.Context, actorID, placeID string, schedules []Schedule) error {
+	return s.withActor(ctx, actorID, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `DELETE FROM core.tb_place_schedule WHERE co_place = $1::uuid`, placeID); err != nil {
+			return fmt.Errorf("clearing schedules: %w", err)
+		}
+		for _, schedule := range schedules {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO core.tb_place_schedule
+				    (co_schedule, co_place, nu_day_of_week, dt_open_time, dt_close_time, dt_created_at, dt_updated_at)
+				VALUES (gen_random_uuid(), $1::uuid, $2, $3::time, $4::time, now(), now())`,
+				placeID, schedule.DayOfWeek, schedule.Open, schedule.Close); err != nil {
+				return fmt.Errorf("inserting schedule: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
+// Attributes reads the codes present on a place.
+func (s *PostgresStore) Attributes(ctx context.Context, placeID string) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT a.tx_code
+		FROM core.tb_place_attribute_link l
+		JOIN core.tb_place_attribute a ON a.co_attribute = l.co_attribute
+		WHERE l.co_place = $1::uuid AND a.dt_deleted_at IS NULL
+		ORDER BY a.tx_code`, placeID)
+	if err != nil {
+		return nil, fmt.Errorf("reading attributes: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]string, 0, 4)
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			return nil, fmt.Errorf("scanning attribute: %w", err)
+		}
+		result = append(result, code)
+	}
+	return result, rows.Err()
+}
+
+// UnknownAttributes returns the codes the catalogue does not carry, so the caller can reject
+// the request instead of silently dropping what the operator asked for.
+func (s *PostgresStore) UnknownAttributes(ctx context.Context, codes []string) ([]string, error) {
+	if len(codes) == 0 {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT code FROM unnest($1::text[]) AS code
+		 WHERE NOT EXISTS (
+		       SELECT 1 FROM core.tb_place_attribute a
+		        WHERE a.tx_code = code AND a.dt_deleted_at IS NULL)`, codes)
+	if err != nil {
+		return nil, fmt.Errorf("checking attributes: %w", err)
+	}
+	defer rows.Close()
+
+	unknown := make([]string, 0, 2)
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			return nil, fmt.Errorf("scanning unknown attribute: %w", err)
+		}
+		unknown = append(unknown, code)
+	}
+	return unknown, rows.Err()
+}
+
+// ReplaceAttributes replaces the whole set in one transaction.
+func (s *PostgresStore) ReplaceAttributes(ctx context.Context, actorID, placeID string, codes []string) error {
+	return s.withActor(ctx, actorID, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `DELETE FROM core.tb_place_attribute_link WHERE co_place = $1::uuid`, placeID); err != nil {
+			return fmt.Errorf("clearing attributes: %w", err)
+		}
+		for _, code := range codes {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO core.tb_place_attribute_link
+				    (co_place, co_attribute, dt_created_at, dt_updated_at)
+				SELECT $1::uuid, a.co_attribute, now(), now() FROM core.tb_place_attribute a
+				 WHERE a.tx_code = $2 AND a.dt_deleted_at IS NULL
+				ON CONFLICT DO NOTHING`, placeID, code); err != nil {
+				return fmt.Errorf("linking attribute: %w", err)
+			}
+		}
+		return nil
+	})
 }
 
 // withActor runs one write with the caller announced, so the tb_place history trigger records

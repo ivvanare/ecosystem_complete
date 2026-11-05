@@ -20,6 +20,10 @@ type PlaceBackoffice interface {
 	Update(ctx context.Context, viewer placeadmin.Viewer, actorID, placeID string, in placeadmin.UpdateInput) (placeadmin.Place, error)
 	Retire(ctx context.Context, viewer placeadmin.Viewer, actorID, placeID string) error
 	Categories(ctx context.Context, status string, page, limit int) ([]placeadmin.Category, int, error)
+	Schedules(ctx context.Context, viewer placeadmin.Viewer, placeID string) ([]placeadmin.Schedule, error)
+	ReplaceSchedules(ctx context.Context, viewer placeadmin.Viewer, actorID, placeID string, schedules []placeadmin.Schedule) error
+	Attributes(ctx context.Context, viewer placeadmin.Viewer, placeID string) ([]string, error)
+	ReplaceAttributes(ctx context.Context, viewer placeadmin.Viewer, actorID, placeID string, codes []string) error
 }
 
 // Permissions the places backoffice is built from. place.create/update/delete are seeded in
@@ -89,16 +93,19 @@ type placeResponse struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
 	} `json:"category"`
-	Country   string     `json:"country"`
-	Region    *string    `json:"region"`
-	Timezone  string     `json:"timezone"`
-	Latitude  float64    `json:"latitude"`
-	Longitude float64    `json:"longitude"`
-	Address   *string    `json:"address"`
-	Status    string     `json:"status"`
-	CreatedAt time.Time  `json:"createdAt"`
-	UpdatedAt time.Time  `json:"updatedAt"`
-	DeletedAt *time.Time `json:"deletedAt"`
+	Country   string  `json:"country"`
+	Region    *string `json:"region"`
+	Timezone  string  `json:"timezone"`
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+	Address   *string `json:"address"`
+	Status    string  `json:"status"`
+	// Content, populated by the detail read so the edit form fills with one call.
+	Schedules  []placeadmin.Schedule `json:"schedules"`
+	Attributes []string              `json:"attributes"`
+	CreatedAt  time.Time             `json:"createdAt"`
+	UpdatedAt  time.Time             `json:"updatedAt"`
+	DeletedAt  *time.Time            `json:"deletedAt"`
 }
 
 func toPlaceResponse(place placeadmin.Place) placeResponse {
@@ -107,7 +114,8 @@ func toPlaceResponse(place placeadmin.Place) placeResponse {
 		Name: place.Name, Title: place.Title, Description: place.Description,
 		Country: place.Country, Region: place.Region, Timezone: place.Timezone,
 		Latitude: place.Latitude, Longitude: place.Longitude, Address: place.Address,
-		Status: place.Status, CreatedAt: place.CreatedAt, UpdatedAt: place.UpdatedAt,
+		Status: place.Status, Schedules: place.Schedules, Attributes: place.Attributes,
+		CreatedAt: place.CreatedAt, UpdatedAt: place.UpdatedAt,
 		DeletedAt: place.DeletedAt,
 	}
 	response.Category.ID = place.CategoryID
@@ -435,3 +443,93 @@ func emptyToNil(value *string) **string {
 
 // clearable keeps "absent" and "explicitly null" apart, which is what a partial update needs.
 func clearable(value *string) **string { return emptyToNil(value) }
+
+// schedules serves GET and PUT /v1/admin/places/{coPlace}/schedules.
+//
+// Replacement, not per-slot editing: an operator edits "the hours of this place", and a
+// half-applied weekly set would answer "closed" for a day nobody touched.
+func (h *placesAdminHandlers) schedules(w http.ResponseWriter, r *http.Request) {
+	viewer, ok := h.viewer(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication is required.")
+		return
+	}
+	placeID, ok := placeAdminParam(w, r)
+	if !ok {
+		return
+	}
+
+	if r.Method == http.MethodGet {
+		schedules, err := h.service.Schedules(r.Context(), viewer, placeID)
+		if err != nil {
+			h.writePlaceError(w, err, "reading schedules")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"data": schedules, "total": len(schedules)})
+		return
+	}
+
+	var body struct {
+		Schedules []placeadmin.Schedule `json:"schedules"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+		return
+	}
+	if err := h.service.ReplaceSchedules(r.Context(), viewer, viewer.UserID, placeID, body.Schedules); err != nil {
+		if isScheduleValidation(err) {
+			writeValidationError(w, []fieldError{{Field: "schedules", Code: "invalid"}})
+			return
+		}
+		h.writePlaceError(w, err, "replacing schedules")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// attributes serves GET and PUT /v1/admin/places/{coPlace}/attributes.
+func (h *placesAdminHandlers) attributes(w http.ResponseWriter, r *http.Request) {
+	viewer, ok := h.viewer(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication is required.")
+		return
+	}
+	placeID, ok := placeAdminParam(w, r)
+	if !ok {
+		return
+	}
+
+	if r.Method == http.MethodGet {
+		codes, err := h.service.Attributes(r.Context(), viewer, placeID)
+		if err != nil {
+			h.writePlaceError(w, err, "reading attributes")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"data": codes, "total": len(codes)})
+		return
+	}
+
+	var body struct {
+		Codes []string `json:"codes"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+		return
+	}
+	if err := h.service.ReplaceAttributes(r.Context(), viewer, viewer.UserID, placeID, body.Codes); err != nil {
+		var unknown *placeadmin.UnknownAttributeError
+		if errors.As(err, &unknown) {
+			// A dropped attribute the operator believes is set is worse than a rejected request.
+			writeValidationError(w, []fieldError{{Field: "codes", Code: "unknown"}})
+			return
+		}
+		h.writePlaceError(w, err, "replacing attributes")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// isScheduleValidation reports whether the failure was the edge validation of the hours.
+func isScheduleValidation(err error) bool {
+	return strings.Contains(err.Error(), "placeadmin:")
+}
