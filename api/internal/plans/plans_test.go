@@ -272,3 +272,74 @@ func TestAdminListDoesNotRequireMembership(t *testing.T) {
 		t.Fatal("the moderation listing was not requested")
 	}
 }
+
+// The live layer: a stored vote is reported, a failed one is not, and the reporter never decides
+// whether the vote succeeded.
+
+type fakeReporter struct {
+	planID, placeID string
+	called          bool
+}
+
+func (f *fakeReporter) VoteRecorded(_ context.Context, planID, placeID string) {
+	f.called, f.planID, f.placeID = true, planID, placeID
+}
+
+func TestAStoredVoteIsReportedToTheLiveLayer(t *testing.T) {
+	store := &fakeStore{role: RoleViewer, visibility: VisibilityPrivate}
+	reporter := &fakeReporter{}
+	svc := service(store)
+	svc.SetReporter(reporter)
+
+	if err := svc.Vote(context.Background(), "viewer", "p1", "place-1", 1); err != nil {
+		t.Fatalf("Vote: %v", err)
+	}
+	if !reporter.called || reporter.planID != "p1" || reporter.placeID != "place-1" {
+		t.Fatalf("reported = %+v", reporter)
+	}
+}
+
+// failingStore makes the vote write fail.
+type failingStore struct{ fakeStore }
+
+func (f *failingStore) Vote(context.Context, string, string, string, int) error {
+	return errors.New("db down")
+}
+
+func TestAVoteThatFailedIsNotReported(t *testing.T) {
+	reporter := &fakeReporter{}
+	svc := service(&failingStore{fakeStore{role: RoleViewer, visibility: VisibilityPrivate}})
+	svc.SetReporter(reporter)
+
+	if err := svc.Vote(context.Background(), "viewer", "p1", "place-1", 1); err == nil {
+		t.Fatal("a failing vote did not return its error")
+	}
+	if reporter.called {
+		t.Fatal("an event was published for a vote that was never stored")
+	}
+}
+
+// The subscription door reuses the plan's visibility: a private plan does not confirm that it
+// exists to someone who may not watch it.
+func TestCanWatchFollowsThePlanVisibility(t *testing.T) {
+	cases := []struct {
+		name       string
+		role       string
+		visibility string
+		wantErr    error
+	}{
+		{"member of a private plan", RoleViewer, VisibilityPrivate, nil},
+		{"member of a public plan", RoleOwner, VisibilityPublic, nil},
+		{"stranger on a public plan", "", VisibilityPublic, nil},
+		{"stranger on a private plan", "", VisibilityPrivate, ErrNotFound},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeStore{role: tc.role, visibility: tc.visibility}
+			err := service(store).CanWatch(context.Background(), "someone", "p1")
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}

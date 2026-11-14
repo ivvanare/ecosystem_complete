@@ -53,6 +53,13 @@ type Config struct {
 	AutoMigrate       bool
 	LogLevel          slog.Level
 	ShutdownTimeout   time.Duration
+	// Soketi is the realtime broker. All four values or none of them: a partial configuration
+	// is a publisher that fails on its first event, so it is refused at startup instead of
+	// degrading silently (realtime-votes S4).
+	SoketiURL    string
+	SoketiAppID  string
+	SoketiKey    string
+	SoketiSecret string
 }
 
 // Load reads and validates the configuration. It returns an error naming the offending
@@ -99,6 +106,28 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if len(cfg.JWTSecret) < MinJWTSecretLength {
 		return Config{}, fmt.Errorf("invalid JWT_SECRET: must be at least %d characters", MinJWTSecretLength)
+	}
+
+	// Realtime is optional as a whole and never half: the URL without a credential would build a
+	// publisher that answers 401 on its first event, which is worse than no realtime at all.
+	cfg.SoketiURL = strings.TrimSpace(lookup(getenv, "SOKETI_URL"))
+	cfg.SoketiAppID = strings.TrimSpace(lookup(getenv, "SOKETI_APP_ID"))
+	cfg.SoketiKey = strings.TrimSpace(lookup(getenv, "SOKETI_KEY"))
+	cfg.SoketiSecret = strings.TrimSpace(lookup(getenv, "SOKETI_SECRET"))
+	if cfg.SoketiURL != "" || cfg.SoketiAppID != "" || cfg.SoketiKey != "" || cfg.SoketiSecret != "" {
+		for _, required := range []struct {
+			name  string
+			value string
+		}{
+			{"SOKETI_URL", cfg.SoketiURL},
+			{"SOKETI_APP_ID", cfg.SoketiAppID},
+			{"SOKETI_KEY", cfg.SoketiKey},
+			{"SOKETI_SECRET", cfg.SoketiSecret},
+		} {
+			if required.value == "" {
+				return Config{}, fmt.Errorf("missing required environment variable: %s (realtime is configured by SOKETI_URL, SOKETI_APP_ID, SOKETI_KEY and SOKETI_SECRET together)", required.name)
+			}
+		}
 	}
 
 	for key, target := range map[string]*time.Duration{

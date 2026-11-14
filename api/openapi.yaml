@@ -873,6 +873,52 @@ paths:
         "204": { description: Retired. }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/realtime/auth:
+    post:
+      tags: [Realtime]
+      operationId: authorizeSubscription
+      summary: Sign a private channel subscription
+      description: |
+        Soketi, the broker, speaks the Pusher protocol. Plans publish on a **private** channel,
+        `private-plan-<coRoute>`, so a client cannot subscribe without this API's signature: a
+        public channel would let anyone holding a route id watch a private plan's activity.
+
+        The decision is the plan's own visibility door, not a second copy of it. A member may
+        watch. A `PUBLIC` plan may be watched by any authenticated account. A `PRIVATE` plan
+        answers `404` to everyone else, exactly like the plan's reads, so it never confirms that
+        it exists.
+
+        The answer is the `auth` string the client hands to Soketi unchanged. It is present only
+        when the broker is configured; otherwise the route is not registered at all.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [socketId, channel]
+              properties:
+                socketId:
+                  type: string
+                  description: The id Soketi gave this connection, e.g. 123.456.
+                  example: "123.456"
+                channel:
+                  type: string
+                  description: Must be private-plan-<coRoute>.
+                  example: private-plan-0b1c2d3e-0000-4000-8000-000000000004
+      responses:
+        "200":
+          description: Signed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RealtimeAuth" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
   /v1/admin/places/{coPlace}/menu:
     get:
       tags: [Admin]
@@ -2630,6 +2676,13 @@ components:
         url: { type: string, description: Path under the API origin, e.g. /media/places/... }
         type: { type: string, enum: [COVER, GALLERY] }
         order: { type: integer }
+    RealtimeAuth:
+      type: object
+      additionalProperties: false
+      description: The signature the client hands to Soketi unchanged.
+      required: [auth]
+      properties:
+        auth: { type: string, example: "app-key:2fb87413a2f3ac25d438cb7b0f5a1f25b35d168267da5ff71ba099d35ef612bb" }
     PlacePhotoPlacement:
       type: object
       additionalProperties: false

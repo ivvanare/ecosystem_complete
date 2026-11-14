@@ -51,6 +51,10 @@ nombrando la variable; no hay fallback silencioso a otra base.
 | `HTTP_ADDR` | no | `:8080` | dirección de escucha |
 | `RABBITMQ_URL` | no | vacío | sin él, registro y recuperación quedan deshabilitados |
 | `MEDIA_DIR` | `/app/media` | Where uploaded place images are written and served from |
+| `SOKETI_URL` | no | vacío | broker realtime; sin él, los eventos de voto quedan deshabilitados |
+| `SOKETI_APP_ID` | no | vacío | app id de Soketi; obligatorio si hay `SOKETI_URL` |
+| `SOKETI_KEY` | no | vacío | key de la app; obligatorio si hay `SOKETI_URL` |
+| `SOKETI_SECRET` | no | vacío | secret de la app; obligatorio si hay `SOKETI_URL` |
 | `DB_INIT_DIR` | no | `/app/database/init` | archivos `NN-*.sql` del esquema |
 | `DB_AUTO_MIGRATE` | no | `true` | aplica archivos pendientes al arrancar |
 | `CORS_ALLOWED_ORIGINS` | no | vacío | orígenes del panel, separados por coma; vacío = sin CORS |

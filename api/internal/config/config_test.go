@@ -272,3 +272,47 @@ func TestSchedulerIntervalRejectsInvalidValues(t *testing.T) {
 		}
 	}
 }
+
+// Realtime is all four variables or none: a URL without its credentials would build a publisher
+// that answers 401 on its first event, and the vote would silently stop notifying anyone.
+func TestLoadAcceptsRealtimeOnlyComplete(t *testing.T) {
+	complete := validEnv()
+	complete["SOKETI_URL"] = "http://soketi:6001"
+	complete["SOKETI_APP_ID"] = "app-id"
+	complete["SOKETI_KEY"] = "app-key"
+	complete["SOKETI_SECRET"] = "app-secret"
+	cfg, err := Load(env(complete))
+	if err != nil {
+		t.Fatalf("a complete realtime configuration was refused: %v", err)
+	}
+	if cfg.SoketiURL != "http://soketi:6001" || cfg.SoketiKey != "app-key" {
+		t.Fatalf("realtime config = %+v", cfg)
+	}
+
+	unset := validEnv()
+	cfg, err = Load(env(unset))
+	if err != nil {
+		t.Fatalf("realtime must be optional: %v", err)
+	}
+	if cfg.SoketiURL != "" {
+		t.Fatalf("SOKETI_URL = %q, want empty", cfg.SoketiURL)
+	}
+}
+
+func TestLoadRejectsHalfARealtimeConfiguration(t *testing.T) {
+	for _, missing := range []string{"SOKETI_URL", "SOKETI_APP_ID", "SOKETI_KEY", "SOKETI_SECRET"} {
+		values := validEnv()
+		values["SOKETI_URL"] = "http://soketi:6001"
+		values["SOKETI_APP_ID"] = "app-id"
+		values["SOKETI_KEY"] = "app-key"
+		values["SOKETI_SECRET"] = "app-secret"
+		delete(values, missing)
+		_, err := Load(env(values))
+		if err == nil {
+			t.Fatalf("a configuration missing %s was accepted", missing)
+		}
+		if !strings.Contains(err.Error(), missing) {
+			t.Fatalf("the error does not name %s: %v", missing, err)
+		}
+	}
+}

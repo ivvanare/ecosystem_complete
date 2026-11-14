@@ -115,6 +115,7 @@ type Service struct {
 	logger      *slog.Logger
 	invitations Invitations
 	notifier    Notifier
+	reporter    VoteReporter
 }
 
 // NewService wires the domain.
@@ -279,7 +280,42 @@ func (s *Service) Vote(ctx context.Context, actorID, planID, placeID string, val
 	if role == "" {
 		return ErrForbidden
 	}
-	return s.store.Vote(ctx, actorID, planID, placeID, value)
+	if err := s.store.Vote(ctx, actorID, planID, placeID, value); err != nil {
+		return err
+	}
+	// The write is the fact and the event is a courtesy: a reporter failure is logged and the
+	// vote still succeeds, because a member who cannot be notified has not voted less.
+	if s.reporter != nil {
+		s.reporter.VoteRecorded(ctx, planID, placeID)
+	}
+	return nil
+}
+
+// VoteReporter is told that a vote was stored. The interface is deliberately this narrow: the
+// plans package does not know what a channel is, and the transport that publishes is wired in
+// cmd/api.
+type VoteReporter interface {
+	VoteRecorded(ctx context.Context, planID, placeID string)
+}
+
+// SetReporter wires the live-vote reporter. Without it the plan works exactly the same, one
+// re-read later.
+func (s *Service) SetReporter(reporter VoteReporter) { s.reporter = reporter }
+
+// CanWatch reports whether the caller may receive this plan's live events.
+//
+// It is the same visibility door the reads use: a member may always watch, a PUBLIC plan may be
+// watched by any authenticated account, and a PRIVATE plan answers ErrNotFound to everyone else
+// so it never confirms that it exists (realtime-votes S3).
+func (s *Service) CanWatch(ctx context.Context, userID, planID string) error {
+	role, visibility, err := s.store.Role(ctx, userID, planID)
+	if err != nil {
+		return err
+	}
+	if role != "" || visibility == VisibilityPublic {
+		return nil
+	}
+	return ErrNotFound
 }
 
 // AdminList is the moderation listing: every plan, regardless of membership.

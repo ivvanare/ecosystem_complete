@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/ivvanare/ecosystem_complete/api/internal/realtime"
 )
 
 // Probe reports the reachability of one external dependency.
@@ -46,6 +48,7 @@ type Options struct {
 	MediaStorage       Storage
 	MediaDir           string
 	Reviews            ReviewService
+	Realtime           realtime.Publisher
 }
 
 const defaultProbeTimeout = 2 * time.Second
@@ -218,6 +221,14 @@ func New(opts Options) http.Handler {
 		mux.HandleFunc("GET /v1/invitations", RequireAuth(opts.TokenParser, plansHandler.myInvitations))
 		mux.HandleFunc("POST /v1/invitations/{coInvitation}/accept", RequireAuth(opts.TokenParser, plansHandler.accept))
 		mux.HandleFunc("POST /v1/invitations/{coInvitation}/decline", RequireAuth(opts.TokenParser, plansHandler.decline))
+	}
+
+	// Realtime: a private channel is only subscribable with a signature issued here, so the route
+	// exists exactly when the broker is configured. Absent otherwise, like the broker-gated
+	// routes, instead of accepting a request it cannot honour.
+	if opts.Realtime != nil && opts.Plans != nil {
+		rt := &realtimeHandlers{publisher: opts.Realtime, plans: opts.Plans, logger: logger}
+		mux.HandleFunc("POST /v1/realtime/auth", RequireAuth(opts.TokenParser, rt.auth))
 	}
 
 	// The category catalogue is public taxonomy: the panel renders a select from it and the

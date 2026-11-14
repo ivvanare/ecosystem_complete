@@ -13,21 +13,23 @@ import (
 
 // fakePlans scripts the collaboration service and records what it was asked.
 type fakePlans struct {
-	plan        plans.Plan
-	err         error
-	gotIn       plans.CreateInput
-	gotUpd      plans.UpdateInput
-	gotJoin     string
-	gotLeft     [2]string
-	places      []plans.PlanPlace
-	gotPlace    string
-	gotOrder    int
-	gotVote     int
-	gotInvite   invitations.CreateInput
-	invitations []invitations.Invitation
-	gotAnswer   string
-	gotStatus   string
-	calls       int
+	plan         plans.Plan
+	err          error
+	gotIn        plans.CreateInput
+	gotUpd       plans.UpdateInput
+	gotJoin      string
+	gotLeft      [2]string
+	places       []plans.PlanPlace
+	gotPlace     string
+	gotOrder     int
+	gotVote      int
+	gotInvite    invitations.CreateInput
+	invitations  []invitations.Invitation
+	gotAnswer    string
+	gotStatus    string
+	gotWatchPlan string
+	watchErr     error
+	calls        int
 }
 
 func (f *fakePlans) Create(_ context.Context, _ string, in plans.CreateInput) (plans.Plan, error) {
@@ -79,6 +81,12 @@ func (f *fakePlans) Vote(_ context.Context, _, _, placeID string, value int) err
 	f.calls++
 	f.gotPlace, f.gotVote = placeID, value
 	return f.err
+}
+
+func (f *fakePlans) CanWatch(_ context.Context, _, planID string) error {
+	f.calls++
+	f.gotWatchPlan = planID
+	return f.watchErr
 }
 
 func (f *fakePlans) Invite(_ context.Context, _, _ string, in invitations.CreateInput) (invitations.Invitation, error) {

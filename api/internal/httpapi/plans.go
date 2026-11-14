@@ -25,6 +25,9 @@ type PlanCollaboration interface {
 	AddPlace(ctx context.Context, actorID, planID, placeID string, order int) error
 	RemovePlace(ctx context.Context, actorID, planID, placeID string) error
 	Vote(ctx context.Context, actorID, planID, placeID string, value int) error
+	// CanWatch decides whether the caller may receive this plan's live events. It is the same
+	// visibility door the reads use, exposed so the subscription route does not re-implement it.
+	CanWatch(ctx context.Context, userID, planID string) error
 	Invite(ctx context.Context, actorID, planID string, in invitations.CreateInput) (invitations.Invitation, error)
 	PlanInvitations(ctx context.Context, actorID, planID string) ([]invitations.Invitation, error)
 	MyInvitations(ctx context.Context, userID string) ([]invitations.Invitation, error)
