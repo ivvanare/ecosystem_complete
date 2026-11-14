@@ -17,8 +17,24 @@ Base local: `http://localhost:9000` · todas las rutas de negocio van bajo `/v1`
 | Paginación | `?page=` (base 1, por defecto 1) y `?limit=` (por defecto 20, máximo 100) |
 | Listas | `{"data": [...], "page": 1, "limit": 20, "total": 137}` |
 | Cuerpo de error | siempre `{"error": {"code", "message", "details?"}}` |
+| Cuerpos de entrada | estrictos: una clave que el schema no declara es `422` |
 
 **Nunca parsees `message`**: es texto para mostrar y puede cambiar. El contrato es `code`.
+
+Una clave de más en el cuerpo **no se ignora**: `openapi.yaml` declara `additionalProperties:
+false`, y aceptarla en silencio deja al cliente creyendo que seteó algo que el servidor nunca leyó.
+Se responde `422 validation_failed` con `field` igual al nombre de la clave y `code: unknown`:
+
+```json
+{ "menus": [], "menu": [] }
+```
+
+```json
+{ "error": { "code": "validation_failed", "details": { "fields": [{ "field": "menu", "code": "unknown" }] } } }
+```
+
+JSON mal formado, vacío, demasiado grande o con **dos documentos seguidos** es `400 invalid_json`.
+
 
 ```json
 {

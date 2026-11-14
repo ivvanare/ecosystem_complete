@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net"
@@ -97,8 +96,7 @@ type signupRequest struct {
 // account oracle.
 func (h *authHandlers) startSignup(w http.ResponseWriter, r *http.Request) {
 	var body signupRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
 
@@ -180,8 +178,7 @@ type tokenPairResponse struct {
 // confirm which addresses are mid-registration.
 func (h *authHandlers) verifySignup(w http.ResponseWriter, r *http.Request) {
 	var body verifyRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
 
@@ -240,8 +237,7 @@ type loginRequest struct {
 // alike, and 423 only when the account is genuinely locked.
 func (h *authHandlers) loginUser(w http.ResponseWriter, r *http.Request) {
 	var body loginRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
 
@@ -297,8 +293,7 @@ type refreshRequest struct {
 // client must stop retrying and log in again: the family is already dead.
 func (h *authHandlers) refreshSession(w http.ResponseWriter, r *http.Request) {
 	var body refreshRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
 
@@ -336,7 +331,10 @@ func (h *authHandlers) refreshSession(w http.ResponseWriter, r *http.Request) {
 func (h *authHandlers) logoutSession(w http.ResponseWriter, r *http.Request) {
 	var body refreshRequest
 	if r.Body != nil {
-		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body)
+		// Deliberately tolerant: the body is optional here (the refresh token may arrive in the
+		// panel's cookie), and logout answers the same on an unknown token, so a caller with a
+		// stale client must not fail to end its session over a shape it cannot control.
+		_ = decodeBody(r, 8<<10, &body)
 	}
 
 	presented, fromCookie, csrfErr := h.cookies.presented(r, body.RefreshToken)

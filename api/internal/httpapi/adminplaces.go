@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -329,8 +328,7 @@ func (h *placesAdminHandlers) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body placeWriteRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 64<<10, &body) {
 		return
 	}
 	var fields []fieldError
@@ -372,8 +370,7 @@ func (h *placesAdminHandlers) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body placeWriteRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 64<<10, &body) {
 		return
 	}
 	var fields []fieldError
@@ -484,8 +481,7 @@ func (h *placesAdminHandlers) schedules(w http.ResponseWriter, r *http.Request) 
 	var body struct {
 		Schedules []placeadmin.Schedule `json:"schedules"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 32<<10, &body) {
 		return
 	}
 	if err := h.service.ReplaceSchedules(r.Context(), viewer, viewer.UserID, placeID, body.Schedules); err != nil {
@@ -526,8 +522,7 @@ func (h *placesAdminHandlers) attributes(w http.ResponseWriter, r *http.Request)
 	var body struct {
 		Codes []string `json:"codes"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
 	if err := h.service.ReplaceAttributes(r.Context(), viewer, viewer.UserID, placeID, body.Codes); err != nil {
@@ -571,8 +566,7 @@ func (h *placesAdminHandlers) menu(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Menus []placeadmin.Menu `json:"menus"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 64<<10, &body) {
 		return
 	}
 	if err := h.service.ReplaceMenus(r.Context(), viewer, viewer.UserID, placeID, body.Menus); err != nil {

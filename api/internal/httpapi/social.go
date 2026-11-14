@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -33,8 +32,7 @@ type socialRequest struct {
 // client gets this API's own pair.
 func (h *socialHandlers) login(w http.ResponseWriter, r *http.Request) {
 	var body socialRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 64<<10, &body) {
 		return
 	}
 

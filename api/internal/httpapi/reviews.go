@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -49,11 +48,7 @@ type reviewUpsertRequest struct {
 // wider than the auth bodies because a comment carries up to 2000 characters, which
 // UTF-8 encodes to more than 8 KiB.
 func decodeReviewBody(w http.ResponseWriter, r *http.Request, body *reviewUpsertRequest) bool {
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
-		return false
-	}
-	return true
+	return decodeJSON(w, r, 16<<10, body)
 }
 
 // placeParam validates the {coPlace} path value at the edge: a malformed uuid is a
@@ -338,8 +333,7 @@ func (h *reviewsHandlers) moderate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body moderateRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
 

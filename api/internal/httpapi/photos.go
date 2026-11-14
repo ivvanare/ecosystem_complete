@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -175,8 +174,7 @@ func (h *placesAdminHandlers) replacePhotos(w http.ResponseWriter, r *http.Reque
 	var body struct {
 		Photos *[]placeadmin.PhotoPlacement `json:"photos"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 32<<10, &body) {
 		return
 	}
 	if body.Photos == nil {

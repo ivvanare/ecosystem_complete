@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -44,8 +43,7 @@ func (h *blockHandlers) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body blockRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 4<<10, &body) {
 		return
 	}
 	if !uuidPattern.MatchString(strings.TrimSpace(body.CoUser)) {
