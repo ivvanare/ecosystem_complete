@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -148,6 +149,52 @@ func (h *placesAdminHandlers) removePhoto(w http.ResponseWriter, r *http.Request
 		}
 		h.logger.Error("retiring a photo failed", slog.String("error", err.Error()))
 		writeError(w, http.StatusInternalServerError, "internal_error", "The request could not be completed.")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// replacePhotos serves PUT /v1/admin/places/{coPlace}/photos: the whole live gallery, without
+// moving a byte. It is what makes reordering and handing the cover to another photo possible;
+// re-uploading two images to change their order duplicated bytes and lost the original.
+//
+// The `photos` key is required and a missing one is the one thing that could retire a gallery
+// nobody asked to retire, so an absent field is a 422 while an explicit empty array is a real
+// request: retire every image.
+func (h *placesAdminHandlers) replacePhotos(w http.ResponseWriter, r *http.Request) {
+	viewer, ok := h.viewer(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication is required.")
+		return
+	}
+	placeID, ok := placeAdminParam(w, r)
+	if !ok {
+		return
+	}
+
+	var body struct {
+		Photos *[]placeadmin.PhotoPlacement `json:"photos"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+		return
+	}
+	if body.Photos == nil {
+		writeValidationError(w, []fieldError{{Field: "photos", Code: "required"}})
+		return
+	}
+	if err := h.service.ReplacePhotos(r.Context(), viewer, viewer.UserID, placeID, *body.Photos); err != nil {
+		var unknown *placeadmin.UnknownPhotoError
+		switch {
+		case errors.As(err, &unknown):
+			writeValidationError(w, []fieldError{{Field: "photos", Code: "unknown"}})
+		case errors.Is(err, placeadmin.ErrInvalidPhotoSet):
+			// The model's shapes caught at the edge: two covers, a repeated row or a negative
+			// position is a 422 the client can read, not a constraint violation.
+			writeValidationError(w, []fieldError{{Field: "photos", Code: "invalid"}})
+		default:
+			h.writePlaceError(w, err, "replacing photos")
+		}
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

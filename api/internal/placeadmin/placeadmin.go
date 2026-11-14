@@ -24,6 +24,10 @@ var (
 	ErrNotFound = errors.New("placeadmin: place not found")
 	// ErrUnknownCategory is a validated failure: the category must exist and be live.
 	ErrUnknownCategory = errors.New("placeadmin: unknown category")
+	// ErrInvalidPhotoSet is the edge validation of a replace-gallery request: two covers, a
+	// repeated row, an unknown kind or a negative position. Typed rather than textual so the
+	// transport can tell it apart from ErrNotFound, which shares the package prefix.
+	ErrInvalidPhotoSet = errors.New("placeadmin: invalid photo set")
 )
 
 // Viewer is who asks. ManageAll is true for a caller holding admin.access, resolved once at
@@ -117,6 +121,15 @@ const (
 	PhotoGallery = "GALLERY"
 )
 
+// PhotoPlacement is one image of a replace request: which photo, its kind and its position. It
+// carries no URL on purpose — the upload path owns the bytes, and this route only decides what
+// stays live and where it sits.
+type PhotoPlacement struct {
+	ID    string `json:"coPhoto"`
+	Type  string `json:"type"`
+	Order int    `json:"order"`
+}
+
 // Filter narrows the listing. Every field is optional; the zero value lists every row the
 // viewer may see.
 type Filter struct {
@@ -198,6 +211,7 @@ type Store interface {
 	InsertPhoto(ctx context.Context, actorID, placeID, url, photoType string, order int) (Photo, error)
 	PhotoPlace(ctx context.Context, viewer Viewer, photoID string) (string, error)
 	DeletePhoto(ctx context.Context, actorID, photoID string) error
+	ReplacePhotos(ctx context.Context, actorID, placeID string, placements []PhotoPlacement) error
 }
 
 // Service applies the ownership rules.
@@ -407,6 +421,70 @@ func (s *Service) RemovePhoto(ctx context.Context, viewer Viewer, actorID, photo
 		return err
 	}
 	return s.store.DeletePhoto(ctx, actorID, photoID)
+}
+
+// ReplacePhotos replaces the live gallery of a place: the listed photos take their kind and
+// position, and every live photo the list leaves out is retired.
+//
+// Replacement, like the weekly hours and the card, and for the same reason: the panel edits "the
+// gallery of this place", and half of it applied is a gallery nobody described. What this route
+// adds over upload/delete is the two operations the old pair could not express without moving
+// bytes again — reordering the gallery and handing the cover to another photo.
+//
+// A photo the request mentions that is not a live image of this place is refused, never
+// ignored: a silently dropped photo is a gallery the operator believes he set.
+func (s *Service) ReplacePhotos(ctx context.Context, viewer Viewer, actorID, placeID string, placements []PhotoPlacement) error {
+	if _, err := s.store.Get(ctx, viewer, placeID); err != nil {
+		return err
+	}
+	if err := validatePhotoPlacements(placements); err != nil {
+		return err
+	}
+	return s.store.ReplacePhotos(ctx, actorID, placeID, placements)
+}
+
+// UnknownPhotoError names the photos a request mentions that are not live images of the place.
+type UnknownPhotoError struct{ IDs []string }
+
+func (e *UnknownPhotoError) Error() string {
+	return fmt.Sprintf("placeadmin: unknown photos %v", e.IDs)
+}
+
+// validatePhotoPlacements enforces the rules a replace request can break and the database could
+// only answer with a constraint violation the client cannot read: one live cover, one row per
+// photo, and a position that is a position.
+//
+// The failures are wrapped in ErrInvalidPhotoSet so the transport maps them without inspecting
+// text: every sentinel of this package starts with the package prefix, and a prefix check would
+// turn "place not found" into a validation error.
+func validatePhotoPlacements(placements []PhotoPlacement) error {
+	seen := make(map[string]bool, len(placements))
+	covers := 0
+	for _, placement := range placements {
+		if strings.TrimSpace(placement.ID) == "" {
+			return fmt.Errorf("%w: a placement needs a photo id", ErrInvalidPhotoSet)
+		}
+		if seen[placement.ID] {
+			// One row cannot sit in two positions: the intent is ambiguous and the write would
+			// depend on the order of the array.
+			return fmt.Errorf("%w: photo %q appears twice", ErrInvalidPhotoSet, placement.ID)
+		}
+		seen[placement.ID] = true
+		switch placement.Type {
+		case PhotoCover:
+			covers++
+			if covers > 1 {
+				return fmt.Errorf("%w: more than one cover", ErrInvalidPhotoSet)
+			}
+		case PhotoGallery:
+		default:
+			return fmt.Errorf("%w: unknown photo type %q", ErrInvalidPhotoSet, placement.Type)
+		}
+		if placement.Order < 0 {
+			return fmt.Errorf("%w: negative photo order", ErrInvalidPhotoSet)
+		}
+	}
+	return nil
 }
 
 // AttributeCatalogue returns the attribute vocabulary. It reuses the Category shape: a code, a
@@ -931,6 +1009,86 @@ func (s *PostgresStore) DeletePhoto(ctx context.Context, actorID, photoID string
 			UPDATE core.tb_place_photo SET dt_deleted_at = now(), dt_updated_at = now()
 			 WHERE co_photo = $1::uuid AND dt_deleted_at IS NULL`, photoID); err != nil {
 			return fmt.Errorf("retiring photo: %w", err)
+		}
+		return nil
+	})
+}
+
+// ReplacePhotos replaces the live gallery in one transaction: the rows the request omits are
+// retired, and the listed ones take its kind and position. An id that is not a live image of
+// this place aborts the whole thing before any write.
+//
+// Two details are not cosmetic. The live rows are read FOR UPDATE, because the set the request
+// describes is only meaningful against the set that exists now. And the cover is demoted before
+// the new one is assigned: ux_tb_place_photo_cover is a plain unique index, so moving the cover
+// in a single pass would make two live covers exist mid-statement and Postgres would reject a
+// change that is valid once finished.
+func (s *PostgresStore) ReplacePhotos(ctx context.Context, actorID, placeID string, placements []PhotoPlacement) error {
+	return s.withActor(ctx, actorID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT co_photo::text FROM core.tb_place_photo
+			 WHERE co_place = $1::uuid AND dt_deleted_at IS NULL
+			 FOR UPDATE`, placeID)
+		if err != nil {
+			return fmt.Errorf("reading photos: %w", err)
+		}
+		live := make(map[string]bool, 4)
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return fmt.Errorf("scanning photo: %w", err)
+			}
+			live[id] = true
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("reading photos: %w", err)
+		}
+
+		kept := make([]string, 0, len(placements))
+		unknown := make([]string, 0, 2)
+		for _, placement := range placements {
+			if !live[placement.ID] {
+				unknown = append(unknown, placement.ID)
+				continue
+			}
+			kept = append(kept, placement.ID)
+		}
+		if len(unknown) > 0 {
+			return &UnknownPhotoError{IDs: unknown}
+		}
+
+		// An empty kept set is a real request (retire the whole gallery), and `<> ALL('{}')` is
+		// true for every row, which is exactly the semantics wanted.
+		if _, err := tx.Exec(ctx, `
+			UPDATE core.tb_place_photo
+			   SET dt_deleted_at = now(), dt_updated_at = now()
+			 WHERE co_place = $1::uuid AND dt_deleted_at IS NULL
+			   AND co_photo <> ALL($2::uuid[])`, placeID, kept); err != nil {
+			return fmt.Errorf("retiring photos: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE core.tb_place_photo SET tx_type = 'GALLERY', dt_updated_at = now()
+			 WHERE co_place = $1::uuid AND dt_deleted_at IS NULL AND tx_type = 'COVER'`, placeID); err != nil {
+			return fmt.Errorf("demoting the cover: %w", err)
+		}
+
+		ids := make([]string, 0, len(placements))
+		types := make([]string, 0, len(placements))
+		orders := make([]int32, 0, len(placements))
+		for _, placement := range placements {
+			ids = append(ids, placement.ID)
+			types = append(types, placement.Type)
+			orders = append(orders, int32(placement.Order))
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE core.tb_place_photo p
+			   SET tx_type = v.tx_type::public.photo_kind, nu_order = v.nu_order, dt_updated_at = now()
+			  FROM unnest($2::uuid[], $3::text[], $4::int[]) AS v(co_photo, tx_type, nu_order)
+			 WHERE p.co_photo = v.co_photo AND p.co_place = $1::uuid
+			   AND p.dt_deleted_at IS NULL`, placeID, ids, types, orders); err != nil {
+			return fmt.Errorf("placing photos: %w", err)
 		}
 		return nil
 	})

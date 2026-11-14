@@ -807,6 +807,49 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/ValidationError" }
+    put:
+      tags: [Admin]
+      operationId: replacePlacePhotos
+      summary: Replace the live gallery of a place
+      description: |
+        Requires `place.update`, scoped by ownership. The body is the whole live set: the listed
+        photos take the given `type` and `order`, and every live photo the list omits is retired
+        logically — the row stays, so an audit still sees what was published.
+
+        No bytes travel. This is how a gallery is reordered, or its cover handed to another
+        photo, without uploading the same image a second time: re-uploading duplicated the file
+        and lost the original.
+
+        `photos` is required. Omitting the key is `422` with field `photos`, while an explicit
+        empty array is a real request: retire the whole gallery. A `coPhoto` that is not a live
+        image of this place is `422` with field `photos` and code `unknown` instead of being
+        ignored. Two covers, a repeated photo, an unknown `type` or a negative `order` is `422`
+        with code `invalid`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coPlace
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [photos]
+              properties:
+                photos:
+                  type: array
+                  items: { $ref: "#/components/schemas/PlacePhotoPlacement" }
+      responses:
+        "204": { description: Replaced. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
   /v1/admin/places/{coPlace}/photos/{coPhoto}:
     delete:
       tags: [Admin]
@@ -2587,6 +2630,15 @@ components:
         url: { type: string, description: Path under the API origin, e.g. /media/places/... }
         type: { type: string, enum: [COVER, GALLERY] }
         order: { type: integer }
+    PlacePhotoPlacement:
+      type: object
+      additionalProperties: false
+      description: One image in a replace-the-gallery request, without a URL. The bytes never travel again.
+      required: [coPhoto, type, order]
+      properties:
+        coPhoto: { type: string, format: uuid }
+        type: { type: string, enum: [COVER, GALLERY] }
+        order: { type: integer, minimum: 0 }
     PlaceMenu:
       type: object
       additionalProperties: false

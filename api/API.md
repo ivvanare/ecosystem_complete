@@ -1034,10 +1034,11 @@ filtros (`terraza`, `petfriendly`); el uuid es del catálogo y cambia entre ento
 
 ```http
 POST   /v1/admin/places/{coPlace}/photos        multipart/form-data: file, type?, order?
+PUT    /v1/admin/places/{coPlace}/photos        { photos: [{ coPhoto, type, order }] }
 DELETE /v1/admin/places/{coPlace}/photos/{coPhoto}
 ```
 
-Ambos requieren `place.update` y respetan el alcance por ownership.
+Los tres requieren `place.update` y respetan el alcance por ownership.
 
 - **Máximo 5 MB** por archivo. Más grande devuelve `422` con `field: file, code: too_long`.
 - Solo se aceptan `image/jpeg`, `image/png` e `image/webp`, y **se verifica por contenido**, no
@@ -1046,6 +1047,17 @@ Ambos requieren `place.update` y respetan el alcance por ownership.
   que es lo que un cliente quiere decir con "poné esta de portada". Además la base tiene un índice
   único parcial: dos portadas vivas son imposibles, no solo improbables.
 - El borrado es **lógico**: la fila queda para auditar qué se publicó.
+- `PUT` reemplaza **la galería viva completa** en una transacción, sin mover un byte: las fotos
+  listadas toman el `type` y el `order` que manda el cliente, y toda foto viva que la lista omite
+  se retira (lógicamente, igual que el `DELETE`). Es lo que permite **reordenar** y **cambiar la
+  portada de foto** sin volver a subir la imagen: antes eso duplicaba bytes y perdía el original.
+- `photos` es obligatorio: omitir la clave es `422` con `field: photos`, mientras que un array
+  vacío explícito es un pedido real — retirar la galería entera.
+- Un `coPhoto` que no es una imagen viva de ese lugar es `422` con `field: photos, code: unknown`,
+  nunca se ignora: una foto descartada en silencio es una galería que el operador cree haber
+  dejado distinta. Dos `COVER`, una foto repetida, un `type` desconocido o un `order` negativo son
+  `422` con `code: invalid`; el índice único parcial de portadas es la última red, no el primer
+  mensaje.
 - La URL devuelta es relativa al origen del API (`/media/places/...`). Hoy los bytes viven en un
   **volumen nombrado de Docker** (`media:/app/media`); la interfaz de storage permite pasar a S3
   sin cambiar estos endpoints ni el contrato.
