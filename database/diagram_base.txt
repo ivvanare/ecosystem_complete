@@ -447,6 +447,44 @@ Table core.tb_place_category {
   }
 }
 
+// Atributo de lugar: lo que está PRESENTE en el lugar (terraza, petfriendly,
+// frente_playa, ...). Mismo patrón de catálogo gobernado que tb_place_category
+// (regla 12): el backoffice administra el vocabulario sin migrar tipos. La
+// categoría sigue siendo UNA por lugar; todo lo demás es atributo (S23).
+// Migración 18.
+Table core.tb_place_attribute {
+  co_attribute uuid [pk]
+  tx_code varchar [not null, note: 'Clave estable: terraza, petfriendly, frente_playa, aire_libre, musica_en_vivo']
+  tx_name varchar [not null, note: 'Nombre visible: Terraza, Pet friendly, Frente a la playa']
+  tx_description text
+  tx_status activatable_status [not null, default: 'ACTIVE']
+  dt_created_at timestamp [not null]
+  dt_updated_at timestamp [not null]
+  dt_deleted_at timestamp
+
+  Indexes {
+    // [PARTIAL UNIQUE] En SQL: UNIQUE (tx_code) WHERE dt_deleted_at IS NULL.
+    (tx_code) [unique, name: 'ux_tb_place_attribute_code_active']
+  }
+}
+
+// Puente lugar <-> atributo. Clave primaria compuesta y SIN soft delete, por la
+// misma razón que tb_route_place: una fila borrada lógicamente impediría volver
+// a agregar ese atributo al mismo lugar. Sin historia: los puentes no están en
+// el conjunto point-in-time. Migración 18.
+Table core.tb_place_attribute_link {
+  co_place uuid [not null]
+  co_attribute uuid [not null]
+  dt_created_at timestamp [not null]
+  dt_updated_at timestamp [not null]
+
+  Indexes {
+    // Clave primaria compuesta: pk_tb_place_attribute_link
+    (co_place, co_attribute) [pk]
+    co_attribute [name: 'ix_tb_place_attribute_link_attribute']
+  }
+}
+
 // Moneda ISO 4217. Un precio sin moneda es un número sin significado, y nu_decimals
 // es lo que permite formatearlo (2 en USD, VES y COP).
 Table core.tb_currency {
@@ -478,9 +516,17 @@ Table core.tb_place {
   // agrupamiento por strings que el catálogo vino a terminar.
   co_place_category uuid [not null, note: 'Categoría formal del lugar (FK al catálogo). Sin default: toda escritura la declara explícitamente. Reemplaza al tx_category de texto libre removido en la migración 12']
   tx_country char(2) [not null, check: `tx_country ~ '^[A-Z]{2}$'`, note: 'ISO 3166-1 alpha-2. Para agrupar y reportar']
+  tx_region varchar(6) [check: `tx_region ~ '^[A-Z]{2}-[A-Z0-9]{1,3}$'`, note: 'ISO 3166-2 (VE-A, US-CA). NULL a propósito: exigirla haría imposible insertar donde el geocodificador no responde. Se asigna por geocodificación inversa al crear el lugar, nunca a mano. Migración 17']
   tx_timezone varchar [not null, check: `tx_timezone ~ '^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}$'`, note: 'Nombre IANA (America/Caracas, America/Argentina/Buenos_Aires): es lo que hace interpretables los horarios. El CHECK valida sólo la forma y admite hasta tres niveles, porque 26 zonas IANA reales los usan; la validación real contra pg_timezone_names ocurre en el borde de la aplicación']
   nu_latitude decimal(9,6) [not null, check: `nu_latitude BETWEEN -90 AND 90`]
   nu_longitude decimal(9,6) [not null, check: `nu_longitude BETWEEN -180 AND 180`]
+  // DERIVADA, nunca escrita a mano: los decimales de arriba son el contrato y
+  // esta columna se puede dropear y reconstruir sin pérdida (D2/S16). DBML no
+  // expresa GENERATED ALWAYS ni geography(Point,4326), así que va en la nota.
+  co_location geography [note: 'DERIVADA (off-contract): GENERATED ALWAYS AS ST_SetSRID(ST_MakePoint(nu_longitude, nu_latitude), 4326)::geography STORED, geography(Point,4326). Sirve ST_DWithin (radio) y viewport (&&). Fuera del payload de historia a propósito: deriva de columnas que el payload ya lleva. Migraciones 15-16 (PostGIS)']
+  // DERIVADA, como co_location: vector de búsqueda del nombre comercial
+  // (la pregunta q). DBML no expresa tsvector generado; va en la nota.
+  search_name tsvector [note: 'DERIVADA (off-contract): GENERATED ALWAYS AS to_tsvector(''simple'', public.unaccent_immutable(tx_title)) STORED. unaccent es STABLE y no cabe en una columna generada: el wrapper la declara IMMUTABLE con el diccionario fijo (decisión de corrección, cabecera de la migración 19). Configuración simple a propósito: sin stemming, los acentos los pliega el wrapper. El índice GIN sirve el filtro q. Fuera del payload de historia: deriva de tx_title. Migración 19']
   tx_address varchar
   js_social_media jsonb [note: '{"instagram": "...", "web": "..."}']
   tx_status suspendable_status [not null, default: 'ACTIVE']
@@ -491,6 +537,9 @@ Table core.tb_place {
   Indexes {
     co_owner_user
     co_place_category
+    (co_location) [type: gist, name: 'ix_tb_place_location']
+    (tx_country, tx_region) [name: 'ix_tb_place_country_region']
+    (search_name) [type: gin, name: 'ix_tb_place_search_name']
   }
 }
 
@@ -550,6 +599,9 @@ Table core.tb_menu_item {
   tx_description text
   nu_price decimal(10,2) [not null, check: `nu_price >= 0`]
   co_currency uuid [not null, note: 'Moneda del precio. Sin ella el número no significa nada; nu_decimals del catálogo es lo que lo formatea. Sin default: toda escritura la declara']
+  // DERIVADA: vector de búsqueda del plato (la pregunta dish devuelve LUGARES
+  // vía tb_menu). Mismo criterio que search_name de tb_place (migración 19).
+  search_text tsvector [note: 'DERIVADA (off-contract): GENERATED ALWAYS AS to_tsvector(''simple'', public.unaccent_immutable(tx_name || '' '' || coalesce(tx_description, ''''))) STORED. Sin stemming; acentos plegados por el wrapper IMMUTABLE. El índice GIN sirve el filtro dish. Fuera del payload de historia: deriva de tx_name y tx_description. Migración 19']
   tx_status activatable_status [not null, default: 'ACTIVE']
   dt_created_at timestamp [not null]
   dt_updated_at timestamp [not null]
@@ -558,6 +610,7 @@ Table core.tb_menu_item {
   Indexes {
     co_menu
     co_currency
+    (search_text) [type: gin, name: 'ix_tb_menu_item_search_text']
   }
 }
 
@@ -575,10 +628,55 @@ Table core.tb_review {
   Indexes {
     co_place
     co_user
-    // [PARTIAL UNIQUE] En SQL: UNIQUE (co_user, co_place) WHERE dt_deleted_at IS NULL.
-    // Una reseña por usuario y lugar. Sin el filtro, una reseña moderada o borrada
-    // dejaría al usuario sin poder volver a reseñar ese lugar.
+    // [PARTIAL UNIQUE] En SQL: UNIQUE (co_user, co_place)
+    //   WHERE dt_deleted_at IS NULL AND tx_status = 'ACTIVE'.
+    // Una reseña ACTIVA y viva por usuario y lugar. El predicado incluye tx_status
+    // desde la migración 20 (decisión Q7): una reseña MODERATED o INACTIVE libera el
+    // slot, así el autor puede volver a reseñar el lugar mientras conserva el registro
+    // de la moderación. Antes de 20 el filtro era solo dt_deleted_at IS NULL y una
+    // reseña moderada bloqueaba al autor para siempre con 409. El nombre del índice es
+    // load-bearing: el store de reseñas mapea SQLSTATE 23505 sobre él a
+    // review_already_exists.
     (co_user, co_place) [unique, name: 'ux_tb_review_user_place_active']
+  }
+}
+
+// ------------------------------------------------------------------------------
+// GRAFO SOCIAL — seguimiento asimétrico y check-ins (migraciones 21-23).
+// ------------------------------------------------------------------------------
+
+Table core.tb_follow {
+  co_follower uuid [not null, note: 'Cuenta que sigue. PK compuesta con co_followed']
+  co_followed uuid [not null, note: 'Cuenta seguida. "Amigo" es follow mutuo: se computa al leer, nunca se guarda como flag (D6)']
+  dt_created_at timestamp [not null, note: 'Sin dt_updated_at ni borrado lógico: con PK compuesta una fila borrada impediría volver a seguir a esa persona']
+
+  Indexes {
+    (co_follower, co_followed) [pk]
+    co_followed
+    // [CHECK] co_follower <> co_followed — el auto-follow lo rechaza la base, no solo el servicio.
+    // Sin historial: una arista es un hecho append-only, no un estado (S15).
+  }
+}
+
+Enum checkin_verification {
+  SELF_REPORTED
+  PROXIMITY
+}
+
+Table core.tb_checkin {
+  co_checkin uuid [pk, note: 'UUID del check-in']
+  co_user uuid [not null, note: 'Quién declaró la presencia. FK real a seg.tb_user']
+  co_place uuid [not null, note: 'Lugar del check-in. FK a core.tb_place']
+  tx_verification checkin_verification [not null, default: 'SELF_REPORTED', note: 'Cómo se estableció la presencia (Q1). La coordenada se valida en el borde y se descarta: nunca se guarda coordenada ni distancia (D11)']
+  js_metadata jsonb [note: 'Metadatos del cliente. No debe contener coordenadas']
+  dt_created_at timestamp [not null, note: 'Instante del check-in: inmutable, es un hecho histórico']
+  dt_day date [not null, note: 'GENERATED ALWAYS AS (dt_created_at::date) STORED. Existe para indexar la regla de un check-in por persona, lugar y día']
+
+  Indexes {
+    // [PARTIAL UNIQUE] En SQL: UNIQUE (co_user, co_place, dt_day) — la regla vive en el esquema.
+    co_place
+    co_user
+    // Append-only: sin borrado lógico y sin historial (S15, S10).
   }
 }
 
@@ -675,6 +773,7 @@ Table core.tb_place_history {
   co_place_category uuid [not null, note: 'Sin FK: la historia sobrevive a cambios del catálogo']
   tx_country char(2) [not null]
   tx_timezone varchar [not null]
+  tx_region varchar(6) [note: 'Espejo de la entidad, sin CHECK: la historia registra lo que la entidad ya validó (migración 17)']
   nu_latitude decimal(9,6) [not null]
   nu_longitude decimal(9,6) [not null]
   tx_address varchar
@@ -819,6 +918,8 @@ Ref: core.tb_place_photo.co_place > core.tb_place.co_place
 Ref: core.tb_menu.co_place > core.tb_place.co_place
 Ref: core.tb_menu_item.co_menu > core.tb_menu.co_menu
 Ref: core.tb_menu_item.co_currency > core.tb_currency.co_currency
+Ref: core.tb_place_attribute_link.co_place > core.tb_place.co_place
+Ref: core.tb_place_attribute_link.co_attribute > core.tb_place_attribute.co_attribute
 
 // Reseñas
 Ref: core.tb_review.co_place > core.tb_place.co_place

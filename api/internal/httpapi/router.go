@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/ivvanare/ecosystem_complete/api/internal/realtime"
 )
 
 // Probe reports the reachability of one external dependency.
@@ -35,6 +37,18 @@ type Options struct {
 	Password           PasswordService
 	EmailChange        EmailChangeService
 	Social             SocialAuthenticator
+	Discovery          PlaceDiscovery
+	Follows            SocialGraph
+	Checkins           Checkins
+	PlacesAdmin        PlaceBackoffice
+	Plans              PlanCollaboration
+	Blocks             Blocking
+	Notifications      NotificationPreferences
+	PlanModeration     PlanModeration
+	MediaStorage       Storage
+	MediaDir           string
+	Reviews            ReviewService
+	Realtime           realtime.Publisher
 }
 
 const defaultProbeTimeout = 2 * time.Second
@@ -54,6 +68,11 @@ func New(opts Options) http.Handler {
 	h := &health{probes: opts.Probes, timeout: timeout, logger: logger}
 
 	mux := http.NewServeMux()
+	// Uploaded images are served from the same origin as the API: no CORS surface for a file
+	// that a browser loads as an image.
+	if opts.MediaDir != "" {
+		mux.Handle("GET /media/", http.StripPrefix("/media/", http.FileServer(http.Dir(opts.MediaDir))))
+	}
 	mux.HandleFunc("GET /health/live", h.live)
 	mux.HandleFunc("GET /health/ready", h.ready)
 
@@ -140,6 +159,170 @@ func New(opts Options) http.Handler {
 				mux.HandleFunc("PATCH /v1/admin/users/{userId}/roles", admin(adminHandler.setRoles))
 				mux.HandleFunc("GET /v1/admin/audit-events", admin(adminHandler.auditEvents))
 			}
+		}
+	}
+
+	// Discovery is public and read-only (S14): no auth middleware, and absent rather
+	// than accepted-and-failed when the read path is not wired.
+	if opts.Discovery != nil {
+		placesHandler := &placesHandlers{discovery: opts.Discovery, logger: logger}
+		mux.HandleFunc("GET /v1/places", placesHandler.places)
+	}
+
+	// Plan and invitation moderation (D21): the backoffice moderates, it does not participate.
+	// The capabilities are their own, not admin.access, which only means "may enter the panel".
+	if opts.PlanModeration != nil && opts.Authorizer != nil {
+		moderation := &planModerationHandlers{service: opts.PlanModeration, logger: logger}
+		mux.HandleFunc("GET /v1/admin/plans",
+			RequireAuth(opts.TokenParser,
+				RequirePermission(opts.Authorizer, PlanModeratePermission, logger, moderation.adminPlans)))
+		mux.HandleFunc("PATCH /v1/admin/plans/{coRoute}",
+			RequireAuth(opts.TokenParser,
+				RequirePermission(opts.Authorizer, PlanModeratePermission, logger, moderation.moderatePlan)))
+		mux.HandleFunc("GET /v1/admin/invitations",
+			RequireAuth(opts.TokenParser,
+				RequirePermission(opts.Authorizer, InvitationModeratePermission, logger, moderation.adminInvitations)))
+		mux.HandleFunc("DELETE /v1/admin/invitations/{coInvitation}",
+			RequireAuth(opts.TokenParser,
+				RequirePermission(opts.Authorizer, InvitationModeratePermission, logger, moderation.revokeInvitation)))
+	}
+
+	// Notification preferences (S13): every kind is individually disableable.
+	if opts.Notifications != nil {
+		notificationHandler := &notificationHandlers{service: opts.Notifications, logger: logger}
+		mux.HandleFunc("GET /v1/notifications/preferences", RequireAuth(opts.TokenParser, notificationHandler.read))
+		mux.HandleFunc("PATCH /v1/notifications/preferences", RequireAuth(opts.TokenParser, notificationHandler.update))
+	}
+
+	// Blocking (decision Q2): the relation that gates every viewer-relative projection.
+	if opts.Blocks != nil {
+		blockHandler := &blockHandlers{service: opts.Blocks, logger: logger}
+		mux.HandleFunc("POST /v1/blocks", RequireAuth(opts.TokenParser, blockHandler.create))
+		mux.HandleFunc("GET /v1/blocks", RequireAuth(opts.TokenParser, blockHandler.listed))
+		mux.HandleFunc("DELETE /v1/blocks/{coUser}", RequireAuth(opts.TokenParser, blockHandler.remove))
+	}
+
+	// Plans (P3a): the mobile consumer's collaborative planning (D21). Authorization is
+	// per-plan role, so these routes take auth but no capability permission.
+	if opts.Plans != nil {
+		plansHandler := &planHandlers{service: opts.Plans, logger: logger}
+		mux.HandleFunc("POST /v1/plans", RequireAuth(opts.TokenParser, plansHandler.create))
+		mux.HandleFunc("GET /v1/plans", RequireAuth(opts.TokenParser, plansHandler.listed))
+		mux.HandleFunc("GET /v1/plans/{coRoute}", RequireAuth(opts.TokenParser, plansHandler.read))
+		mux.HandleFunc("PATCH /v1/plans/{coRoute}", RequireAuth(opts.TokenParser, plansHandler.update))
+		mux.HandleFunc("POST /v1/plans/{coRoute}/members", RequireAuth(opts.TokenParser, plansHandler.join))
+		mux.HandleFunc("DELETE /v1/plans/{coRoute}/members/{coUser}", RequireAuth(opts.TokenParser, plansHandler.leave))
+		mux.HandleFunc("GET /v1/plans/{coRoute}/places", RequireAuth(opts.TokenParser, plansHandler.places))
+		mux.HandleFunc("POST /v1/plans/{coRoute}/places", RequireAuth(opts.TokenParser, plansHandler.addPlace))
+		mux.HandleFunc("DELETE /v1/plans/{coRoute}/places/{coPlace}", RequireAuth(opts.TokenParser, plansHandler.removePlace))
+		mux.HandleFunc("POST /v1/plans/{coRoute}/places/{coPlace}/votes", RequireAuth(opts.TokenParser, plansHandler.vote))
+		mux.HandleFunc("POST /v1/plans/{coRoute}/invitations", RequireAuth(opts.TokenParser, plansHandler.invite))
+		mux.HandleFunc("GET /v1/plans/{coRoute}/invitations", RequireAuth(opts.TokenParser, plansHandler.planInvitations))
+		mux.HandleFunc("GET /v1/invitations", RequireAuth(opts.TokenParser, plansHandler.myInvitations))
+		mux.HandleFunc("POST /v1/invitations/{coInvitation}/accept", RequireAuth(opts.TokenParser, plansHandler.accept))
+		mux.HandleFunc("POST /v1/invitations/{coInvitation}/decline", RequireAuth(opts.TokenParser, plansHandler.decline))
+	}
+
+	// Realtime: a private channel is only subscribable with a signature issued here, so the route
+	// exists exactly when the broker is configured. Absent otherwise, like the broker-gated
+	// routes, instead of accepting a request it cannot honour.
+	if opts.Realtime != nil && opts.Plans != nil {
+		rt := &realtimeHandlers{publisher: opts.Realtime, plans: opts.Plans, logger: logger}
+		mux.HandleFunc("POST /v1/realtime/auth", RequireAuth(opts.TokenParser, rt.auth))
+	}
+
+	// The category catalogue is public taxonomy: the panel renders a select from it and the
+	// mobile client renders the same list as discovery filters.
+	if opts.PlacesAdmin != nil {
+		categoriesHandler := &placesAdminHandlers{service: opts.PlacesAdmin, logger: logger}
+		mux.HandleFunc("GET /v1/place-categories", categoriesHandler.categories)
+	}
+
+	// Places backoffice (place-ownership): the catalogue is curated, so writing it is
+	// gated by admin.access for creation and by the ownership viewer for the rest.
+	if opts.PlacesAdmin != nil {
+		backoffice := &placesAdminHandlers{
+			service: opts.PlacesAdmin, parser: opts.TokenParser,
+			authorizer: opts.Authorizer, logger: logger, storage: opts.MediaStorage,
+		}
+		mux.HandleFunc("GET /v1/admin/places",
+			RequireAuth(opts.TokenParser,
+				RequirePermission(opts.Authorizer, PlaceUpdatePermission, logger, backoffice.listed)))
+		mux.HandleFunc("GET /v1/admin/places/{coPlace}",
+			RequireAuth(opts.TokenParser,
+				RequirePermission(opts.Authorizer, PlaceUpdatePermission, logger, backoffice.read)))
+		// Creation is the operator capability, not admin.access: the seeded EDITOR role
+		// holds admin.access (it means "may enter the backoffice"), and creating a curated
+		// catalogue entry is not something every editor may do.
+		mux.HandleFunc("POST /v1/admin/places",
+			RequireAuth(opts.TokenParser,
+				RequirePermission(opts.Authorizer, PlaceManageAllPermission, logger, backoffice.create)))
+		mux.HandleFunc("PATCH /v1/admin/places/{coPlace}",
+			RequireAuth(opts.TokenParser,
+				RequirePermission(opts.Authorizer, PlaceUpdatePermission, logger, backoffice.update)))
+		mux.HandleFunc("GET /v1/admin/places/{coPlace}/schedules", RequireAuth(opts.TokenParser,
+			RequirePermission(opts.Authorizer, PlaceUpdatePermission, logger, backoffice.schedules)))
+		mux.HandleFunc("PUT /v1/admin/places/{coPlace}/schedules", RequireAuth(opts.TokenParser,
+			RequirePermission(opts.Authorizer, PlaceUpdatePermission, logger, backoffice.schedules)))
+		mux.HandleFunc("GET /v1/admin/places/{coPlace}/attributes", RequireAuth(opts.TokenParser,
+			RequirePermission(opts.Authorizer, PlaceUpdatePermission, logger, backoffice.attributes)))
+		mux.HandleFunc("PUT /v1/admin/places/{coPlace}/attributes", RequireAuth(opts.TokenParser,
+			RequirePermission(opts.Authorizer, PlaceUpdatePermission, logger, backoffice.attributes)))
+		mux.HandleFunc("GET /v1/admin/places/{coPlace}/menu", RequireAuth(opts.TokenParser,
+			RequirePermission(opts.Authorizer, PlaceUpdatePermission, logger, backoffice.menu)))
+		mux.HandleFunc("PUT /v1/admin/places/{coPlace}/menu", RequireAuth(opts.TokenParser,
+			RequirePermission(opts.Authorizer, PlaceUpdatePermission, logger, backoffice.menu)))
+		mux.HandleFunc("GET /v1/place-attributes", backoffice.attributeCatalogue)
+		mux.HandleFunc("POST /v1/admin/places/{coPlace}/photos", RequireAuth(opts.TokenParser,
+			RequirePermission(opts.Authorizer, PlaceUpdatePermission, logger, backoffice.uploadPhoto)))
+		mux.HandleFunc("PUT /v1/admin/places/{coPlace}/photos", RequireAuth(opts.TokenParser,
+			RequirePermission(opts.Authorizer, PlaceUpdatePermission, logger, backoffice.replacePhotos)))
+		mux.HandleFunc("DELETE /v1/admin/places/{coPlace}/photos/{coPhoto}", RequireAuth(opts.TokenParser,
+			RequirePermission(opts.Authorizer, PlaceUpdatePermission, logger, backoffice.removePhoto)))
+		mux.HandleFunc("DELETE /v1/admin/places/{coPlace}",
+			RequireAuth(opts.TokenParser,
+				RequirePermission(opts.Authorizer, PlaceDeletePermission, logger, backoffice.retire)))
+	}
+
+	// Social graph: the consumer is the mobile app (D21), so these are authenticated
+	// routes with no admin analogue. Absent when unwired, like the broker-gated routes.
+	if opts.Follows != nil {
+		graph := &graphHandlers{follows: opts.Follows, checkins: opts.Checkins, parser: opts.TokenParser, logger: logger}
+		mux.HandleFunc("POST /v1/follows", graph.createFollow)
+		mux.HandleFunc("DELETE /v1/follows/{coUser}", graph.deleteFollow)
+		mux.HandleFunc("GET /v1/follows", graph.listFollows)
+		if opts.Checkins != nil {
+			mux.HandleFunc("POST /v1/places/{coPlace}/checkins", graph.createCheckin)
+		}
+	}
+
+	// Reviews are the first domain write path (p1-discovery.md §6). The list is
+	// public; mutations require the bearer, and moderation reuses the seeded
+	// review.moderate capability (S12). Like the broker-gated routes, the routes are
+	// absent rather than accepted-and-failed when the service is not wired (T10).
+	if opts.Reviews != nil && opts.TokenParser != nil {
+		reviewsHandler := &reviewsHandlers{
+			service:    opts.Reviews,
+			parser:     opts.TokenParser,
+			authorizer: opts.Authorizer,
+			logger:     logger,
+		}
+		mux.HandleFunc("GET /v1/places/{coPlace}/reviews", reviewsHandler.list)
+		mux.HandleFunc("POST /v1/places/{coPlace}/reviews",
+			RequireAuth(opts.TokenParser, reviewsHandler.create))
+		mux.HandleFunc("PATCH /v1/places/{coPlace}/reviews/{coReview}",
+			RequireAuth(opts.TokenParser, reviewsHandler.update))
+		mux.HandleFunc("DELETE /v1/places/{coPlace}/reviews/{coReview}",
+			RequireAuth(opts.TokenParser, reviewsHandler.delete))
+		if opts.Authorizer != nil {
+			mux.HandleFunc("PATCH /v1/admin/reviews/{coReview}",
+				RequireAuth(opts.TokenParser,
+					RequirePermission(opts.Authorizer, ReviewModeratePermission, logger, reviewsHandler.moderate)))
+			// The listing exists so a moderator can discover a coReview at all: the
+			// moderation route above is useless without it.
+			mux.HandleFunc("GET /v1/admin/reviews",
+				RequireAuth(opts.TokenParser,
+					RequirePermission(opts.Authorizer, ReviewModeratePermission, logger, reviewsHandler.adminList)))
 		}
 	}
 

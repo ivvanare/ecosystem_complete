@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/mail"
@@ -36,8 +35,7 @@ func (h *emailChangeHandlers) request(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body emailChangeRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
 
@@ -96,8 +94,7 @@ func (h *emailChangeHandlers) verify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body emailChangeVerifyRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
 	if !codePattern.MatchString(body.Code) {

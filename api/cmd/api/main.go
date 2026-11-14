@@ -16,19 +16,30 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/ivvanare/ecosystem_complete/api/internal/audit"
+	"github.com/ivvanare/ecosystem_complete/api/internal/blocks"
+	"github.com/ivvanare/ecosystem_complete/api/internal/checkin"
 	"github.com/ivvanare/ecosystem_complete/api/internal/config"
 	"github.com/ivvanare/ecosystem_complete/api/internal/db"
 	"github.com/ivvanare/ecosystem_complete/api/internal/emailchange"
+	"github.com/ivvanare/ecosystem_complete/api/internal/follow"
 	"github.com/ivvanare/ecosystem_complete/api/internal/httpapi"
 	"github.com/ivvanare/ecosystem_complete/api/internal/identity"
 	"github.com/ivvanare/ecosystem_complete/api/internal/invitation"
+	"github.com/ivvanare/ecosystem_complete/api/internal/invitations"
 	"github.com/ivvanare/ecosystem_complete/api/internal/login"
+	"github.com/ivvanare/ecosystem_complete/api/internal/notifications"
 	"github.com/ivvanare/ecosystem_complete/api/internal/password"
+	"github.com/ivvanare/ecosystem_complete/api/internal/placeadmin"
+	"github.com/ivvanare/ecosystem_complete/api/internal/places"
+	"github.com/ivvanare/ecosystem_complete/api/internal/plans"
 	"github.com/ivvanare/ecosystem_complete/api/internal/probe"
 	"github.com/ivvanare/ecosystem_complete/api/internal/queue"
+	"github.com/ivvanare/ecosystem_complete/api/internal/realtime"
+	"github.com/ivvanare/ecosystem_complete/api/internal/reviews"
 	"github.com/ivvanare/ecosystem_complete/api/internal/session"
 	"github.com/ivvanare/ecosystem_complete/api/internal/signup"
 	"github.com/ivvanare/ecosystem_complete/api/internal/social"
+	"github.com/ivvanare/ecosystem_complete/api/internal/storage"
 )
 
 // readHeaderTimeout bounds slow-header connections without capping request bodies.
@@ -153,6 +164,74 @@ func run() error {
 		signupRequester = signup.New(signup.NewPostgresStore(pool), publisher, logger)
 	}
 
+	// Uploaded images: a local volume today, S3 later. The interface is what makes that a
+	// swap rather than a redesign.
+	mediaStore, err := storage.NewLocal(cfg.MediaDir, "/media")
+	if err != nil {
+		return fmt.Errorf("wiring media storage: %w", err)
+	}
+
+	// Notifications (S13): preferences gate a best-effort email through the mail queue the
+	// service already owns. Push waits for the mobile client. The publisher is its own so the
+	// notifier does not depend on the signup block having run; delivery failures are logged and
+	// never propagate, because a courtesy must not fail the act it announces.
+	var notificationPublisher notifications.Publisher
+	if cfg.RabbitMQURL != "" {
+		mailPublisher := queue.NewAMQP(cfg.RabbitMQURL, cfg.MailQueue)
+		defer func() { _ = mailPublisher.Close() }()
+		notificationPublisher = mailPublisher
+	} else {
+		logger.Warn("RABBITMQ_URL is empty: notifications will be logged and dropped")
+	}
+	notificationService := notifications.NewService(
+		notifications.NewPostgresStore(pool), notificationPublisher, logger)
+
+	// Blocking (Q2): a relation the viewer-relative projections filter by.
+	blockService := blocks.NewService(blocks.NewPostgresStore(pool), logger)
+
+	// Plans (P3a): visibility is an attribute, membership carries the role.
+	planService := plans.NewService(plans.NewPostgresStore(pool), logger)
+	// The invitation lifecycle is its own domain; the plan surface exposes it.
+	planService.SetInvitations(invitations.NewService(invitations.NewPostgresStore(pool), logger))
+	planService.SetNotifier(notificationService)
+
+	// Realtime (S9): a vote reaches the other members as it happens. Without credentials this is
+	// nil — not a no-op implementation — because the router registers the subscription route on a
+	// non-nil publisher and a no-op would make an optional route permanent.
+	realtimeClient, err := newRealtimeClient(cfg, logger)
+	if err != nil {
+		return err
+	}
+	var realtimePublisher realtime.Publisher
+	if realtimeClient != nil {
+		realtimePublisher = realtimeClient
+		planService.SetReporter(&liveVotes{publisher: realtimeClient, logger: logger})
+	}
+
+	// Places backoffice (place-ownership): the ownership viewer is resolved per request
+	// from admin.access, so a owner-editor sees only their own rows.
+	placeBackoffice := placeadmin.NewService(placeadmin.NewPostgresStore(pool), logger)
+	// The backoffice reads the same published aggregates as discovery: one source for the
+	// rating, so the panel and the app can never disagree about it.
+	placeBackoffice.SetStats(places.NewRedisStats(redisClient))
+
+	// Social graph (P2): follow and check-in belong to the mobile consumer (D21); the
+	// admin panel has no counterpart for them.
+	followService := follow.NewService(follow.NewPostgresStore(pool), logger)
+	checkinService := checkin.NewService(checkin.NewPostgresStore(pool), logger)
+
+	// Discovery read path (p1-discovery.md): the store runs the spatial predicates on
+	// co_location so the GiST index serves them. Rating aggregates and the zone ranking
+	// come from the worker in a later slice; until then both readers report "nothing
+	// published", which is a degraded answer and never an error.
+	discovery := places.NewService(places.NewPostgresStore(pool),
+		places.NewRedisStats(redisClient), places.NewRedisRanking(redisClient), logger)
+
+	// Reviews write path (p1-discovery.md §6): every write announces the actor with
+	// set_config at the start of its transaction, so the existing history trigger
+	// records co_actor_user; the service never writes core.tb_review_history itself.
+	reviewsService := reviews.NewService(reviews.NewPostgresStore(pool), logger)
+
 	server := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: httpapi.New(httpapi.Options{
@@ -172,6 +251,18 @@ func run() error {
 			Password:           passwordService,
 			EmailChange:        emailChangeService,
 			Social:             socialService,
+			Discovery:          discovery,
+			Follows:            followService,
+			Checkins:           checkinService,
+			PlacesAdmin:        placeBackoffice,
+			Plans:              planService,
+			Blocks:             blockService,
+			Notifications:      notificationService,
+			PlanModeration:     planService,
+			MediaStorage:       mediaStore,
+			MediaDir:           cfg.MediaDir,
+			Reviews:            reviewsService,
+			Realtime:           realtimePublisher,
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
@@ -224,4 +315,45 @@ func bootstrapSchema(ctx context.Context, cfg config.Config, pool *pgxpool.Pool,
 
 	logger.Info("schema bootstrap finished", slog.Int("files_applied", len(applied)))
 	return nil
+}
+
+// liveVotes turns a stored vote into a Soketi event. It lives here, not in a domain package, so
+// plans never learns what a channel is and realtime never learns what a plan is.
+type liveVotes struct {
+	publisher *realtime.Client
+	logger    *slog.Logger
+}
+
+// VoteRecorded publishes the hint and swallows the failure: the vote is already stored, and a
+// member who cannot be notified has not voted less (realtime-votes S4).
+//
+// It publishes off the request: a hanging broker once held a vote open for the client timeout,
+// which turns a courtesy into latency and invites a retry that votes twice. The context is
+// detached from the request and bounded by the client's own timeout, so the answer never waits.
+func (l *liveVotes) VoteRecorded(ctx context.Context, planID, placeID string) {
+	detached := context.WithoutCancel(ctx)
+	go func() {
+		err := l.publisher.Publish(detached, realtime.Channel(planID), realtime.EventVoteChanged,
+			realtime.VoteChanged{CoRoute: planID, CoPlace: placeID})
+		if err != nil {
+			l.logger.Warn("publishing a vote failed", slog.String("error", err.Error()))
+		}
+	}()
+}
+
+// newRealtimeClient builds the broker client, or returns nil when realtime is not configured.
+//
+// Nil is the contract, not a detail: the router registers POST /v1/realtime/auth on a non-nil
+// publisher, so a no-op implementation here would make an optional route permanent — it answered
+// 500 where the contract promises the route is absent.
+func newRealtimeClient(cfg config.Config, logger *slog.Logger) (*realtime.Client, error) {
+	if cfg.SoketiURL == "" {
+		return nil, nil
+	}
+	return realtime.New(realtime.Config{
+		BaseURL: cfg.SoketiURL,
+		AppID:   cfg.SoketiAppID,
+		Key:     cfg.SoketiKey,
+		Secret:  cfg.SoketiSecret,
+	}, logger)
 }

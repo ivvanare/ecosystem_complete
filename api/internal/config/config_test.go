@@ -240,3 +240,102 @@ func TestLoadDefaultsCookiesToSecure(t *testing.T) {
 		t.Error("COOKIE_SECURE=false was ignored")
 	}
 }
+
+func TestSchedulerIntervalIsDisabledWhenUnset(t *testing.T) {
+	interval, err := SchedulerInterval(env(map[string]string{}))
+	if err != nil {
+		t.Fatalf("SchedulerInterval returned error when unset: %v", err)
+	}
+	if interval != 0 {
+		t.Errorf("SchedulerInterval = %v, want 0 (disabled) when unset", interval)
+	}
+}
+
+func TestSchedulerIntervalParsesAPositiveDuration(t *testing.T) {
+	interval, err := SchedulerInterval(env(map[string]string{"WORKER_SCHEDULER_INTERVAL": "5m"}))
+	if err != nil {
+		t.Fatalf("SchedulerInterval returned error: %v", err)
+	}
+	if interval != 5*time.Minute {
+		t.Errorf("SchedulerInterval = %v, want 5m", interval)
+	}
+}
+
+func TestSchedulerIntervalRejectsInvalidValues(t *testing.T) {
+	for _, raw := range []string{"banana", "0s", "-5m"} {
+		_, err := SchedulerInterval(env(map[string]string{"WORKER_SCHEDULER_INTERVAL": raw}))
+		if err == nil {
+			t.Fatalf("SchedulerInterval accepted %q, want error", raw)
+		}
+		if !strings.Contains(err.Error(), "WORKER_SCHEDULER_INTERVAL") {
+			t.Errorf("error %q does not name WORKER_SCHEDULER_INTERVAL", err)
+		}
+	}
+}
+
+// Realtime is all four variables or none: a URL without its credentials would build a publisher
+// that answers 401 on its first event, and the vote would silently stop notifying anyone.
+func TestLoadAcceptsRealtimeOnlyComplete(t *testing.T) {
+	complete := validEnv()
+	complete["SOKETI_URL"] = "http://soketi:6001"
+	complete["SOKETI_APP_ID"] = "app-id"
+	complete["SOKETI_KEY"] = "app-key"
+	complete["SOKETI_SECRET"] = "app-secret"
+	cfg, err := Load(env(complete))
+	if err != nil {
+		t.Fatalf("a complete realtime configuration was refused: %v", err)
+	}
+	if cfg.SoketiURL != "http://soketi:6001" || cfg.SoketiKey != "app-key" {
+		t.Fatalf("realtime config = %+v", cfg)
+	}
+
+	unset := validEnv()
+	cfg, err = Load(env(unset))
+	if err != nil {
+		t.Fatalf("realtime must be optional: %v", err)
+	}
+	if cfg.SoketiURL != "" {
+		t.Fatalf("SOKETI_URL = %q, want empty", cfg.SoketiURL)
+	}
+}
+
+func TestLoadRejectsHalfARealtimeConfiguration(t *testing.T) {
+	for _, missing := range []string{"SOKETI_URL", "SOKETI_APP_ID", "SOKETI_KEY", "SOKETI_SECRET"} {
+		values := validEnv()
+		values["SOKETI_URL"] = "http://soketi:6001"
+		values["SOKETI_APP_ID"] = "app-id"
+		values["SOKETI_KEY"] = "app-key"
+		values["SOKETI_SECRET"] = "app-secret"
+		delete(values, missing)
+		_, err := Load(env(values))
+		if err == nil {
+			t.Fatalf("a configuration missing %s was accepted", missing)
+		}
+		if !strings.Contains(err.Error(), missing) {
+			t.Fatalf("the error does not name %s: %v", missing, err)
+		}
+	}
+}
+
+// A value made of spaces is not a configuration: it must read as "not set", and it must not let a
+// half-configured publisher through (realtime-votes S4).
+func TestSoketiWhitespaceIsNotAValue(t *testing.T) {
+	values := validEnv()
+	values["SOKETI_URL"] = "   "
+	values["SOKETI_APP_ID"] = "  "
+	cfg, err := Load(env(values))
+	if err != nil {
+		t.Fatalf("whitespace-only realtime values must mean disabled: %v", err)
+	}
+	if cfg.SoketiURL != "" || cfg.SoketiAppID != "" {
+		t.Fatalf("SoketiURL = %q, SoketiAppID = %q, want empty", cfg.SoketiURL, cfg.SoketiAppID)
+	}
+
+	values["SOKETI_URL"] = "http://soketi:6001"
+	values["SOKETI_APP_ID"] = "app-id"
+	values["SOKETI_KEY"] = " \t "
+	values["SOKETI_SECRET"] = "app-secret"
+	if _, err := Load(env(values)); err == nil || !strings.Contains(err.Error(), "SOKETI_KEY") {
+		t.Fatalf("a whitespace-only SOKETI_KEY was accepted: %v", err)
+	}
+}

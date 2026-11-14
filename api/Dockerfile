@@ -8,14 +8,24 @@ FROM golang:1.27-alpine AS build
 
 WORKDIR /src
 
+# github.com/uber/h3-go/v4 is a cgo binding for Uber's H3, so the build step needs a C
+# toolchain. It stays in this stage only: the binary is linked against musl statically
+# (-extldflags -static), so the runtime image remains alpine:3 with no toolchain and the
+# artifact is still a static executable — the property the previous CGO_ENABLED=0 build
+# was there to guarantee.
+RUN apk add --no-cache build-base
+
 # Dependencies first so the module cache survives source changes.
 COPY api/go.mod api/go.sum ./
 RUN go mod download
 
 COPY api/ ./
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api \
- && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/worker ./cmd/worker \
- && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/bootstrap ./cmd/bootstrap
+RUN CGO_ENABLED=1 GOOS=linux go build -trimpath \
+        -ldflags='-s -w -linkmode external -extldflags "-static"' -o /out/api ./cmd/api \
+ && CGO_ENABLED=1 GOOS=linux go build -trimpath \
+        -ldflags='-s -w -linkmode external -extldflags "-static"' -o /out/worker ./cmd/worker \
+ && CGO_ENABLED=1 GOOS=linux go build -trimpath \
+        -ldflags='-s -w -linkmode external -extldflags "-static"' -o /out/bootstrap ./cmd/bootstrap
 
 # --- Runtime stage ---
 FROM alpine:3
@@ -27,6 +37,11 @@ RUN apk add --no-cache ca-certificates \
 COPY --from=build /out/api /usr/local/bin/api
 COPY --from=build /out/worker /usr/local/bin/worker
 COPY --from=build /out/bootstrap /usr/local/bin/bootstrap
+
+# Media root. It has to exist and belong to the runtime user BEFORE a named volume is mounted
+# there: an empty volume inherits the ownership of the image directory it covers, and a
+# root-owned mount is a directory this user cannot write to.
+RUN mkdir -p /app/media && chown app:app /app/media
 
 # Canonical schema. Copied in, never bind-mounted: a host directory the container user
 # cannot read (mode 700, other uid) would otherwise abort startup.

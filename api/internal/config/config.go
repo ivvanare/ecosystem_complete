@@ -30,11 +30,14 @@ const (
 
 // Config is the fully resolved runtime configuration.
 type Config struct {
-	HTTPAddr          string
-	DatabaseURL       string
-	RedisAddr         string
-	RabbitMQURL       string
-	DBInitDir         string
+	HTTPAddr    string
+	DatabaseURL string
+	RedisAddr   string
+	RabbitMQURL string
+	DBInitDir   string
+	// MediaDir is where uploaded images are written and served from. A directory, not a bucket:
+	// the storage interface is what makes S3 a later implementation rather than a later design.
+	MediaDir          string
 	CORSOrigins       []string
 	MailQueue         string
 	SMTPAddr          string
@@ -50,10 +53,20 @@ type Config struct {
 	AutoMigrate       bool
 	LogLevel          slog.Level
 	ShutdownTimeout   time.Duration
+	// Soketi is the realtime broker. All four values or none of them: a partial configuration
+	// is a publisher that fails on its first event, so it is refused at startup instead of
+	// degrading silently (realtime-votes S4).
+	SoketiURL    string
+	SoketiAppID  string
+	SoketiKey    string
+	SoketiSecret string
 }
 
 // Load reads and validates the configuration. It returns an error naming the offending
 // variable instead of falling back to a default for anything that matters.
+// DefaultMediaDir is where uploaded images live inside the runtime image.
+const DefaultMediaDir = "/app/media"
+
 func Load(getenv func(string) string) (Config, error) {
 	cfg := Config{
 		HTTPAddr:          valueOr(getenv, "HTTP_ADDR", DefaultHTTPAddr),
@@ -62,6 +75,7 @@ func Load(getenv func(string) string) (Config, error) {
 		RabbitMQURL:       lookup(getenv, "RABBITMQ_URL"),
 		DBInitDir:         valueOr(getenv, "DB_INIT_DIR", DefaultDBInitDir),
 		CORSOrigins:       splitList(lookup(getenv, "CORS_ALLOWED_ORIGINS")),
+		MediaDir:          valueOr(getenv, "MEDIA_DIR", DefaultMediaDir),
 		MailQueue:         valueOr(getenv, "MAIL_QUEUE", DefaultMailQueue),
 		SMTPAddr:          valueOr(getenv, "SMTP_ADDR", DefaultSMTPAddr),
 		MailFrom:          valueOr(getenv, "MAIL_FROM", DefaultMailFrom),
@@ -92,6 +106,28 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if len(cfg.JWTSecret) < MinJWTSecretLength {
 		return Config{}, fmt.Errorf("invalid JWT_SECRET: must be at least %d characters", MinJWTSecretLength)
+	}
+
+	// Realtime is optional as a whole and never half: the URL without a credential would build a
+	// publisher that answers 401 on its first event, which is worse than no realtime at all.
+	cfg.SoketiURL = strings.TrimSpace(lookup(getenv, "SOKETI_URL"))
+	cfg.SoketiAppID = strings.TrimSpace(lookup(getenv, "SOKETI_APP_ID"))
+	cfg.SoketiKey = strings.TrimSpace(lookup(getenv, "SOKETI_KEY"))
+	cfg.SoketiSecret = strings.TrimSpace(lookup(getenv, "SOKETI_SECRET"))
+	if cfg.SoketiURL != "" || cfg.SoketiAppID != "" || cfg.SoketiKey != "" || cfg.SoketiSecret != "" {
+		for _, required := range []struct {
+			name  string
+			value string
+		}{
+			{"SOKETI_URL", cfg.SoketiURL},
+			{"SOKETI_APP_ID", cfg.SoketiAppID},
+			{"SOKETI_KEY", cfg.SoketiKey},
+			{"SOKETI_SECRET", cfg.SoketiSecret},
+		} {
+			if required.value == "" {
+				return Config{}, fmt.Errorf("missing required environment variable: %s (realtime is configured by SOKETI_URL, SOKETI_APP_ID, SOKETI_KEY and SOKETI_SECRET together)", required.name)
+			}
+		}
 	}
 
 	for key, target := range map[string]*time.Duration{
@@ -143,6 +179,24 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// SchedulerInterval reads WORKER_SCHEDULER_INTERVAL, the cadence of the worker
+// process's periodic jobs. It lives apart from Load on purpose: the scheduler is a
+// worker concern, and an invalid value must never abort a startup — the caller
+// warns and runs with the scheduler disabled, because the worker's mail duty must
+// survive a bad config. Empty means disabled (0, nil); an invalid value is an
+// error naming the variable.
+func SchedulerInterval(getenv func(string) string) (time.Duration, error) {
+	raw := lookup(getenv, "WORKER_SCHEDULER_INTERVAL")
+	if raw == "" {
+		return 0, nil
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil || parsed <= 0 {
+		return 0, fmt.Errorf("invalid WORKER_SCHEDULER_INTERVAL %q: must be a positive duration such as 5m", raw)
+	}
+	return parsed, nil
 }
 
 // splitList parses a comma-separated variable, dropping blanks.

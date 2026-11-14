@@ -1,0 +1,32 @@
+-- ============================================================================
+-- 15 — POSTGIS — the extension 16-place-geo.sql builds on.
+-- Spec: database/diagram_base.txt · Change: openspec/changes/social-discovery
+-- (Phase 0, D2/S16) · Feature: odd/tasks/geo-foundation.md
+--
+-- WHAT THIS DOES
+--   CREATE EXTENSION IF NOT EXISTS postgis. PostGIS is what gives
+--   core.tb_place.co_location its geography(Point,4326) type and the GiST index
+--   the radius (ST_DWithin) and viewport (ST_MakeEnvelope) reads will use. The
+--   nu_latitude/nu_longitude decimals stay the contract; every spatial
+--   representation is derived from them and can be dropped and rebuilt.
+--
+-- WHY ITS OWN FILE
+--   An applied migration is never edited, and the extension is a precondition
+--   of the columns that follow, so it ships alone, in the same unit as the
+--   image change (compose postgres:15-alpine -> postgis/postgis:15-3.5-alpine).
+--   IF NOT EXISTS because the postgis image's entrypoint already creates the
+--   extension on a FRESH volume; on the existing dev volume initdb never
+--   reruns, so this file is what creates it there.
+--
+-- PRIVILEGE — READ BEFORE RELEASE
+--   postgis is NOT a trusted extension (pg_available_extension_versions:
+--   superuser=t, trusted=f), so CREATE EXTENSION needs a superuser. In
+--   development the compose user (POSTGRES_USER=admin) is the init superuser
+--   and the service applies this file as that user. In production the role the
+--   migration runner uses must be confirmed BEFORE the release, not during it:
+--   if that role is not a superuser, a privileged role must create the
+--   extension by hand first, and this file then applies as a no-op.
+-- ============================================================================
+\connect melia
+
+CREATE EXTENSION IF NOT EXISTS postgis;

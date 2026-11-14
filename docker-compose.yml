@@ -17,8 +17,18 @@ services:
       REDIS_ADDR: redis:6379
       RABBITMQ_URL: amqp://admin:admin_pass@rabbitmq:5672/
       DB_INIT_DIR: /app/database/init
+      # Realtime: el broker Soketi del compose con sus credenciales por defecto (app-id /
+      # app-key / app-secret). Los cuatro van juntos; sin SOKETI_URL los eventos de voto quedan
+      # deshabilitados y la ruta de suscripción no se registra.
+      SOKETI_URL: http://soketi:6001
+      SOKETI_APP_ID: app-id
+      SOKETI_KEY: app-key
+      SOKETI_SECRET: app-secret
       # Origen del panel (Angular `ng serve` en dev). Vacío = sin CORS.
       CORS_ALLOWED_ORIGINS: http://localhost:4200
+      # Imágenes subidas: volumen nombrado, no bind mount — mismo motivo que los datos de
+      # PostgreSQL. Sirve también para los logos del panel.
+      MEDIA_DIR: /app/media
       MAIL_QUEUE: melia.mail
       SMTP_ADDR: mailpit:1025
       MAIL_FROM: no-reply@melia.test
@@ -43,6 +53,10 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
+    volumes:
+      # Images uploaded by the panel. A named volume, not a bind mount: same reason as the
+      # database data — a host directory the container user cannot read aborts startup.
+      - media:/app/media
     networks:
       - melzone_network
 
@@ -61,10 +75,21 @@ services:
       SMTP_ADDR: mailpit:1025
       MAIL_FROM: no-reply@melia.test
       LOG_LEVEL: info
+      # El productor de trending los necesita. Ausentes, el worker sigue mandando mails y
+      # simplemente no rankea: el read path degrada a orden por rating, que es un estado
+      # válido y no una caída.
+      DATABASE_URL: postgres://admin:my_admin_pass@database:5432/melia?sslmode=disable
+      REDIS_ADDR: redis:6379
+      # Frecuencia del batch en dev. Sin esto el scheduler queda apagado.
+      WORKER_SCHEDULER_INTERVAL: 2m
     depends_on:
       rabbitmq:
         condition: service_started
       mailpit:
+        condition: service_started
+      database:
+        condition: service_healthy
+      redis:
         condition: service_started
     networks:
       - melzone_network
@@ -81,10 +106,13 @@ services:
     networks:
       - melzone_network
 
-  # --- DATABASE (PostgreSQL 15) ---
+  # --- DATABASE (PostgreSQL 15 + PostGIS 3.5) ---
   # Levantar solo esta:  docker compose up -d database
   database:
-    image: postgres:15-alpine
+    # Mismo major de PostgreSQL (15): el volumen nombrado existente sigue válido.
+    # PostGIS habilita core.tb_place.co_location y su índice GiST
+    # (database/init/15-postgis-extension.sql y 16-place-geo.sql).
+    image: postgis/postgis:15-3.5-alpine
     container_name: melzone_db
     restart: always
     # Sin esto, PostgreSQL en Docker se queda con 64 MB de /dev/shm y las consultas
@@ -155,6 +183,9 @@ services:
 volumes:
   # Datos de PostgreSQL. Se borra con `docker compose down -v`.
   melzone_pgdata:
+  # Imágenes subidas por el panel. Sobrevive a `restart` y a recrear el contenedor; se borra
+  # sólo con `down -v`, igual que los datos.
+  media:
 
 networks:
   melzone_network:
