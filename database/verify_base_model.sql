@@ -1,6 +1,12 @@
 -- ============================================================================
--- verify_base_model.sql — runnable assertions for the melia base model.
+-- verify_base_model.sql — runnable assertions for the melia model.
 -- Spec: database/diagram_base.txt · Change: openspec/changes/base-domain-model
+--
+-- The base model is the origin, not the boundary: every later slice appends its
+-- own section and names the requirement it proves (social-discovery S5/S10 for
+-- the social graph, S27/S28 for the derived columns). A table that arrives
+-- without a section here is a table no check covers — that gap is what T2 of
+-- odd/tasks/social-graph.md existed to close.
 --
 -- Usage (live PostgreSQL 15, e.g. docker compose up database):
 --   psql -h localhost -U admin -d melia -v ON_ERROR_STOP=1 -f database/verify_base_model.sql
@@ -55,7 +61,7 @@ BEGIN
     END IF;
 END $$;
 
--- ---- S14: table inventory — 10 seg + 8 core ---------------------------------
+-- ---- S14: table inventory — 10 seg + 10 core ---------------------------------
 DO $$
 DECLARE
     missing text;
@@ -68,7 +74,8 @@ BEGIN
         ('seg.tb_security_event'),
         ('core.tb_place'), ('core.tb_place_schedule'), ('core.tb_place_photo'),
         ('core.tb_menu'), ('core.tb_menu_item'), ('core.tb_review'),
-        ('core.tb_route'), ('core.tb_route_place')
+        ('core.tb_route'), ('core.tb_route_place'),
+        ('core.tb_follow'), ('core.tb_checkin')
     ) AS v(t)
     WHERE NOT EXISTS (
         SELECT 1 FROM pg_catalog.pg_tables pt
@@ -1252,6 +1259,102 @@ BEGIN
                    WHERE table_schema = 'core' AND table_name = 'tb_menu_item_history'
                      AND column_name = 'search_text') THEN
         RAISE EXCEPTION 'S28 FAIL: a derived search column leaked into a history payload';
+    END IF;
+END $$;
+
+-- ============================================================================
+-- social-discovery S5/S10: the social graph's rules live in the schema.
+--   Follow is asymmetric, self-follow is impossible, and a follow is one row.
+--   A check-in is append-only and unique per person, place and day. Both facts
+--   are the database's, not the service's: a second writer must not be able to
+--   create a state the read path cannot render.
+-- ============================================================================
+DO $$
+DECLARE
+    v_user_a uuid := gen_random_uuid();
+    v_user_b uuid := gen_random_uuid();
+    v_place  uuid := gen_random_uuid();
+    v_cat    uuid;
+BEGIN
+    SELECT co_place_category INTO v_cat
+      FROM core.tb_place_category
+     WHERE tx_code = 'hotel' AND dt_deleted_at IS NULL;
+
+    INSERT INTO seg.tb_user (co_user, tx_email, dt_created_at, dt_updated_at)
+    VALUES (v_user_a, 'graph-a@test.dev', now(), now()),
+           (v_user_b, 'graph-b@test.dev', now(), now());
+    INSERT INTO core.tb_place (co_place, tx_name, tx_title, nu_latitude, nu_longitude,
+                               co_place_category, tx_country, tx_timezone,
+                               dt_created_at, dt_updated_at)
+    VALUES (v_place, 'Grafo', 'Grafo', 10.5, -66.9, v_cat, 'VE', 'America/Caracas',
+            now(), now());
+
+    -- Following yourself is rejected by ck_tb_follow_not_self, so the rule holds
+    -- even for a writer that never went through the service.
+    BEGIN
+        INSERT INTO core.tb_follow (co_follower, co_followed, dt_created_at)
+        VALUES (v_user_a, v_user_a, now());
+        RAISE EXCEPTION 'S5 FAIL: self-follow was admitted';
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+
+    -- A follow is one row: the composite key is what makes following twice
+    -- idempotent without a soft-deleted row blocking a future follow.
+    INSERT INTO core.tb_follow (co_follower, co_followed, dt_created_at)
+    VALUES (v_user_a, v_user_b, now());
+    BEGIN
+        INSERT INTO core.tb_follow (co_follower, co_followed, dt_created_at)
+        VALUES (v_user_a, v_user_b, now());
+        RAISE EXCEPTION 'S5 FAIL: the same follow was recorded twice';
+    EXCEPTION WHEN unique_violation THEN NULL;
+    END;
+
+    -- The reverse direction is a different row: "friend" is a mutual follow
+    -- computed at read, never a flag (D6).
+    INSERT INTO core.tb_follow (co_follower, co_followed, dt_created_at)
+    VALUES (v_user_b, v_user_a, now());
+    IF (SELECT count(*) FROM core.tb_follow
+         WHERE co_follower IN (v_user_a, v_user_b)
+           AND co_followed IN (v_user_a, v_user_b)) <> 2 THEN
+        RAISE EXCEPTION 'S5 FAIL: the two directions of a follow did not both persist';
+    END IF;
+
+    -- The day bucket is generated, which is what lets the uniqueness rule be an
+    -- index instead of a service check.
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'core' AND table_name = 'tb_checkin'
+                      AND column_name = 'dt_day' AND is_generated = 'ALWAYS') THEN
+        RAISE EXCEPTION 'S10 FAIL: tb_checkin.dt_day is not a generated column';
+    END IF;
+
+    INSERT INTO core.tb_checkin (co_user, co_place, tx_verification, dt_created_at)
+    VALUES (v_user_b, v_place, 'PROXIMITY', now());
+    BEGIN
+        INSERT INTO core.tb_checkin (co_user, co_place, tx_verification, dt_created_at)
+        VALUES (v_user_b, v_place, 'SELF_REPORTED', now());
+        RAISE EXCEPTION 'S10 FAIL: a second check-in on the same day was admitted';
+    EXCEPTION WHEN unique_violation THEN NULL;
+    END;
+
+    -- The same person and place on another day is a different fact and is kept.
+    INSERT INTO core.tb_checkin (co_user, co_place, tx_verification, dt_created_at)
+    VALUES (v_user_b, v_place, 'SELF_REPORTED', now() - interval '1 day');
+
+    -- Append-only in the shape itself: a row that cannot be edited is a fact.
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'core' AND table_name = 'tb_checkin'
+                  AND column_name IN ('dt_updated_at', 'dt_deleted_at')) THEN
+        RAISE EXCEPTION 'S10 FAIL: tb_checkin carries an update or a soft-delete column';
+    END IF;
+
+    -- The verification enum is the resolved Q1: presence is recorded as a verdict,
+    -- never as a coordinate (D11).
+    IF (SELECT array_agg(e.enumlabel::text ORDER BY e.enumsortorder)
+          FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+          JOIN pg_enum e ON e.enumtypid = t.oid
+         WHERE n.nspname = 'public' AND t.typname = 'checkin_verification')
+       <> ARRAY['SELF_REPORTED','PROXIMITY']::text[] THEN
+        RAISE EXCEPTION 'S10 FAIL: checkin_verification labels are not SELF_REPORTED|PROXIMITY';
     END IF;
 END $$;
 

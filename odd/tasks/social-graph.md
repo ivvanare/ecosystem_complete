@@ -89,18 +89,23 @@ viewers, different flags). `go test ./...` needs no Postgres, Redis or RabbitMQ.
 - T1 — Branch and ledger `21-social-graph.sql`: `tb_follow`, `tb_checkin`, the
   `checkin_verification` enum, indexes (including the reverse follow direction and the
   per-day uniqueness), and comments explaining why neither table joins the history set.
+  **done** — 8efbcb9 (ledger 21 + 22 + 23).
 - T2 — `database/diagram_base.txt` and `database/verify_base_model.sql` updated; drift check
-  must pass on a scratch database and on the live one.
+  must pass on a scratch database and on the live one. **done** — diagram in 8efbcb9; the
+  assertions were missing until L4, which added them and proved them by mutation.
 - T3 — `openapi.yaml` + `API.md`: the four routes, the new error code in the catalogue, the
-  flow in Spanish.
+  flow in Spanish. **done** — 8efbcb9.
 - T4 — `internal/follow`: store and service for follow/unfollow/list, mutual-follow helper.
+  **done** — 8efbcb9.
 - T5 — `internal/checkin`: store and service, radius validation through `internal/geo`, the
-  `not_near_place` outcome, day-bucket uniqueness.
+  `not_near_place` outcome, day-bucket uniqueness. **done** — 8efbcb9.
 - T6 — `internal/httpapi`: handlers, wiring in `cmd/api/main.go` behind the existing
-  `TokenParser`; the review list gains `viaFollowedAuthor`.
-- T7 — tests: the S9 list, RED first.
+  `TokenParser`; the review list gains `viaFollowedAuthor`. **done** — 8efbcb9.
+- T7 — tests: the S9 list, RED first. **done** — 8efbcb9 (follow, checkin and httpapi suites).
 - T8 — verify: suite and `internal/contract` green, drift check green, SQL proven on the live
   database inside a transaction that rolls back, and an HTTP smoke test of the five routes.
+  **done** — 8efbcb9 for the suite and the HTTP run; the drift check was green but blind to
+  both tables until L4.
 
 ---
 
@@ -113,3 +118,25 @@ viewers, different flags). `go test ./...` needs no Postgres, Redis or RabbitMQ.
   log; the coordinate is validated and discarded, and only the verification enum is stored.
 - L3 — The consumer clarification is recorded as D21: the mobile app is the consumer, the admin
   panel administers, and the API contract therefore carries the app's direction.
+
+- L4 — T2 closed (2026-11-14), human authorization verbatim: "si limpialas y dale con la fase 2".
+  The slice itself shipped in 8efbcb9 without its verification half: the ledger, the packages,
+  the handlers, the contract and the diagram were all there, and `verify_base_model.sql` never
+  gained a line for either table. So "the drift check is green" was true and empty at once.
+  Added: both tables to the S14 inventory, the exact `checkin_verification` labels, and a
+  behavioural section that proves the rules belong to the schema rather than to the service —
+  self-follow rejected by `ck_tb_follow_not_self`, the composite PK refusing the same follow
+  twice while the reverse direction persists as its own row, `dt_day` a generated column, one
+  check-in per person/place/day, another day kept, and no `dt_updated_at`/`dt_deleted_at` column
+  to edit or retire a fact. Proven twice: the file passes on the live `melia` database and on a
+  scratch database built from all 31 ledger files (the `\connect` meta-command stripped, the
+  ledger table created by hand, as AGENTS.md documents), and each new assertion was shown to
+  fail by mutating the scratch schema — dropping the CHECK, dropping the unique index, adding a
+  soft-update column (with a comment, so the existing S24 check could not answer first), and
+  renaming the table for the inventory check. The scratch database was dropped afterwards and
+  the live one was never written: every block runs inside the final rolled-back transaction.
+  Still uncovered, and deliberately left out of this slice: the tables of phases 3a/3b/4
+  (`tb_route_member`, `tb_route_place_vote`, `tb_plan_invitation`, `tb_user_taste_profile`,
+  `tb_block`, `tb_notification_optout`) have no assertions here either. One slice per feature
+  is how this file stays readable; that is a follow-up, not a defect in this one.
+
