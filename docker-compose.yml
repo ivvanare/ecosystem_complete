@@ -17,6 +17,13 @@ services:
       REDIS_ADDR: redis:6379
       RABBITMQ_URL: amqp://admin:admin_pass@rabbitmq:5672/
       DB_INIT_DIR: /app/database/init
+      # Realtime: el broker Soketi del compose con sus credenciales por defecto (app-id /
+      # app-key / app-secret). Los cuatro van juntos; sin SOKETI_URL los eventos de voto quedan
+      # deshabilitados y la ruta de suscripción no se registra.
+      SOKETI_URL: http://soketi:6001
+      SOKETI_APP_ID: app-id
+      SOKETI_KEY: app-key
+      SOKETI_SECRET: app-secret
       # Origen del panel (Angular `ng serve` en dev). Vacío = sin CORS.
       CORS_ALLOWED_ORIGINS: http://localhost:4200
       # Imágenes subidas: volumen nombrado, no bind mount — mismo motivo que los datos de

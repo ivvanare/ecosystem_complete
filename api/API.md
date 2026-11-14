@@ -844,6 +844,28 @@ visibilidad es un atributo del plan y la membresía es una relación que lleva e
 - Un plan inactivo (moderado) responde `404` a los no-owner, y sus miembros conservan la
   lectura para no perder el itinerario.
 
+### 15.1 Votos en vivo (Soketi)
+
+```http
+POST   /v1/realtime/auth    { socketId, channel }   → { auth }
+```
+
+El broker es Soketi, que habla el protocolo Pusher. Los votos de un plan viajan por un canal
+**privado**, `private-plan-<coRoute>`: un canal público dejaría que cualquiera con el id de la
+ruta mire la actividad de un plan privado.
+
+- El cliente no puede suscribirse sin firma. Pide `POST /v1/realtime/auth` con el `socketId` que
+  le dio Soketi y el nombre del canal, y entrega la respuesta `auth` **sin tocarla**.
+- La puerta es la misma del plan, no una copia: un miembro siempre puede; un plan `PUBLIC` puede
+  mirarlo cualquier cuenta autenticada; un plan `PRIVATE` responde `404` al resto, igual que sus
+  lecturas, para no confirmar que existe.
+- El evento es `vote.changed` con `{coRoute, coPlace}`. **Es una pista, no el estado**: no trae
+  ranking ni conteos; quien se lo pierde, relee el plan, que es la fuente de verdad.
+- Realtime es opcional y nunca rompe una escritura. Sin `SOKETI_URL` la ruta no existe y el voto
+  funciona igual; si el broker falla al publicar, el voto ya está guardado y responde `204`.
+- Con la URL configurada y una credencial faltante, el arranque aborta nombrando la variable: un
+  publisher a medio configurar es peor que ninguno.
+
 ---
 
 ## 16. Catálogo de categorías

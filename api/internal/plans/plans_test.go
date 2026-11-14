@@ -12,6 +12,7 @@ type fakeStore struct {
 	role        string
 	visibility  string
 	roleErr     error
+	watchErr    error
 	joined      string // role the service chose for the self-join
 	removed     string
 	created     bool
@@ -30,6 +31,7 @@ func (f *fakeStore) Get(context.Context, string, string) (Plan, error) { return 
 func (f *fakeStore) Role(context.Context, string, string) (string, string, error) {
 	return f.role, f.visibility, f.roleErr
 }
+func (f *fakeStore) Watchable(context.Context, string, string) error { return f.watchErr }
 func (f *fakeStore) Update(_ context.Context, _, _ string, in UpdateInput) (Plan, error) {
 	f.updated = in
 	return Plan{ID: "p1"}, nil
@@ -270,5 +272,62 @@ func TestAdminListDoesNotRequireMembership(t *testing.T) {
 	}
 	if !store.adminListed {
 		t.Fatal("the moderation listing was not requested")
+	}
+}
+
+// The live layer: a stored vote is reported, a failed one is not, and the reporter never decides
+// whether the vote succeeded.
+
+type fakeReporter struct {
+	planID, placeID string
+	called          bool
+}
+
+func (f *fakeReporter) VoteRecorded(_ context.Context, planID, placeID string) {
+	f.called, f.planID, f.placeID = true, planID, placeID
+}
+
+func TestAStoredVoteIsReportedToTheLiveLayer(t *testing.T) {
+	store := &fakeStore{role: RoleViewer, visibility: VisibilityPrivate}
+	reporter := &fakeReporter{}
+	svc := service(store)
+	svc.SetReporter(reporter)
+
+	if err := svc.Vote(context.Background(), "viewer", "p1", "place-1", 1); err != nil {
+		t.Fatalf("Vote: %v", err)
+	}
+	if !reporter.called || reporter.planID != "p1" || reporter.placeID != "place-1" {
+		t.Fatalf("reported = %+v", reporter)
+	}
+}
+
+// failingStore makes the vote write fail.
+type failingStore struct{ fakeStore }
+
+func (f *failingStore) Vote(context.Context, string, string, string, int) error {
+	return errors.New("db down")
+}
+
+func TestAVoteThatFailedIsNotReported(t *testing.T) {
+	reporter := &fakeReporter{}
+	svc := service(&failingStore{fakeStore{role: RoleViewer, visibility: VisibilityPrivate}})
+	svc.SetReporter(reporter)
+
+	if err := svc.Vote(context.Background(), "viewer", "p1", "place-1", 1); err == nil {
+		t.Fatal("a failing vote did not return its error")
+	}
+	if reporter.called {
+		t.Fatal("an event was published for a vote that was never stored")
+	}
+}
+
+// The subscription door is the read door, so the service does not decide it: the store answers
+// with the same predicate Get uses, and whatever it says is what the caller gets (S3, A1).
+func TestCanWatchIsTheStoresAnswer(t *testing.T) {
+	if err := service(&fakeStore{}).CanWatch(context.Background(), "someone", "p1"); err != nil {
+		t.Fatalf("a watchable plan refused the subscription: %v", err)
+	}
+	if err := service(&fakeStore{watchErr: ErrNotFound}).CanWatch(context.Background(), "someone", "p1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 }
