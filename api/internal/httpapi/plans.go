@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -102,8 +101,7 @@ func (h *planModerationHandlers) moderatePlan(w http.ResponseWriter, r *http.Req
 		return
 	}
 	var body planStatusRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 4<<10, &body) {
 		return
 	}
 	if body.Status == nil {
@@ -286,8 +284,7 @@ func (h *planHandlers) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body planWriteRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 32<<10, &body) {
 		return
 	}
 	if fields := validatePlan(body, true); len(fields) > 0 {
@@ -347,8 +344,7 @@ func (h *planHandlers) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body planWriteRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 32<<10, &body) {
 		return
 	}
 	if fields := validatePlan(body, false); len(fields) > 0 {
@@ -501,8 +497,7 @@ func (h *planHandlers) addPlace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body planPlaceRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
 	if !uuidPattern.MatchString(strings.TrimSpace(body.CoPlace)) {
@@ -566,8 +561,7 @@ func (h *planHandlers) vote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body voteRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 4<<10, &body) {
 		return
 	}
 	if body.Vote == nil {
@@ -632,8 +626,7 @@ func (h *planHandlers) invite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body invitationRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
 	var fields []fieldError

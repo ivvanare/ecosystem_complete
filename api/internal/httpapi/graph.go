@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -64,8 +63,7 @@ func (h *graphHandlers) createFollow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body followRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The body is not valid JSON.")
+	if !decodeJSON(w, r, 4<<10, &body) {
 		return
 	}
 	if !uuidPattern.MatchString(strings.TrimSpace(body.CoUser)) {
@@ -165,8 +163,7 @@ func (h *graphHandlers) createCheckin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body checkinRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The body is not valid JSON.")
+	if !decodeJSON(w, r, 4<<10, &body) {
 		return
 	}
 	where, issue := geo.ParseCoordinate("near", body.Near)

@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/mail"
@@ -109,8 +108,7 @@ type inviteRequest struct {
 // proves the address themselves, and the role is granted afterwards.
 func (h *adminHandlers) inviteUser(w http.ResponseWriter, r *http.Request) {
 	var body inviteRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
 
@@ -186,8 +184,7 @@ func (h *adminHandlers) updateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body updateUserRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
 	if body.Name == nil && body.Status == nil {
@@ -241,8 +238,7 @@ func (h *adminHandlers) setRoles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body setRolesRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
 	if body.Roles == nil {

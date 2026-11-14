@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/mail"
@@ -30,8 +29,7 @@ type forgotRequest struct {
 // exists. Anything else turns this endpoint into an account oracle.
 func (h *passwordHandlers) forgotPassword(w http.ResponseWriter, r *http.Request) {
 	var body forgotRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
 	if _, err := mail.ParseAddress(strings.TrimSpace(body.Email)); err != nil {
@@ -55,8 +53,7 @@ type resetRequest struct {
 
 func (h *passwordHandlers) resetPassword(w http.ResponseWriter, r *http.Request) {
 	var body resetRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
 
@@ -105,8 +102,7 @@ func (h *passwordHandlers) changePassword(w http.ResponseWriter, r *http.Request
 	}
 
 	var body changeRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON.")
+	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
 
