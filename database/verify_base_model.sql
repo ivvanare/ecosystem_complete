@@ -61,7 +61,7 @@ BEGIN
     END IF;
 END $$;
 
--- ---- S14: table inventory — 10 seg + 10 core ---------------------------------
+-- ---- S14: table inventory — 10 seg + 16 core --------------------------------
 DO $$
 DECLARE
     missing text;
@@ -75,7 +75,10 @@ BEGIN
         ('core.tb_place'), ('core.tb_place_schedule'), ('core.tb_place_photo'),
         ('core.tb_menu'), ('core.tb_menu_item'), ('core.tb_review'),
         ('core.tb_route'), ('core.tb_route_place'),
-        ('core.tb_follow'), ('core.tb_checkin')
+        ('core.tb_follow'), ('core.tb_checkin'),
+        ('core.tb_route_member'), ('core.tb_route_place_vote'),
+        ('core.tb_plan_invitation'), ('core.tb_user_taste_profile'),
+        ('core.tb_block'), ('core.tb_notification_optout')
     ) AS v(t)
     WHERE NOT EXISTS (
         SELECT 1 FROM pg_catalog.pg_tables pt
@@ -1355,6 +1358,210 @@ BEGIN
          WHERE n.nspname = 'public' AND t.typname = 'checkin_verification')
        <> ARRAY['SELF_REPORTED','PROXIMITY']::text[] THEN
         RAISE EXCEPTION 'S10 FAIL: checkin_verification labels are not SELF_REPORTED|PROXIMITY';
+    END IF;
+END $$;
+
+-- ============================================================================
+-- social-discovery 3a/3b/4: plans, votes, invitations, taste, blocking, opt-outs.
+--   These are the rules a second writer would trip over: a duplicate membership,
+--   a vote that is not a verdict, two live invitations to the same person, a
+--   self-block, an opt-out kind outside the convention. The read-path rules
+--   (ranking order, redaction, mutual follow) are Go tests; what is asserted
+--   here is what the database refuses regardless of who writes.
+-- ============================================================================
+DO $$
+DECLARE
+    v_user_a uuid := gen_random_uuid();
+    v_user_b uuid := gen_random_uuid();
+    v_route  uuid := gen_random_uuid();
+    v_place  uuid := gen_random_uuid();
+    v_other  uuid := gen_random_uuid();
+    v_cat    uuid;
+    v_visibility text;
+BEGIN
+    SELECT co_place_category INTO v_cat
+      FROM core.tb_place_category
+     WHERE tx_code = 'hotel' AND dt_deleted_at IS NULL;
+
+    INSERT INTO seg.tb_user (co_user, tx_email, dt_created_at, dt_updated_at)
+    VALUES (v_user_a, 'plans-a@test.dev', now(), now()),
+           (v_user_b, 'plans-b@test.dev', now(), now());
+    INSERT INTO core.tb_place (co_place, tx_name, tx_title, nu_latitude, nu_longitude,
+                               co_place_category, tx_country, tx_timezone,
+                               dt_created_at, dt_updated_at)
+    VALUES (v_place, 'Plan Uno', 'Plan Uno', 10.5, -66.9, v_cat, 'VE', 'America/Caracas',
+            now(), now()),
+           (v_other, 'Plan Dos', 'Plan Dos', 10.6, -66.8, v_cat, 'VE', 'America/Caracas',
+            now(), now());
+
+    -- Visibility defaults to PRIVATE: a plan is not public by omission (S7).
+    INSERT INTO core.tb_route (co_route, co_user, tx_name, dt_created_at, dt_updated_at)
+    VALUES (v_route, v_user_a, 'Ruta', now(), now());
+    SELECT tx_visibility::text INTO v_visibility
+      FROM core.tb_route WHERE co_route = v_route;
+    IF v_visibility <> 'PRIVATE' THEN
+        RAISE EXCEPTION 'S7 FAIL: a new plan is %, not PRIVATE', v_visibility;
+    END IF;
+
+    -- Party size is numeric with a range, not an enum: 0 and 51 are refused.
+    BEGIN
+        UPDATE core.tb_route SET nu_party_size = 0 WHERE co_route = v_route;
+        RAISE EXCEPTION 'S25 FAIL: party size 0 was admitted';
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+    BEGIN
+        UPDATE core.tb_route SET nu_party_size = 51 WHERE co_route = v_route;
+        RAISE EXCEPTION 'S25 FAIL: party size 51 was admitted';
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+    UPDATE core.tb_route SET nu_party_size = 4 WHERE co_route = v_route;
+
+    -- One membership row per person and plan.
+    INSERT INTO core.tb_route_member (co_route, co_user, tx_role, dt_created_at, dt_updated_at)
+    VALUES (v_route, v_user_b, 'VIEWER', now(), now());
+    BEGIN
+        INSERT INTO core.tb_route_member (co_route, co_user, tx_role, dt_created_at, dt_updated_at)
+        VALUES (v_route, v_user_b, 'EDITOR', now(), now());
+        RAISE EXCEPTION 'S8 FAIL: a second membership was admitted';
+    EXCEPTION WHEN unique_violation THEN NULL;
+    END;
+
+    INSERT INTO core.tb_route_place (co_route, co_place, nu_order, dt_created_at, dt_updated_at)
+    VALUES (v_route, v_place, 1, now(), now());
+
+    -- A vote is a verdict: -1 or 1, and one per member, plan and place (S9).
+    BEGIN
+        INSERT INTO core.tb_route_place_vote
+            (co_route, co_place, co_user, nu_vote, dt_created_at, dt_updated_at)
+        VALUES (v_route, v_place, v_user_b, 0, now(), now());
+        RAISE EXCEPTION 'S9 FAIL: vote 0 was admitted';
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+    BEGIN
+        INSERT INTO core.tb_route_place_vote
+            (co_route, co_place, co_user, nu_vote, dt_created_at, dt_updated_at)
+        VALUES (v_route, v_place, v_user_b, 2, now(), now());
+        RAISE EXCEPTION 'S9 FAIL: vote 2 was admitted';
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+    INSERT INTO core.tb_route_place_vote
+        (co_route, co_place, co_user, nu_vote, dt_created_at, dt_updated_at)
+    VALUES (v_route, v_place, v_user_b, 1, now(), now());
+    BEGIN
+        INSERT INTO core.tb_route_place_vote
+            (co_route, co_place, co_user, nu_vote, dt_created_at, dt_updated_at)
+        VALUES (v_route, v_place, v_user_b, 1, now(), now());
+        RAISE EXCEPTION 'S9 FAIL: the same member voted twice on one place';
+    EXCEPTION WHEN unique_violation THEN NULL;
+    END;
+    -- Voting for a place that is not in the plan has no row to join: the FK is
+    -- the composite (co_route, co_place), so the plan is part of the reference.
+    BEGIN
+        INSERT INTO core.tb_route_place_vote
+            (co_route, co_place, co_user, nu_vote, dt_created_at, dt_updated_at)
+        VALUES (v_route, v_other, v_user_b, 1, now(), now());
+        RAISE EXCEPTION 'S9 FAIL: a vote for a place outside the plan was admitted';
+    EXCEPTION WHEN foreign_key_violation THEN NULL;
+    END;
+
+    -- An invitation cannot expire before it exists.
+    BEGIN
+        INSERT INTO core.tb_plan_invitation
+            (co_route, co_user, co_inviter, dt_expires_at, dt_created_at)
+        VALUES (v_route, v_user_b, v_user_a, now() - interval '1 hour', now());
+        RAISE EXCEPTION 'S19 FAIL: an invitation that expired at birth was admitted';
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+    -- One live invitation per plan and person: the partial index is what makes
+    -- the state machine readable, while a resolved one no longer blocks.
+    INSERT INTO core.tb_plan_invitation
+        (co_route, co_user, co_inviter, dt_expires_at, dt_created_at)
+    VALUES (v_route, v_user_b, v_user_a, now() + interval '1 day', now());
+    BEGIN
+        INSERT INTO core.tb_plan_invitation
+            (co_route, co_user, co_inviter, dt_expires_at, dt_created_at)
+        VALUES (v_route, v_user_b, v_user_a, now() + interval '2 days', now());
+        RAISE EXCEPTION 'S19 FAIL: two live invitations for one person were admitted';
+    EXCEPTION WHEN unique_violation THEN NULL;
+    END;
+    UPDATE core.tb_plan_invitation
+       SET tx_status = 'DECLINED', dt_responded_at = now()
+     WHERE co_route = v_route AND co_user = v_user_b AND tx_status = 'PENDING';
+    INSERT INTO core.tb_plan_invitation
+        (co_route, co_user, co_inviter, dt_expires_at, dt_created_at)
+    VALUES (v_route, v_user_b, v_user_a, now() + interval '3 days', now());
+
+    -- One taste profile per person, and it carries a payload.
+    INSERT INTO core.tb_user_taste_profile (co_user, js_profile, dt_computed_at)
+    VALUES (v_user_a, '{"categories":{}}'::jsonb, now());
+    BEGIN
+        INSERT INTO core.tb_user_taste_profile (co_user, js_profile, dt_computed_at)
+        VALUES (v_user_a, '{"categories":{}}'::jsonb, now());
+        RAISE EXCEPTION 'S12 FAIL: a second taste profile for one person was admitted';
+    EXCEPTION WHEN unique_violation THEN NULL;
+    END;
+    BEGIN
+        INSERT INTO core.tb_user_taste_profile (co_user, dt_computed_at)
+        VALUES (v_user_b, now());
+        RAISE EXCEPTION 'S12 FAIL: a taste profile without a payload was admitted';
+    EXCEPTION WHEN not_null_violation THEN NULL;
+    END;
+
+    -- Blocking yourself is not a block, and a block is one row.
+    BEGIN
+        INSERT INTO core.tb_block (co_blocker, co_blocked, dt_created_at)
+        VALUES (v_user_a, v_user_a, now());
+        RAISE EXCEPTION 'Q2 FAIL: self-block was admitted';
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+    INSERT INTO core.tb_block (co_blocker, co_blocked, dt_created_at)
+    VALUES (v_user_a, v_user_b, now());
+    BEGIN
+        INSERT INTO core.tb_block (co_blocker, co_blocked, dt_created_at)
+        VALUES (v_user_a, v_user_b, now());
+        RAISE EXCEPTION 'Q2 FAIL: the same block was recorded twice';
+    EXCEPTION WHEN unique_violation THEN NULL;
+    END;
+
+    -- An opt-out kind follows the naming convention; membership in the catalogue
+    -- is the edge's job, the shape is the schema's.
+    INSERT INTO core.tb_notification_optout (co_user, tx_kind, dt_created_at)
+    VALUES (v_user_b, 'invitation.received', now());
+    BEGIN
+        INSERT INTO core.tb_notification_optout (co_user, tx_kind, dt_created_at)
+        VALUES (v_user_b, 'invitation-received', now());
+        RAISE EXCEPTION 'S13 FAIL: an opt-out kind outside the convention was admitted';
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+    BEGIN
+        INSERT INTO core.tb_notification_optout (co_user, tx_kind, dt_created_at)
+        VALUES (v_user_b, 'invitation.received', now());
+        RAISE EXCEPTION 'S13 FAIL: the same opt-out was recorded twice';
+    EXCEPTION WHEN unique_violation THEN NULL;
+    END;
+
+    -- The enums of phases 3a and 3b, with their exact labels: a renamed value is
+    -- a client contract change and must be a failure here, not a surprise later.
+    IF (SELECT array_agg(e.enumlabel::text ORDER BY e.enumsortorder)
+          FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+          JOIN pg_enum e ON e.enumtypid = t.oid
+         WHERE n.nspname = 'public' AND t.typname = 'plan_visibility')
+       <> ARRAY['PRIVATE','PUBLIC']::text[] THEN
+        RAISE EXCEPTION 'S7 FAIL: plan_visibility labels changed';
+    END IF;
+    IF (SELECT array_agg(e.enumlabel::text ORDER BY e.enumsortorder)
+          FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+          JOIN pg_enum e ON e.enumtypid = t.oid
+         WHERE n.nspname = 'public' AND t.typname = 'plan_role')
+       <> ARRAY['OWNER','EDITOR','VIEWER']::text[] THEN
+        RAISE EXCEPTION 'S8 FAIL: plan_role labels changed';
+    END IF;
+    IF (SELECT array_agg(e.enumlabel::text ORDER BY e.enumsortorder)
+          FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+          JOIN pg_enum e ON e.enumtypid = t.oid
+         WHERE n.nspname = 'public' AND t.typname = 'plan_invitation_status')
+       <> ARRAY['PENDING','ACCEPTED','DECLINED','EXPIRED','REVOKED']::text[] THEN
+        RAISE EXCEPTION 'S19 FAIL: plan_invitation_status labels changed';
     END IF;
 END $$;
 
