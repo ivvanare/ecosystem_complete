@@ -24,9 +24,15 @@ var (
 	ErrNotFound = errors.New("placeadmin: place not found")
 	// ErrUnknownCategory is a validated failure: the category must exist and be live.
 	ErrUnknownCategory = errors.New("placeadmin: unknown category")
+	// ErrInvalidScheduleSet and ErrInvalidMenuSet are the edge validation of a replace request:
+	// a day out of range, an ambiguous open/close, a nameless section, a negative price. Typed
+	// rather than textual because every sentinel of this package shares the package prefix, and
+	// a prefix check answers 422 for a place the caller cannot see — which is a 404.
+	ErrInvalidScheduleSet = errors.New("placeadmin: invalid schedule set")
+	ErrInvalidMenuSet     = errors.New("placeadmin: invalid menu set")
 	// ErrInvalidPhotoSet is the edge validation of a replace-gallery request: two covers, a
-	// repeated row, an unknown kind or a negative position. Typed rather than textual so the
-	// transport can tell it apart from ErrNotFound, which shares the package prefix.
+	// repeated row, an unknown kind or a negative position. Typed for the same reason: the
+	// transport must tell it apart from ErrNotFound, which shares the package prefix.
 	ErrInvalidPhotoSet = errors.New("placeadmin: invalid photo set")
 )
 
@@ -353,24 +359,25 @@ func (e *UnknownAttributeError) Error() string {
 	return fmt.Sprintf("placeadmin: unknown attributes %v", e.Codes)
 }
 
-// validateSchedules enforces the model's shapes at the edge.
+// validateSchedules enforces the model's shapes at the edge. Every failure wraps
+// ErrInvalidScheduleSet so the transport maps it without reading text.
 func validateSchedules(schedules []Schedule) error {
 	for _, schedule := range schedules {
 		if schedule.DayOfWeek < 1 || schedule.DayOfWeek > 7 {
-			return fmt.Errorf("placeadmin: day of week out of range")
+			return fmt.Errorf("%w: day of week out of range", ErrInvalidScheduleSet)
 		}
 		opens, err := time.Parse("15:04", schedule.Open)
 		if err != nil {
-			return fmt.Errorf("placeadmin: invalid open time %q", schedule.Open)
+			return fmt.Errorf("%w: invalid open time %q", ErrInvalidScheduleSet, schedule.Open)
 		}
 		closes, err := time.Parse("15:04", schedule.Close)
 		if err != nil {
-			return fmt.Errorf("placeadmin: invalid close time %q", schedule.Close)
+			return fmt.Errorf("%w: invalid close time %q", ErrInvalidScheduleSet, schedule.Close)
 		}
 		// Equal times are ambiguous: it reads as closed all day or open all day depending on
 		// who is asking. Rejecting is the only honest option.
 		if opens.Equal(closes) {
-			return fmt.Errorf("placeadmin: open and close are the same time")
+			return fmt.Errorf("%w: open and close are the same time", ErrInvalidScheduleSet)
 		}
 	}
 	return nil
@@ -538,22 +545,23 @@ func (e *UnknownCurrencyError) Error() string {
 }
 
 // validateMenus enforces the shapes the model enforces, so a bad row is a 422 and not a 500.
+// Every failure wraps ErrInvalidMenuSet so the transport maps it without reading text.
 func validateMenus(menus []Menu) error {
 	for _, menu := range menus {
 		if strings.TrimSpace(menu.Name) == "" {
-			return fmt.Errorf("placeadmin: a menu needs a name")
+			return fmt.Errorf("%w: a menu needs a name", ErrInvalidMenuSet)
 		}
 		for _, item := range menu.Items {
 			if strings.TrimSpace(item.Name) == "" {
-				return fmt.Errorf("placeadmin: an item needs a name")
+				return fmt.Errorf("%w: an item needs a name", ErrInvalidMenuSet)
 			}
 			// The model has CHECK (nu_price >= 0); catching it here keeps a negative price a
 			// validation failure instead of a constraint violation the client cannot read.
 			if item.Price < 0 {
-				return fmt.Errorf("placeadmin: negative price")
+				return fmt.Errorf("%w: negative price", ErrInvalidMenuSet)
 			}
 			if strings.TrimSpace(item.Currency) == "" {
-				return fmt.Errorf("placeadmin: an item needs a currency")
+				return fmt.Errorf("%w: an item needs a currency", ErrInvalidMenuSet)
 			}
 		}
 	}

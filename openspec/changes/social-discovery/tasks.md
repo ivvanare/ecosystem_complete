@@ -354,7 +354,20 @@ Table: `core.tb_user_taste_profile`.
   Also recorded: the panel now resolves `git -C ../melia rev-parse origin/dev` before every sync
   and pins that SHA, which is what ended four rounds of comparing against a stale contract.
 
-- L21 — L20 implemented (2026-11-14), human authorization verbatim: "si dale con el put".
+- L21 — Defect fixed (2026-11-14), found while adding the gallery replace route. `PUT
+  /v1/admin/places/{coPlace}/menu` and `PUT .../schedules` answered `422` with field `menus` or
+  `schedules` for a place the caller cannot see, where the contract (openapi.yaml, both paths)
+  and every other backoffice route answer `404`. Cause: their validation branch was
+  `strings.Contains(err.Error(), "placeadmin:")`, and `ErrNotFound` is
+  `"placeadmin: place not found"`, so the sentinel was matched by the text test and mapped as a
+  validation failure. Fix: `ErrInvalidScheduleSet` and `ErrInvalidMenuSet`, wrapped by
+  `validateSchedules` and `validateMenus`, so the transport decides with `errors.Is` and the
+  text test is gone; `isScheduleValidation` was deleted. Behaviour for the validation failures
+  themselves is unchanged (`422` with the same field and code). Proven RED first: both tests
+  returned `422 validation_failed` before the change and `404 not_found` after it, and a
+  service-level test fails if a validation message stops wrapping its sentinel.
+
+- L22 — L20 implemented (2026-11-14), human authorization verbatim: "si dale con el put".
   `PUT /v1/admin/places/{coPlace}/photos` replaces the live gallery in one transaction: the
   listed photos take `type` and `order`, an omitted live photo is retired logically, and an
   explicit `[]` retires the whole gallery. `photos` is required, omitting the key is `422` field
@@ -366,9 +379,8 @@ Table: `core.tb_user_taste_profile`.
   two live covers exist mid-statement. Proven on the live database inside a transaction that
   rolled back (promotion without the demote is rejected; with it, the read returns the new cover
   first), and the empty set retires every row.
-  Found while mapping: `PUT .../menu` and `PUT .../schedules` answer `422` instead of `404` for a
-  place the caller cannot see, because their validation check is `strings.Contains(err,
-  "placeadmin:")` and `ErrNotFound` carries that prefix. This route uses a typed
-  `ErrInvalidPhotoSet` instead. The two existing routes were left untouched (outside this slice)
-  and are recorded as a known defect.
+  This route uses a typed `ErrInvalidPhotoSet` for the same reason L21 exists: the `menu` and
+  `schedules` routes were answering `422` where the contract says `404` because of the text
+  prefix test, and that defect is fixed in L21.
+
 
