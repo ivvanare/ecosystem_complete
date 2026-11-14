@@ -29,6 +29,7 @@ type PlaceBackoffice interface {
 	AttributeCatalogue(ctx context.Context) ([]placeadmin.Category, error)
 	AddPhoto(ctx context.Context, viewer placeadmin.Viewer, actorID, placeID, url, photoType string, order int) (placeadmin.Photo, error)
 	RemovePhoto(ctx context.Context, viewer placeadmin.Viewer, actorID, photoID string) error
+	ReplacePhotos(ctx context.Context, viewer placeadmin.Viewer, actorID, placeID string, placements []placeadmin.PhotoPlacement) error
 }
 
 // Permissions the places backoffice is built from. place.create/update/delete are seeded in

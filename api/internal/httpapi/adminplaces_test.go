@@ -32,6 +32,7 @@ type fakePlaceAdmin struct {
 	gotMenus     []placeadmin.Menu
 	gotPhotoURL  string
 	gotPhotoType string
+	gotPhotos    []placeadmin.PhotoPlacement
 }
 
 func (f *fakePlaceAdmin) List(_ context.Context, viewer placeadmin.Viewer, filter placeadmin.Filter, _, _ int) (placeadmin.Page, error) {
@@ -520,5 +521,67 @@ func TestRemovePhotoRejectsAMalformedID(t *testing.T) {
 		"/v1/admin/places/"+adminPlaceID+"/photos/nope", "")
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want 422", rec.Code)
+	}
+}
+
+// The replace-the-set route is what makes reordering possible without re-uploading: the bytes
+// never travel again, only the row's kind and position.
+func (f *fakePlaceAdmin) ReplacePhotos(_ context.Context, _ placeadmin.Viewer, _, _ string, placements []placeadmin.PhotoPlacement) error {
+	f.calls++
+	f.gotPhotos = placements
+	return f.err
+}
+
+func TestReplacePhotosAnswers204AndForwardsEveryPlacement(t *testing.T) {
+	service := &fakePlaceAdmin{}
+	rec := bearerDo(t, backoffice(service, "owner-1", adminScope), http.MethodPut,
+		"/v1/admin/places/"+adminPlaceID+"/photos",
+		`{"photos":[{"coPhoto":"`+planGuestUUID+`","type":"COVER","order":0},`+
+			`{"coPhoto":"`+adminPlaceID+`","type":"GALLERY","order":1}]}`)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d (%s), want 204", rec.Code, rec.Body.String())
+	}
+	if len(service.gotPhotos) != 2 {
+		t.Fatalf("placements forwarded = %d, want 2", len(service.gotPhotos))
+	}
+	if service.gotPhotos[0].Type != placeadmin.PhotoCover || service.gotPhotos[1].Order != 1 {
+		t.Fatalf("placements forwarded = %+v", service.gotPhotos)
+	}
+}
+
+func TestReplacePhotosRequiresTheFieldSoAnEmptyBodyCannotRetireEverything(t *testing.T) {
+	service := &fakePlaceAdmin{}
+	rec := bearerDo(t, backoffice(service, "owner-1", adminScope), http.MethodPut,
+		"/v1/admin/places/"+adminPlaceID+"/photos", `{}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `"field":"photos"`) {
+		t.Fatalf("body = %s, want field photos", rec.Body.String())
+	}
+	if service.calls != 0 {
+		t.Fatal("the service was reached with no photos field: a missing key is not an empty set")
+	}
+}
+
+func TestReplacePhotosRefusesAPhotoOfAnotherPlace(t *testing.T) {
+	service := &fakePlaceAdmin{err: &placeadmin.UnknownPhotoError{IDs: []string{planGuestUUID}}}
+	rec := bearerDo(t, backoffice(service, "owner-1", adminScope), http.MethodPut,
+		"/v1/admin/places/"+adminPlaceID+"/photos",
+		`{"photos":[{"coPhoto":"`+planGuestUUID+`","type":"GALLERY","order":0}]}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `"field":"photos"`) {
+		t.Fatalf("body = %s, want field photos", rec.Body.String())
+	}
+}
+
+func TestReplacePhotosAnswers404WhenThePlaceIsInvisible(t *testing.T) {
+	service := &fakePlaceAdmin{err: placeadmin.ErrNotFound}
+	rec := bearerDo(t, backoffice(service, "owner-1", adminScope), http.MethodPut,
+		"/v1/admin/places/"+adminPlaceID+"/photos", `{"photos":[]}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
 	}
 }

@@ -367,3 +367,20 @@ Table: `core.tb_user_taste_profile`.
   returned `422 validation_failed` before the change and `404 not_found` after it, and a
   service-level test fails if a validation message stops wrapping its sentinel.
 
+- L22 — L20 implemented (2026-11-14), human authorization verbatim: "si dale con el put".
+  `PUT /v1/admin/places/{coPlace}/photos` replaces the live gallery in one transaction: the
+  listed photos take `type` and `order`, an omitted live photo is retired logically, and an
+  explicit `[]` retires the whole gallery. `photos` is required, omitting the key is `422` field
+  `photos` (a missing key must never mean "empty set"), and a `coPhoto` that is not a live image
+  of the place is `422` code `unknown` rather than being ignored.
+  Two things the model demanded: the live rows are read `FOR UPDATE` (the set is only meaningful
+  against the set that exists now), and the current cover is demoted before the new one is
+  assigned — `ux_tb_place_photo_cover` is a plain unique index, so a single-pass handoff makes
+  two live covers exist mid-statement. Proven on the live database inside a transaction that
+  rolled back (promotion without the demote is rejected; with it, the read returns the new cover
+  first), and the empty set retires every row.
+  This route uses a typed `ErrInvalidPhotoSet` for the same reason L21 exists: the `menu` and
+  `schedules` routes were answering `422` where the contract says `404` because of the text
+  prefix test, and that defect is fixed in L21.
+
+

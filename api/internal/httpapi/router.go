@@ -264,6 +264,8 @@ func New(opts Options) http.Handler {
 		mux.HandleFunc("GET /v1/place-attributes", backoffice.attributeCatalogue)
 		mux.HandleFunc("POST /v1/admin/places/{coPlace}/photos", RequireAuth(opts.TokenParser,
 			RequirePermission(opts.Authorizer, PlaceUpdatePermission, logger, backoffice.uploadPhoto)))
+		mux.HandleFunc("PUT /v1/admin/places/{coPlace}/photos", RequireAuth(opts.TokenParser,
+			RequirePermission(opts.Authorizer, PlaceUpdatePermission, logger, backoffice.replacePhotos)))
 		mux.HandleFunc("DELETE /v1/admin/places/{coPlace}/photos/{coPhoto}", RequireAuth(opts.TokenParser,
 			RequirePermission(opts.Authorizer, PlaceUpdatePermission, logger, backoffice.removePhoto)))
 		mux.HandleFunc("DELETE /v1/admin/places/{coPlace}",
