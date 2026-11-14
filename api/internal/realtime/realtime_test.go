@@ -97,17 +97,6 @@ func TestAPublishThatIsNot2xxIsAnError(t *testing.T) {
 	}
 }
 
-// Without credentials the service still runs: realtime is a courtesy on top of the vote.
-func TestTheDisabledPublisherDoesNothing(t *testing.T) {
-	var publisher Publisher = Disabled()
-	if err := publisher.Publish(context.Background(), Channel("7"), EventVoteChanged, sampleVote()); err != nil {
-		t.Fatalf("Publish on a disabled publisher = %v, want nil", err)
-	}
-	if _, err := publisher.SubscriptionAuth("123.456", Channel("7")); !errors.Is(err, ErrDisabled) {
-		t.Fatalf("err = %v, want ErrDisabled", err)
-	}
-}
-
 func TestNewRefusesAnIncompleteConfiguration(t *testing.T) {
 	cases := []Config{
 		{AppID: "app-id", Key: "app-key", Secret: "app-secret"},
@@ -130,5 +119,35 @@ func TestParseChannel(t *testing.T) {
 		if _, ok := ParseChannel(channel); ok {
 			t.Fatalf("ParseChannel(%q) accepted an unrelated channel", channel)
 		}
+	}
+}
+
+// A broker behind a path prefix must be signed with that prefix: the request and the signature
+// have to name the same path, or every event is a 401 that reads like a bad credential.
+func TestAPrefixedBrokerURLIsSignedWithItsPrefix(t *testing.T) {
+	client, err := New(Config{BaseURL: "http://soketi.invalid/pusher", AppID: "app-id",
+		Key: "app-key", Secret: "app-secret"}, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	client.now = func() time.Time { return time.Unix(1700000000, 0) }
+
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	// The client keeps its base URL, so point it at the test server while keeping the prefix.
+	client.baseURL = server.URL + "/pusher"
+
+	if err := client.Publish(context.Background(), Channel("7"), EventVoteChanged, sampleVote()); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if gotPath != "/pusher/apps/app-id/events" {
+		t.Fatalf("path = %q, want /pusher/apps/app-id/events", gotPath)
+	}
+	if client.eventsPath() != "/pusher/apps/app-id/events" {
+		t.Fatalf("signed path = %q, want it to match the requested path", client.eventsPath())
 	}
 }

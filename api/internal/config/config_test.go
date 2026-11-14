@@ -316,3 +316,26 @@ func TestLoadRejectsHalfARealtimeConfiguration(t *testing.T) {
 		}
 	}
 }
+
+// A value made of spaces is not a configuration: it must read as "not set", and it must not let a
+// half-configured publisher through (realtime-votes S4).
+func TestSoketiWhitespaceIsNotAValue(t *testing.T) {
+	values := validEnv()
+	values["SOKETI_URL"] = "   "
+	values["SOKETI_APP_ID"] = "  "
+	cfg, err := Load(env(values))
+	if err != nil {
+		t.Fatalf("whitespace-only realtime values must mean disabled: %v", err)
+	}
+	if cfg.SoketiURL != "" || cfg.SoketiAppID != "" {
+		t.Fatalf("SoketiURL = %q, SoketiAppID = %q, want empty", cfg.SoketiURL, cfg.SoketiAppID)
+	}
+
+	values["SOKETI_URL"] = "http://soketi:6001"
+	values["SOKETI_APP_ID"] = "app-id"
+	values["SOKETI_KEY"] = " \t "
+	values["SOKETI_SECRET"] = "app-secret"
+	if _, err := Load(env(values)); err == nil || !strings.Contains(err.Error(), "SOKETI_KEY") {
+		t.Fatalf("a whitespace-only SOKETI_KEY was accepted: %v", err)
+	}
+}

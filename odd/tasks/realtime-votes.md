@@ -94,3 +94,29 @@ endpoint, and a malformed channel.
   a small Node script, not by the Go API's own client — Go has no WebSocket dependency here and
   adding one for a test would be the tail wagging the dog. The signature the script used is the
   one the Go client produces for the same inputs, pinned in the unit test.
+
+- L3 — Independent verification (2026-11-14) found one blocker and four advisories; all of them
+  are fixed in this branch, and the reasoning matters more than the diff.
+  **B1 — the route was never absent.** `cmd/api` always passed a publisher, and it passed
+  `realtime.Disabled()`, a non-nil interface. The router guard `opts.Realtime != nil` was
+  therefore always true: with no broker configured `POST /v1/realtime/auth` existed and answered
+  `500`, while `openapi.yaml`, `API.md`, `README.md`, `.env.example`, `docker-compose.yml` and the
+  router's own comment all promised the route is not registered. Fix: absence is a nil publisher,
+  built by `newRealtimeClient`, which returns nil when `SOKETI_URL` is empty. `Disabled()` and
+  `ErrDisabled` are gone — a no-op implementation of an interface used as a presence flag is the
+  defect itself. Two tests hold it: `cmd/api` asserts nil for an unconfigured broker and a client
+  for a configured one, and `httpapi` asserts the route answers `404` when no publisher is wired.
+  **A1 — a suspended PUBLIC plan stayed watchable.** `CanWatch` approximated the read door with
+  role and visibility, and `Role` ignores `tx_status` while `Get` hides a suspended plan from
+  non-members: the subscription answered `200` where the read answered `404`. Fix: the store owns
+  a `Watchable` predicate that copies `Get`'s exactly, and the service delegates. Proven on the
+  live database inside a rolled-back transaction: private-active stranger=false/member=true,
+  public-active true/true, public-suspended false/true — the same answer `Get` gives.
+  **A2 — a hanging broker held the vote open for the client timeout.** Publishing now happens off
+  the request, with a context detached from it and bounded by the client's timeout, so the answer
+  never waits and a slow broker cannot invite a retry that votes twice.
+  **A3 — a broker behind a path prefix broke signing.** The signed path is now the broker's own
+  path plus `/apps/<id>/events`, so the signature names the path the request uses.
+  **A4 — a Spanish comment in an English-commented file.** Fixed.
+  Left as is: **A5** (handlers accept unknown JSON fields while `openapi.yaml` declares
+  `additionalProperties: false`) is pre-existing and project-wide, so it is not this slice's debt.

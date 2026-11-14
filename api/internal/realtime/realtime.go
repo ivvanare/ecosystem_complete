@@ -36,9 +36,6 @@ const (
 )
 
 var (
-	// ErrDisabled is what a disabled publisher answers when someone asks it to sign: the route
-	// is not registered in that case, so reaching it is a wiring mistake worth naming.
-	ErrDisabled = errors.New("realtime: publisher is disabled")
 	// ErrInvalidChannel is a channel this service does not own: refusing to sign for it keeps
 	// the credential from authorizing someone else's channel.
 	ErrInvalidChannel = errors.New("realtime: channel is not a plan channel")
@@ -83,11 +80,15 @@ func ParseChannel(channel string) (string, bool) {
 // Client is the Pusher HTTP implementation.
 type Client struct {
 	baseURL string
-	appID   string
-	key     string
-	secret  string
-	http    *http.Client
-	logger  *slog.Logger
+	// basePath is the path of the broker URL, signed with the event path. A broker behind a
+	// prefix (/pusher) would otherwise sign a path the request never uses: a 401 on every event
+	// that reads like a bad credential.
+	basePath string
+	appID    string
+	key      string
+	secret   string
+	http     *http.Client
+	logger   *slog.Logger
 	// now is a field, not a call, so the signature is provable against a fixed vector.
 	now func() time.Time
 }
@@ -116,14 +117,19 @@ func New(cfg Config, logger *slog.Logger) (*Client, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	parsed, err := url.Parse(cfg.BaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("realtime: invalid SOKETI_URL: %w", err)
+	}
 	return &Client{
-		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
-		appID:   cfg.AppID,
-		key:     cfg.Key,
-		secret:  cfg.Secret,
-		http:    &http.Client{Timeout: 5 * time.Second},
-		logger:  logger,
-		now:     time.Now,
+		baseURL:  strings.TrimRight(cfg.BaseURL, "/"),
+		basePath: strings.TrimRight(parsed.Path, "/"),
+		appID:    cfg.AppID,
+		key:      cfg.Key,
+		secret:   cfg.Secret,
+		http:     &http.Client{Timeout: 5 * time.Second},
+		logger:   logger,
+		now:      time.Now,
 	}, nil
 }
 
@@ -161,7 +167,7 @@ func (c *Client) Publish(ctx context.Context, channel, eventName string, data an
 
 	// auth_signature is part of the URL, as Pusher documents; it is appended after the string
 	// was built so the signature does not cover itself.
-	request := c.baseURL + c.eventsPath() + "?" + query.Encode() + "&auth_signature=" + signature
+	request := c.baseURL + "/apps/" + c.appID + "/events" + "?" + query.Encode() + "&auth_signature=" + signature
 
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, request, bytes.NewReader(body))
 	if err != nil {
@@ -200,20 +206,10 @@ func (c *Client) SubscriptionAuth(socketID, channel string) (string, error) {
 
 // eventsPath is signed as-is, so it is built in one place: a path that differs by a slash
 // between the signature and the request is a 401 that reads like a credential problem.
-func (c *Client) eventsPath() string { return "/apps/" + c.appID + "/events" }
+func (c *Client) eventsPath() string { return c.basePath + "/apps/" + c.appID + "/events" }
 
 func (c *Client) sign(method, path, query string) string {
 	mac := hmac.New(sha256.New, []byte(c.secret))
 	mac.Write([]byte(method + "\n" + path + "\n" + query))
 	return hex.EncodeToString(mac.Sum(nil))
 }
-
-// disabled is the publisher used when no credentials are configured.
-type disabled struct{}
-
-// Disabled returns a publisher that does nothing and signs nothing.
-func Disabled() Publisher { return disabled{} }
-
-func (disabled) Publish(context.Context, string, string, any) error { return nil }
-
-func (disabled) SubscriptionAuth(string, string) (string, error) { return "", ErrDisabled }

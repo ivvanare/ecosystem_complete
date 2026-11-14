@@ -12,6 +12,7 @@ type fakeStore struct {
 	role        string
 	visibility  string
 	roleErr     error
+	watchErr    error
 	joined      string // role the service chose for the self-join
 	removed     string
 	created     bool
@@ -30,6 +31,7 @@ func (f *fakeStore) Get(context.Context, string, string) (Plan, error) { return 
 func (f *fakeStore) Role(context.Context, string, string) (string, string, error) {
 	return f.role, f.visibility, f.roleErr
 }
+func (f *fakeStore) Watchable(context.Context, string, string) error { return f.watchErr }
 func (f *fakeStore) Update(_ context.Context, _, _ string, in UpdateInput) (Plan, error) {
 	f.updated = in
 	return Plan{ID: "p1"}, nil
@@ -319,27 +321,13 @@ func TestAVoteThatFailedIsNotReported(t *testing.T) {
 	}
 }
 
-// The subscription door reuses the plan's visibility: a private plan does not confirm that it
-// exists to someone who may not watch it.
-func TestCanWatchFollowsThePlanVisibility(t *testing.T) {
-	cases := []struct {
-		name       string
-		role       string
-		visibility string
-		wantErr    error
-	}{
-		{"member of a private plan", RoleViewer, VisibilityPrivate, nil},
-		{"member of a public plan", RoleOwner, VisibilityPublic, nil},
-		{"stranger on a public plan", "", VisibilityPublic, nil},
-		{"stranger on a private plan", "", VisibilityPrivate, ErrNotFound},
+// The subscription door is the read door, so the service does not decide it: the store answers
+// with the same predicate Get uses, and whatever it says is what the caller gets (S3, A1).
+func TestCanWatchIsTheStoresAnswer(t *testing.T) {
+	if err := service(&fakeStore{}).CanWatch(context.Background(), "someone", "p1"); err != nil {
+		t.Fatalf("a watchable plan refused the subscription: %v", err)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			store := &fakeStore{role: tc.role, visibility: tc.visibility}
-			err := service(store).CanWatch(context.Background(), "someone", "p1")
-			if !errors.Is(err, tc.wantErr) {
-				t.Fatalf("err = %v, want %v", err, tc.wantErr)
-			}
-		})
+	if err := service(&fakeStore{watchErr: ErrNotFound}).CanWatch(context.Background(), "someone", "p1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 }

@@ -92,6 +92,10 @@ type Store interface {
 	Create(ctx context.Context, actorID string, in CreateInput) (Plan, error)
 	Get(ctx context.Context, actorID, planID string) (Plan, error)
 	Role(ctx context.Context, actorID, planID string) (role string, visibility string, err error)
+	// Watchable answers with the same predicate Get uses for reads: a suspended plan is invisible
+	// to non-members and a private one is invisible to everyone but its members. It exists so the
+	// realtime subscription cannot drift from the read door.
+	Watchable(ctx context.Context, actorID, planID string) error
 	Update(ctx context.Context, actorID, planID string, in UpdateInput) (Plan, error)
 	Join(ctx context.Context, actorID, planID string, role string) error
 	Remove(ctx context.Context, planID, userID string) error
@@ -304,18 +308,11 @@ func (s *Service) SetReporter(reporter VoteReporter) { s.reporter = reporter }
 
 // CanWatch reports whether the caller may receive this plan's live events.
 //
-// It is the same visibility door the reads use: a member may always watch, a PUBLIC plan may be
-// watched by any authenticated account, and a PRIVATE plan answers ErrNotFound to everyone else
-// so it never confirms that it exists (realtime-votes S3).
+// The door is not re-implemented here: the store answers with the same predicate the read uses,
+// so a suspended plan stops being watchable by non-members and a private one is watchable only by
+// its members — anything else would let a subscription outlive a read (realtime-votes S3).
 func (s *Service) CanWatch(ctx context.Context, userID, planID string) error {
-	role, visibility, err := s.store.Role(ctx, userID, planID)
-	if err != nil {
-		return err
-	}
-	if role != "" || visibility == VisibilityPublic {
-		return nil
-	}
-	return ErrNotFound
+	return s.store.Watchable(ctx, userID, planID)
 }
 
 // AdminList is the moderation listing: every plan, regardless of membership.
@@ -494,6 +491,27 @@ WHERE r.co_route = $2::uuid AND r.dt_deleted_at IS NULL`
 		return "", "", ErrNotFound
 	}
 	return role, visibility, nil
+}
+
+// Watchable answers the subscription door with the predicate Get uses for reads. Copied on
+// purpose and kept beside it: the two must agree, and the day the read gains a clause the
+// subscription must gain it too (realtime-votes S3, A1 of the verification).
+func (s *PostgresStore) Watchable(ctx context.Context, actorID, planID string) error {
+	const query = `
+SELECT 1 FROM core.tb_route r
+WHERE r.co_route = $2::uuid
+  AND r.dt_deleted_at IS NULL
+  AND (r.tx_status = 'ACTIVE' OR EXISTS (
+        SELECT 1 FROM core.tb_route_member m
+         WHERE m.co_route = r.co_route AND m.co_user = $1::uuid))
+  AND (r.tx_visibility = 'PUBLIC' OR EXISTS (
+        SELECT 1 FROM core.tb_route_member m
+         WHERE m.co_route = r.co_route AND m.co_user = $1::uuid))`
+	var one int
+	if err := s.pool.QueryRow(ctx, query, actorID, planID).Scan(&one); err != nil {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // Update applies a partial change; authorization already happened in the service.

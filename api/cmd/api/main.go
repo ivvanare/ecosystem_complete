@@ -195,22 +195,17 @@ func run() error {
 	planService.SetInvitations(invitations.NewService(invitations.NewPostgresStore(pool), logger))
 	planService.SetNotifier(notificationService)
 
-	// Realtime (S9): a vote reaches the other members as it happens. Without credentials the
-	// publisher does nothing and the route is not registered — the vote is the fact, the event
-	// is a courtesy, and a half-configured broker is refused at startup instead of failing later.
-	realtimePublisher := realtime.Disabled()
-	if cfg.SoketiURL != "" {
-		client, err := realtime.New(realtime.Config{
-			BaseURL: cfg.SoketiURL,
-			AppID:   cfg.SoketiAppID,
-			Key:     cfg.SoketiKey,
-			Secret:  cfg.SoketiSecret,
-		}, logger)
-		if err != nil {
-			return err
-		}
-		realtimePublisher = client
-		planService.SetReporter(&liveVotes{publisher: client, logger: logger})
+	// Realtime (S9): a vote reaches the other members as it happens. Without credentials this is
+	// nil — not a no-op implementation — because the router registers the subscription route on a
+	// non-nil publisher and a no-op would make an optional route permanent.
+	realtimeClient, err := newRealtimeClient(cfg, logger)
+	if err != nil {
+		return err
+	}
+	var realtimePublisher realtime.Publisher
+	if realtimeClient != nil {
+		realtimePublisher = realtimeClient
+		planService.SetReporter(&liveVotes{publisher: realtimeClient, logger: logger})
 	}
 
 	// Places backoffice (place-ownership): the ownership viewer is resolved per request
@@ -331,10 +326,34 @@ type liveVotes struct {
 
 // VoteRecorded publishes the hint and swallows the failure: the vote is already stored, and a
 // member who cannot be notified has not voted less (realtime-votes S4).
+//
+// It publishes off the request: a hanging broker once held a vote open for the client timeout,
+// which turns a courtesy into latency and invites a retry that votes twice. The context is
+// detached from the request and bounded by the client's own timeout, so the answer never waits.
 func (l *liveVotes) VoteRecorded(ctx context.Context, planID, placeID string) {
-	err := l.publisher.Publish(ctx, realtime.Channel(planID), realtime.EventVoteChanged,
-		realtime.VoteChanged{CoRoute: planID, CoPlace: placeID})
-	if err != nil {
-		l.logger.Warn("publishing a vote failed", slog.String("error", err.Error()))
+	detached := context.WithoutCancel(ctx)
+	go func() {
+		err := l.publisher.Publish(detached, realtime.Channel(planID), realtime.EventVoteChanged,
+			realtime.VoteChanged{CoRoute: planID, CoPlace: placeID})
+		if err != nil {
+			l.logger.Warn("publishing a vote failed", slog.String("error", err.Error()))
+		}
+	}()
+}
+
+// newRealtimeClient builds the broker client, or returns nil when realtime is not configured.
+//
+// Nil is the contract, not a detail: the router registers POST /v1/realtime/auth on a non-nil
+// publisher, so a no-op implementation here would make an optional route permanent — it answered
+// 500 where the contract promises the route is absent.
+func newRealtimeClient(cfg config.Config, logger *slog.Logger) (*realtime.Client, error) {
+	if cfg.SoketiURL == "" {
+		return nil, nil
 	}
+	return realtime.New(realtime.Config{
+		BaseURL: cfg.SoketiURL,
+		AppID:   cfg.SoketiAppID,
+		Key:     cfg.SoketiKey,
+		Secret:  cfg.SoketiSecret,
+	}, logger)
 }
