@@ -353,3 +353,17 @@ Table: `core.tb_user_taste_profile`.
   upload/delete path keeps the ficha usable.
   Also recorded: the panel now resolves `git -C ../melia rev-parse origin/dev` before every sync
   and pins that SHA, which is what ended four rounds of comparing against a stale contract.
+
+- L21 — Defect fixed (2026-11-14), found while adding the gallery replace route. `PUT
+  /v1/admin/places/{coPlace}/menu` and `PUT .../schedules` answered `422` with field `menus` or
+  `schedules` for a place the caller cannot see, where the contract (openapi.yaml, both paths)
+  and every other backoffice route answer `404`. Cause: their validation branch was
+  `strings.Contains(err.Error(), "placeadmin:")`, and `ErrNotFound` is
+  `"placeadmin: place not found"`, so the sentinel was matched by the text test and mapped as a
+  validation failure. Fix: `ErrInvalidScheduleSet` and `ErrInvalidMenuSet`, wrapped by
+  `validateSchedules` and `validateMenus`, so the transport decides with `errors.Is` and the
+  text test is gone; `isScheduleValidation` was deleted. Behaviour for the validation failures
+  themselves is unchanged (`422` with the same field and code). Proven RED first: both tests
+  returned `422 validation_failed` before the change and `404 not_found` after it, and a
+  service-level test fails if a validation message stops wrapping its sentinel.
+

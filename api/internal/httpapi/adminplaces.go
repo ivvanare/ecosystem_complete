@@ -488,10 +488,12 @@ func (h *placesAdminHandlers) schedules(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := h.service.ReplaceSchedules(r.Context(), viewer, viewer.UserID, placeID, body.Schedules); err != nil {
-		if isScheduleValidation(err) {
+		if errors.Is(err, placeadmin.ErrInvalidScheduleSet) {
 			writeValidationError(w, []fieldError{{Field: "schedules", Code: "invalid"}})
 			return
 		}
+		// A place the caller cannot see is a 404, and it must be checked as a sentinel: every
+		// error of this package carries the package prefix, so a prefix test would answer 422.
 		h.writePlaceError(w, err, "replacing schedules")
 		return
 	}
@@ -540,11 +542,6 @@ func (h *placesAdminHandlers) attributes(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// isScheduleValidation reports whether the failure was the edge validation of the hours.
-func isScheduleValidation(err error) bool {
-	return strings.Contains(err.Error(), "placeadmin:")
-}
-
 // menu serves GET and PUT /v1/admin/places/{coPlace}/menu: the whole card.
 //
 // Replacement, like the weekly hours: a menu applied in halves shows a price that a filter reads
@@ -582,7 +579,7 @@ func (h *placesAdminHandlers) menu(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.As(err, &unknownCurrency):
 			writeValidationError(w, []fieldError{{Field: "menus", Code: "unknown"}})
-		case strings.Contains(err.Error(), "placeadmin:"):
+		case errors.Is(err, placeadmin.ErrInvalidMenuSet):
 			// The model's shapes, caught at the edge so a negative price or a nameless item is a
 			// 422 instead of a constraint violation the client cannot read.
 			writeValidationError(w, []fieldError{{Field: "menus", Code: "invalid"}})

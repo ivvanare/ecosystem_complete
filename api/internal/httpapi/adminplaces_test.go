@@ -2,7 +2,7 @@ package httpapi
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -380,11 +380,32 @@ func TestUnknownAttributeIsAFieldError(t *testing.T) {
 }
 
 func TestScheduleValidationFailureIs422(t *testing.T) {
-	service := &fakePlaceAdmin{err: errors.New("placeadmin: open and close are the same time")}
+	service := &fakePlaceAdmin{err: fmt.Errorf("%w: open and close are the same time", placeadmin.ErrInvalidScheduleSet)}
 	rec := bearerDo(t, backoffice(service, "owner-1", adminScope), http.MethodPut,
 		"/v1/admin/places/"+adminPlaceID+"/schedules", `{"schedules":[{"dayOfWeek":1,"open":"10:00","close":"10:00"}]}`)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want 422 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// A place the caller cannot see answers 404 on every route of the backoffice, and these two used
+// to answer 422: their validation branch matched any error carrying the package prefix, and
+// ErrNotFound carries it too.
+func TestReplaceSchedulesAnswers404WhenThePlaceIsInvisible(t *testing.T) {
+	service := &fakePlaceAdmin{err: placeadmin.ErrNotFound}
+	rec := bearerDo(t, backoffice(service, "owner-1", adminScope), http.MethodPut,
+		"/v1/admin/places/"+adminPlaceID+"/schedules", `{"schedules":[{"dayOfWeek":1,"open":"10:00","close":"22:00"}]}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestReplaceMenuAnswers404WhenThePlaceIsInvisible(t *testing.T) {
+	service := &fakePlaceAdmin{err: placeadmin.ErrNotFound}
+	rec := bearerDo(t, backoffice(service, "owner-1", adminScope), http.MethodPut,
+		"/v1/admin/places/"+adminPlaceID+"/menu", `{"menus":[{"name":"Cena","items":[]}]}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (%s)", rec.Code, rec.Body.String())
 	}
 }
 
@@ -438,7 +459,7 @@ func TestUnknownCurrencyIsAFieldError(t *testing.T) {
 }
 
 func TestNegativePriceIs422NotAConstraintViolation(t *testing.T) {
-	service := &fakePlaceAdmin{err: errors.New("placeadmin: negative price")}
+	service := &fakePlaceAdmin{err: fmt.Errorf("%w: negative price", placeadmin.ErrInvalidMenuSet)}
 	rec := bearerDo(t, backoffice(service, "owner-1", adminScope), http.MethodPut,
 		"/v1/admin/places/"+adminPlaceID+"/menu",
 		`{"menus":[{"name":"Cena","items":[{"name":"Arepa","price":-1,"currency":"USD"}]}]}`)
