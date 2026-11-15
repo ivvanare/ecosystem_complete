@@ -193,6 +193,67 @@ func (s *PostgresStore) PlaceActive(ctx context.Context, placeID string) (bool, 
 	return active, nil
 }
 
+// UserVisible reports whether the account can carry a public profile at all: active and not
+// deleted. The by-author read and the public profile answer the same 404, so a client cannot
+// tell a suspended person from one who never signed up.
+func (s *PostgresStore) UserVisible(ctx context.Context, userID string) (bool, error) {
+	var visible bool
+	err := s.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM seg.tb_user
+			WHERE co_user = $1::uuid AND dt_deleted_at IS NULL AND tx_status = 'ACTIVE'
+		)`, userID).Scan(&visible)
+	if err != nil {
+		return false, fmt.Errorf("checking user: %w", err)
+	}
+	return visible, nil
+}
+
+// ListByAuthor returns one page of a person's reviews, newest first, and the total.
+//
+// Two joins do the filtering that matters: the place must itself be visible, because a review
+// of a retired place is not a fact a stranger should read about the reviewer; and the row must
+// be a live ACTIVE review, because this read has no viewer to grant the author a sight of their
+// own moderated rows.
+func (s *PostgresStore) ListByAuthor(ctx context.Context, authorID string, page, limit int) ([]Review, int, error) {
+	const predicate = `
+  FROM core.tb_review r
+  JOIN seg.tb_user u ON u.co_user = r.co_user
+  JOIN core.tb_place p ON p.co_place = r.co_place
+                      AND p.dt_deleted_at IS NULL AND p.tx_status = 'ACTIVE'
+ WHERE r.co_user = $1::uuid
+   AND r.dt_deleted_at IS NULL AND r.tx_status = 'ACTIVE'`
+
+	var total int
+	if err := s.db.QueryRow(ctx, "SELECT COUNT(*)"+predicate, authorID).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("counting author reviews: %w", err)
+	}
+
+	rows, err := s.db.Query(ctx, `
+		SELECT r.co_review, r.co_place, r.co_user, u.tx_name,
+		       r.nu_rating, r.tx_comment, r.tx_status, r.dt_created_at, r.dt_updated_at,
+		       p.tx_title`+predicate+`
+ ORDER BY r.dt_created_at DESC, r.co_review DESC
+ LIMIT $2 OFFSET $3`, authorID, limit, (page-1)*limit)
+	if err != nil {
+		return nil, 0, fmt.Errorf("selecting author reviews: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]Review, 0, limit)
+	for rows.Next() {
+		review, err := scanAuthorReview(rows)
+		if err != nil {
+			return nil, 0, fmt.Errorf("scanning author review: %w", err)
+		}
+		result = append(result, review)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("during author review iteration: %w", err)
+	}
+	return result, total, nil
+}
+
 // List returns one page of reviews visible to the viewer, newest first, and the total
 // under the same predicate. It never aggregates for ordering (S14): the place average
 // belongs to the worker.
@@ -427,6 +488,16 @@ func scanReviewList(row interface{ Scan(dest ...any) error }) (Review, error) {
 	err := row.Scan(&review.ID, &review.PlaceID, &review.AuthorID, &review.AuthorName,
 		&review.Rating, &review.Comment, &review.Status, &review.CreatedAt, &review.UpdatedAt,
 		&review.ViaFollowedAuthor)
+	return review, err
+}
+
+// scanAuthorReview reads one row of the by-author projection: the place title travels with it,
+// because the client renders "review of X" and has no other way to resolve a coPlace.
+func scanAuthorReview(row interface{ Scan(dest ...any) error }) (Review, error) {
+	var review Review
+	err := row.Scan(&review.ID, &review.PlaceID, &review.AuthorID, &review.AuthorName,
+		&review.Rating, &review.Comment, &review.Status, &review.CreatedAt, &review.UpdatedAt,
+		&review.PlaceTitle)
 	return review, err
 }
 

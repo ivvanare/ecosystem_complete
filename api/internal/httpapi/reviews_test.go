@@ -33,6 +33,10 @@ type fakeReviews struct {
 	adminFilter reviews.AdminFilter
 	adminPage   int
 	adminCalled bool
+	// By-author listing.
+	authorResult reviews.ListResult
+	authorErr    error
+	authorSeen   string
 
 	calls       int
 	gotViewer   reviews.Viewer
@@ -83,6 +87,13 @@ func (f *fakeReviews) Moderate(_ context.Context, actorID, reviewID, status stri
 }
 
 // ListAll is the moderator listing.
+func (f *fakeReviews) ListByAuthor(_ context.Context, authorID string, page, limit int) (reviews.ListResult, error) {
+	f.guard()
+	f.authorSeen = authorID
+	f.authorResult.Page, f.authorResult.Limit = page, limit
+	return f.authorResult, f.authorErr
+}
+
 func (f *fakeReviews) ListAll(_ context.Context, filter reviews.AdminFilter, page, _ int) (reviews.ListResult, error) {
 	f.guard()
 	f.adminCalled = true
@@ -625,5 +636,59 @@ func TestTheReviewListSaysFalseInsteadOfOmittingTheHighlight(t *testing.T) {
 	rec := do(t, newReviewsHandler(service, authedParser("viewer-1"), adminScope), http.MethodGet, "/v1/places/"+reviewPlace+"/reviews")
 	if !strings.Contains(rec.Body.String(), `"viaFollowedAuthor":false`) {
 		t.Fatalf("body = %s, want false rather than absent", rec.Body.String())
+	}
+}
+
+func TestAPersonsReviewsAnswerWithPlaceAuthorAndPage(t *testing.T) {
+	title := "Arepera Chacao"
+	name := "Ana"
+	service := &fakeReviews{authorResult: reviews.ListResult{
+		Rows: []reviews.Review{{
+			ID: "r1", PlaceID: "p1", PlaceTitle: &title, AuthorID: "u1", AuthorName: &name,
+			Rating: 5, Status: "ACTIVE",
+		}},
+		Total: 1,
+	}}
+	rec := do(t, newReviewsHandler(service, nil, nil), http.MethodGet,
+		"/v1/users/695b5086-b825-46b6-b072-867c73e89686/reviews?page=2&limit=5")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`"coReview":"r1"`,
+		`"place":{"id":"p1","title":"Arepera Chacao"}`,
+		`"author":{"id":"u1","name":"Ana"}`,
+		`"viaFollowedAuthor":false`,
+		`"page":2`,
+		`"limit":5`,
+		`"total":1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body = %s\nwant it to contain %s", body, want)
+		}
+	}
+	if service.authorSeen != "695b5086-b825-46b6-b072-867c73e89686" {
+		t.Fatalf("listed for %q", service.authorSeen)
+	}
+}
+
+func TestAPersonsReviewsForAnInvisibleAccountAre404(t *testing.T) {
+	rec := do(t, newReviewsHandler(&fakeReviews{authorErr: reviews.ErrUserNotFound}, nil, nil),
+		http.MethodGet, "/v1/users/695b5086-b825-46b6-b072-867c73e89686/reviews")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestAPersonsReviewsWithAMalformedIdAre404(t *testing.T) {
+	service := &fakeReviews{}
+	rec := do(t, newReviewsHandler(service, nil, nil), http.MethodGet, "/v1/users/nope/reviews")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+	if service.calls != 0 {
+		t.Fatal("the service was reached with a malformed identifier")
 	}
 }

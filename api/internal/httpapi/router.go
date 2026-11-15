@@ -190,6 +190,13 @@ func New(opts Options) http.Handler {
 			RequireAuth(opts.TokenParser, deviceHandler.unregister))
 	}
 
+	// A person's reviews are public too, and they are what the profile's review counter points
+	// at. No middleware: there is no viewer, so the read lists live ACTIVE rows only.
+	if opts.Reviews != nil {
+		reviewsHandler := &reviewsHandlers{service: opts.Reviews, logger: logger}
+		mux.HandleFunc("GET /v1/users/{coUser}/reviews", reviewsHandler.byAuthor)
+	}
+
 	// A profile is public for the same reason: a review already publishes its author as
 	// {id, name}, and a follow button that opens nothing is not a feature.
 	if opts.PublicProfile != nil {

@@ -706,6 +706,22 @@ respuesta nunca confirma que un lugar existe. Un identificador con forma inváli
 
 ## 12. Reseñas
 
+`GET /v1/users/{coUser}/reviews` es lo que hay detrás del contador del perfil: las reseñas de
+una persona, con el `place` de cada una para que el cliente pueda pintar "reseña de X" sin
+resolver un uuid por su cuenta.
+
+Tres consecuencias de que esta lectura **no tenga viewer**:
+
+- Solo aparecen reseñas **vivas y `ACTIVE`**, y solo de lugares que a su vez son visibles. Una
+  reseña de un lugar retirado no es un hecho sobre el autor que un desconocido deba leer.
+- `viaFollowedAuthor` viaja siempre en `false`: es relativo a quien pregunta, y acá no hay quien
+  pregunte.
+- **El bloqueo no aplica**, porque no se sabe quién mira. Los bloqueos se hacen cumplir en las
+  lecturas que sí tienen viewer.
+
+El autor tampoco ve acá sus reseñas moderadas: eso lo muestra la lectura por lugar, que es donde
+la escribió.
+
 Las reseñas son la primera escritura de dominio de la API. **Una por usuario y lugar**: lo
 garantiza el índice único parcial `ux_tb_review_user_place_active`, nunca una consulta
 previa (chequear antes de insertar tiene carrera).
@@ -713,6 +729,7 @@ previa (chequear antes de insertar tiene carrera).
 | Método | Ruta | Autenticación | Qué hace |
 |---|---|---|---|
 | `GET` | `/v1/places/{coPlace}/reviews?page&limit` | pública | lista paginada, la más reciente primero |
+| `GET` | `/v1/users/{coUser}/reviews?page&limit` | pública | las reseñas de una persona, con el lugar de cada una |
 | `POST` | `/v1/places/{coPlace}/reviews` | bearer | crea tu reseña (`201`) |
 | `PATCH` | `/v1/places/{coPlace}/reviews/{coReview}` | bearer, solo el autor | edita `rating` y/o `comment` |
 | `DELETE` | `/v1/places/{coPlace}/reviews/{coReview}` | bearer, solo el autor | borrado **lógico** (`204`) |

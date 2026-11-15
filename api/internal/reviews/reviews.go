@@ -44,6 +44,10 @@ var (
 	// ErrInvalidStatus is the closed status vocabulary: a caller may not invent a value
 	// that the enum does not carry.
 	ErrInvalidStatus = errors.New("reviews: unknown status")
+	// ErrUserNotFound is a profile that is absent, deleted or not active. The by-author
+	// read answers it the same way the public profile does, so a client cannot tell a
+	// suspended account from one that never existed.
+	ErrUserNotFound = errors.New("reviews: user not found")
 )
 
 // Review is one review with the author's display-safe fields. The email never leaves
@@ -109,6 +113,10 @@ type AdminFilter struct {
 // because the suite never needs PostgreSQL (AGENTS.md).
 type Store interface {
 	PlaceActive(ctx context.Context, placeID string) (bool, error)
+	// UserVisible reports whether an account can carry a public profile at all.
+	UserVisible(ctx context.Context, userID string) (bool, error)
+	// ListByAuthor is the public read of one person's reviews, newest first.
+	ListByAuthor(ctx context.Context, authorID string, page, limit int) ([]Review, int, error)
 	List(ctx context.Context, placeID string, viewer Viewer, page, limit int) (rows []Review, total int, err error)
 	Get(ctx context.Context, placeID, reviewID string) (Review, error)
 	Create(ctx context.Context, actorID, placeID string, in CreateInput) (Review, error)
@@ -163,6 +171,32 @@ func (s *Service) requirePlace(ctx context.Context, placeID string) error {
 }
 
 // List returns one page of reviews visible to the viewer.
+// ListByAuthor serves the reviews of one person, for their public profile.
+//
+// Only live ACTIVE rows are listed, and only for a place that is itself visible: a review of a
+// retired place is not a fact about the reviewer that a stranger should read. The route is
+// public, so there is no viewer here — which also means the author cannot see their own
+// moderated rows from this read. That is deliberate: the place-scoped read is the one that
+// shows an author what happened to their review, because that is where they wrote it.
+func (s *Service) ListByAuthor(ctx context.Context, authorID string, page, limit int) (ListResult, error) {
+	visible, err := s.store.UserVisible(ctx, authorID)
+	if err != nil {
+		return ListResult{}, err
+	}
+	if !visible {
+		return ListResult{}, ErrUserNotFound
+	}
+
+	rows, total, err := s.store.ListByAuthor(ctx, authorID, page, limit)
+	if err != nil {
+		return ListResult{}, err
+	}
+	if rows == nil {
+		rows = []Review{}
+	}
+	return ListResult{Rows: rows, Total: total, Page: page, Limit: limit}, nil
+}
+
 func (s *Service) List(ctx context.Context, placeID string, viewer Viewer, page, limit int) (ListResult, error) {
 	if err := s.requirePlace(ctx, placeID); err != nil {
 		return ListResult{}, err

@@ -21,6 +21,13 @@ type fakeStore struct {
 	listTotal int
 	listErr   error
 
+	userVisible bool
+	userErr     error
+	authorRows  []Review
+	authorTotal int
+	authorErr   error
+	authorSeen  string
+
 	getReview Review
 	getErr    error
 
@@ -57,6 +64,15 @@ type fakeStore struct {
 func (f *fakeStore) PlaceActive(context.Context, string) (bool, error) {
 	f.activeCalls++
 	return f.active, f.activeErr
+}
+
+func (f *fakeStore) UserVisible(context.Context, string) (bool, error) {
+	return f.userVisible, f.userErr
+}
+
+func (f *fakeStore) ListByAuthor(_ context.Context, authorID string, _, _ int) ([]Review, int, error) {
+	f.authorSeen = authorID
+	return f.authorRows, f.authorTotal, f.authorErr
 }
 
 func (f *fakeStore) List(_ context.Context, placeID string, viewer Viewer, page, limit int) ([]Review, int, error) {
@@ -248,5 +264,52 @@ func TestModerateHasNoPlaceCheck(t *testing.T) {
 	}
 	if review.Status != StatusModerated {
 		t.Errorf("review = %+v", review)
+	}
+}
+
+// The by-author read is public, so an account that cannot carry a profile answers the same 404
+// the profile does, and the list is never queried.
+func TestListByAuthorRequiresAVisibleUser(t *testing.T) {
+	store := &fakeStore{userVisible: false}
+	_, err := newService(store).ListByAuthor(context.Background(), "u1", 1, 20)
+	if !errors.Is(err, ErrUserNotFound) {
+		t.Fatalf("err = %v, want ErrUserNotFound", err)
+	}
+	if store.authorSeen != "" {
+		t.Fatal("the reviews were listed for an invisible account")
+	}
+}
+
+func TestListByAuthorReturnsThePage(t *testing.T) {
+	title := "Arepera Chacao"
+	store := &fakeStore{
+		userVisible: true,
+		authorRows:  []Review{{ID: "r1", PlaceTitle: &title, Rating: 5}},
+		authorTotal: 1,
+	}
+	result, err := newService(store).ListByAuthor(context.Background(), "u1", 2, 10)
+	if err != nil {
+		t.Fatalf("ListByAuthor: %v", err)
+	}
+	if store.authorSeen != "u1" {
+		t.Fatalf("listed for %q", store.authorSeen)
+	}
+	if result.Total != 1 || len(result.Rows) != 1 || result.Rows[0].PlaceTitle == nil {
+		t.Fatalf("result = %+v", result)
+	}
+	// The page echoes what was asked, so the client can keep paging.
+	if result.Page != 2 || result.Limit != 10 {
+		t.Fatalf("page/limit = %d/%d", result.Page, result.Limit)
+	}
+}
+
+// A person with no reviews is a real profile, not an error: the answer is an empty page.
+func TestListByAuthorWithNoReviewsIsAnEmptyPage(t *testing.T) {
+	result, err := newService(&fakeStore{userVisible: true}).ListByAuthor(context.Background(), "u1", 1, 20)
+	if err != nil {
+		t.Fatalf("ListByAuthor: %v", err)
+	}
+	if result.Total != 0 || result.Rows == nil {
+		t.Fatalf("result = %+v, want an empty slice", result)
 	}
 }
