@@ -10,12 +10,57 @@ what unit tests cannot see: a handler that passes `go test` can still melt under
 | `smoke.js` | `/health/live`, `/health/ready` every 5th iteration, and the 404 envelope. 2 VUs, 10s. | No |
 | `signup.js` | `POST /v1/auth/signup` under a ramping load, plus validation checks. 5 VUs peak. | **Yes** — one `tb_signup_request` row and one queued email per iteration |
 | `auth-flow.js` | One full journey through every auth case, reading the 6-digit code from Mailpit like a human would. 1 iteration. | **Yes** — two accounts per run, one of them deliberately locked |
+| `discovery.js` | The discovery read path under load: list by `near`, sorted by distance, map mode with `bbox`+`zoom` clusters, the public catalogues, and three requests the API must refuse (no locator, both locators, a one-character `q`). 5 VUs, 20s across two scenarios. | **No** — public GETs plus requests refused before any database work |
+| `plans.js` | One journey through the write path: register, read a place from discovery, create a plan, add the place, vote, read the ranking back, ask for the private channel's signature, and prove an anonymous read gets 401. 1 iteration. | **Yes** — one account, one plan and one vote per run |
+| `photos.js` | The multipart edge: a 200 KB upload stored and linked, a body past the 5 MB budget refused with `field: file`, the gallery replaced over the wire, and the photo retired. 1 iteration. | **Yes** — one image on disk and one row, retired at the end |
+| `social.js` | Two accounts through the consumer surface: a review is unique per person and place (`409`), `viaFollowedAuthor` is viewer-relative (false to a stranger, true after following), self-follow is `422`, a check-in outside the radius is `not_near_place`, a block hides content both ways, and notification preferences toggle. 1 iteration. | **Yes** — two accounts, two reviews, a follow, a block and one check-in (append-only, stays) |
 
-`smoke.js` is safe against any environment, including production. The other two are not.
+`smoke.js` and `discovery.js` are safe against any environment, including production: they write
+nothing. `signup.js`, `auth-flow.js`, `plans.js`, `photos.js` and `social.js` are not.
+
+`photos.js` needs an account holding `place.update`, because a fresh signup has none. Grant it with
+the documented bootstrap command, then pass the credentials:
+
+```bash
+docker compose run --rm --entrypoint /usr/local/bin/bootstrap \
+  -e EMAIL=ana@melia.test -e ROLE=SUPERADMIN api
+ADMIN_EMAIL=ana@melia.test ADMIN_PASSWORD='...' k6 run tests/k6/photos.js
+```
 
 `auth-flow.js` is an integration suite, not a load test: one iteration walks the flow so a
 regression in any step fails loudly. It needs Mailpit reachable at `MAILPIT_URL`; that is
 what makes a real end-to-end run possible in a load-testing tool.
+
+### What `discovery.js` costs, and why it matters
+
+Discovery is the only read path whose cost lives behind PostGIS and Redis instead of behind a
+fake: `go test` proves the handler, never the `ST_DWithin` on the GiST index or the trending
+cache. The thresholds are laptop numbers (`p(95)<400ms`), chosen to catch a query that lost its
+index rather than to certify a server.
+
+Measured against the local stack on the day it landed: 530 requests, `http_req_failed` 0.00%,
+`p(95)` 1.85 ms, every check green.
+
+The locator is configurable (`K6_NEAR`, `K6_BBOX`) and defaults to the catalogue this repository
+seeds, which is Caracas. Defaulting to Madrid made every query return an empty page and the checks
+still passed: an empty array is still an array. `total > 0` is now an assertion, so a run against
+an empty dataset fails instead of measuring nothing.
+
+`social.js` is the one that found a real defect the Go suite could not: the review list — the read
+the app and the panel actually call — never emitted `viaFollowedAuthor`, while the domain computed
+it, the single-row mapper carried it and `openapi.yaml` declared it required. Every Go test was
+green. It also proved a subtler lesson in the script itself: the preference route is `PATCH`, and a
+check written against `POST` was green on a route that answers 405.
+
+`photos.js` is the only place the **size of the body** is part of the contract: 5 MB is the whole
+budget for the multipart request, so a file at the limit already crosses it. The script asserts
+both edges, and cleans up the photo it created. It also proved a practical rule: the local stack
+runs the image built by `docker compose up --build`, so a route merged today answers 404 until the
+container is rebuilt — the first run failed on exactly that and not on the script.
+
+`plans.js` is the same story on the write side: it needs a place, and it fails with a message
+instead of passing when the catalogue is empty. `PLACE_ID` short-circuits the lookup when CI
+already knows one.
 
 ### Cases covered by `auth-flow.js`
 
@@ -55,6 +100,9 @@ With the k6 binary:
 
 ```bash
 k6 run tests/k6/smoke.js
+k6 run tests/k6/discovery.js
+k6 run tests/k6/plans.js
+k6 run tests/k6/social.js
 k6 run tests/k6/signup.js
 ```
 

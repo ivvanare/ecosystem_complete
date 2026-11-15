@@ -49,6 +49,7 @@ type Options struct {
 	MediaDir           string
 	Reviews            ReviewService
 	Realtime           realtime.Publisher
+	RoleAdmin          RoleAdmin
 }
 
 const defaultProbeTimeout = 2 * time.Second
@@ -300,6 +301,21 @@ func New(opts Options) http.Handler {
 	// public; mutations require the bearer, and moderation reuses the seeded
 	// review.moderate capability (S12). Like the broker-gated routes, the routes are
 	// absent rather than accepted-and-failed when the service is not wired (T10).
+
+	// Role authoring is its own capability (role.manage), not the backoffice's admin.access, and it
+	// does not need the identity reader: it stands alone so the wiring matches the permission.
+	if opts.RoleAdmin != nil && opts.Authorizer != nil && opts.TokenParser != nil {
+		roleHandler := &roleHandlers{service: opts.RoleAdmin, logger: logger}
+		manage := func(next http.HandlerFunc) http.HandlerFunc {
+			return RequireAuth(opts.TokenParser, RequirePermission(opts.Authorizer, RoleManagePermission, logger, next))
+		}
+		mux.HandleFunc("POST /v1/admin/roles", manage(roleHandler.createRole))
+		mux.HandleFunc("GET /v1/admin/roles/{coRole}", manage(roleHandler.readRole))
+		mux.HandleFunc("PATCH /v1/admin/roles/{coRole}", manage(roleHandler.updateRole))
+		mux.HandleFunc("DELETE /v1/admin/roles/{coRole}", manage(roleHandler.retireRole))
+		mux.HandleFunc("PUT /v1/admin/roles/{coRole}/permissions", manage(roleHandler.replacePermissions))
+	}
+
 	if opts.Reviews != nil && opts.TokenParser != nil {
 		reviewsHandler := &reviewsHandlers{
 			service:    opts.Reviews,
