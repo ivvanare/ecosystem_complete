@@ -40,6 +40,7 @@ type Options struct {
 	Discovery          PlaceDiscovery
 	PlaceDetail        PlaceDetailReader
 	PublicProfile      ProfileReader
+	Devices            DeviceRegistry
 	Follows            SocialGraph
 	Checkins           Checkins
 	PlacesAdmin        PlaceBackoffice
@@ -177,6 +178,16 @@ func New(opts Options) http.Handler {
 	if opts.PlaceDetail != nil {
 		detailHandler := &placeDetailHandlers{reader: opts.PlaceDetail, logger: logger}
 		mux.HandleFunc("GET /v1/places/{coPlace}", detailHandler.detail)
+	}
+
+	// Device registration is authenticated by definition: a push has an owner, and an
+	// anonymous token would be a message with no one to address.
+	if opts.Devices != nil && opts.TokenParser != nil {
+		deviceHandler := &deviceHandlers{registry: opts.Devices, logger: logger}
+		mux.HandleFunc("POST /v1/devices",
+			RequireAuth(opts.TokenParser, deviceHandler.register))
+		mux.HandleFunc("DELETE /v1/devices/{coDevice}",
+			RequireAuth(opts.TokenParser, deviceHandler.unregister))
 	}
 
 	// A profile is public for the same reason: a review already publishes its author as

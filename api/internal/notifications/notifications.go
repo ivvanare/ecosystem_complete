@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ivvanare/ecosystem_complete/api/internal/mailer"
+	"github.com/ivvanare/ecosystem_complete/api/internal/push"
 )
 
 // The catalogue of kinds. It is a closed set in code — a client may enumerate it and toggle
@@ -55,10 +56,17 @@ type Publisher interface {
 	Publish(ctx context.Context, payload []byte) error
 }
 
+// Pusher is the push transport. A nil one means the provider is not configured, and then a
+// notification is email only — which is the state before the mobile client exists.
+type Pusher interface {
+	Send(ctx context.Context, userID, kind string, message push.Message)
+}
+
 // Service renders preferences and delivers notifications.
 type Service struct {
 	store     Store
 	publisher Publisher
+	pusher    Pusher
 	logger    *slog.Logger
 }
 
@@ -69,6 +77,10 @@ func NewService(store Store, publisher Publisher, logger *slog.Logger) *Service 
 	}
 	return &Service{store: store, publisher: publisher, logger: logger}
 }
+
+// SetPush wires the push transport. It is separate from the constructor because the dispatcher
+// is optional in exactly the same way the mail queue is: absent, never accepted-and-failed.
+func (s *Service) SetPush(pusher Pusher) { s.pusher = pusher }
 
 // Preferences returns the caller's toggles.
 func (s *Service) Preferences(ctx context.Context, userID string) (Preferences, error) {
@@ -103,6 +115,16 @@ func (s *Service) InvitationReceived(ctx context.Context, userID, planName strin
 		if kind == KindInvitationReceived {
 			return
 		}
+	}
+
+	// Push first, and independently of the email: a person with a phone and a broken mailbox
+	// should still learn that somebody invited them. Both are best effort per channel.
+	if s.pusher != nil {
+		s.pusher.Send(ctx, userID, KindInvitationReceived, push.Message{
+			Title: "Te invitaron a un plan",
+			Body:  planName,
+			Data:  map[string]string{"kind": KindInvitationReceived},
+		})
 	}
 
 	email, name, err := s.store.Contact(ctx, userID)
