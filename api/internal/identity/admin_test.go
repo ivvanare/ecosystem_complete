@@ -12,6 +12,7 @@ import (
 
 type fakeAdmin struct {
 	users    Page[UserSummary]
+	carrying []string
 	roles    []string
 	setErr   error
 	events   Page[AuditEvent]
@@ -34,6 +35,9 @@ func (f *fakeAdmin) UpdateUser(_ context.Context, userID string, _, _ *string) (
 	return f.updated, nil
 }
 
+func (f *fakeAdmin) RolesCarrying(context.Context, string, []string) ([]string, error) {
+	return f.carrying, nil
+}
 func (f *fakeAdmin) SetRoles(_ context.Context, userID string, roles []string) ([]string, error) {
 	f.gotUser = userID
 	f.gotRoles = roles
@@ -154,5 +158,34 @@ func TestUserBuildsAListRow(t *testing.T) {
 	}
 	if user.ID != "user-1" || len(user.Roles) != 1 || user.Roles[0] != "ADMIN" {
 		t.Errorf("unexpected row: %+v", user)
+	}
+}
+
+// The separation between admin.access and role.manage is one request away from being bypassed if a
+// caller can assign a role that carries role.manage without holding it: the seeded ADMIN role is
+// exactly that caller.
+func TestAssigningARoleThatCarriesRoleManageRequiresHoldingIt(t *testing.T) {
+	admin := &fakeAdmin{carrying: []string{SystemRole}}
+	store := &fakeStore{access: Access{Permissions: []string{"admin.access", "user.manage"}}}
+	service := &Service{Store: store, Admin: admin}
+
+	_, err := service.SetRoles(context.Background(), "admin-1", "user-2", []string{SystemRole}, audit.Event{})
+	if !errors.Is(err, ErrRoleManageRequired) {
+		t.Fatalf("err = %v, want ErrRoleManageRequired", err)
+	}
+	if admin.gotRoles != nil {
+		t.Fatal("the assignment reached the store")
+	}
+
+	// A caller that holds the permission may grant it, and a role that does not carry it is free.
+	store.access = Access{Permissions: []string{"admin.access", "role.manage"}}
+	if _, err := service.SetRoles(context.Background(), "root", "user-2", []string{SystemRole}, audit.Event{}); err != nil {
+		t.Fatalf("a caller holding role.manage was refused: %v", err)
+	}
+
+	admin = &fakeAdmin{carrying: nil}
+	store.access = Access{Permissions: []string{"admin.access"}}
+	if _, err := (&Service{Store: store, Admin: admin}).SetRoles(context.Background(), "admin-1", "user-2", []string{"EDITOR"}, audit.Event{}); err != nil {
+		t.Fatalf("granting a role without role.manage was refused: %v", err)
 	}
 }

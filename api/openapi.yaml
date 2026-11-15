@@ -2267,6 +2267,148 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Admin]
+      operationId: createRole
+      summary: Create a role
+      description: |
+        Requires `role.manage` — the permission the seeds created for exactly this and that had no
+        route until now. `SUPERADMIN` holds it alone; `ADMIN` is seeded without it on purpose.
+
+        The name is trimmed, non-empty, at most 60 characters and unique among live roles: sending
+        one that exists is `422` with field `name` and code `duplicate`. A permission code the
+        catalogue does not carry is `422` with field `permissions` and code `unknown`, never
+        silently dropped.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RoleInput" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Role" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /v1/admin/roles/{coRole}:
+    get:
+      tags: [Admin]
+      operationId: getRole
+      summary: One role with its permission codes
+      description: Requires `role.manage`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coRole
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The role.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Role" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Admin]
+      operationId: updateRole
+      summary: Rename, redescription or deactivate a role
+      description: |
+        Requires `role.manage`. Partial: an omitted field is left alone.
+
+        `SUPERADMIN` cannot be renamed, and that is a `409` with code `role_protected`: whoever
+        edits roles could otherwise remove the name the system protects itself by.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coRole
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RoleUpdate" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Role" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    delete:
+      tags: [Admin]
+      operationId: retireRole
+      summary: Retire a role
+      description: |
+        Requires `role.manage`. Logical: the row stays and the capabilities stop granting on the
+        next request, because access resolution filters retired roles.
+
+        A role users still hold is **not** deleted: the answer is `409 role_in_use` with the count
+        in `details`, so a human moves those users before anyone loses access. `SUPERADMIN` is
+        `409 role_protected`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coRole
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Retired. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/admin/roles/{coRole}/permissions:
+    put:
+      tags: [Admin]
+      operationId: replaceRolePermissions
+      summary: Replace the permission set of a role
+      description: |
+        Requires `role.manage`. The body is the whole set, replaced in one transaction: a
+        half-applied composition is a role that grants something nobody chose.
+
+        An unknown code is `422` with field `permissions`. `SUPERADMIN` must keep `role.manage`;
+        a request that strips it is `409 role_protected`, because it removes the last way back
+        into role management.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coRole
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RolePermissions" }
+      responses:
+        "204": { description: Replaced. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
 
   /v1/admin/permissions:
     get:
@@ -2949,6 +3091,36 @@ components:
         status: { type: string, enum: [ACTIVE, INACTIVE] }
         permissions:
           type: array
+          items: { type: string }
+
+    RoleInput:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 60, example: OPERADOR }
+        description: { type: [string, "null"] }
+        permissions:
+          type: array
+          description: Permission codes from GET /v1/admin/permissions.
+          items: { type: string }
+
+    RoleUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 60 }
+        description: { type: [string, "null"] }
+        status: { type: string, enum: [ACTIVE, INACTIVE] }
+
+    RolePermissions:
+      type: object
+      additionalProperties: false
+      required: [codes]
+      properties:
+        codes:
+          type: array
+          description: The whole set; an empty array leaves the role without permissions.
           items: { type: string }
 
     Permission:

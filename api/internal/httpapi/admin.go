@@ -256,6 +256,11 @@ func (h *adminHandlers) setRoles(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, identity.ErrNotFound):
 			writeError(w, http.StatusNotFound, "not_found", "Not found.")
 			return
+		case errors.Is(err, identity.ErrRoleManageRequired):
+			// Handing out the capability that manages roles needs the capability: without this, a
+			// caller with admin.access grants itself SUPERADMIN in one hop.
+			writeError(w, http.StatusForbidden, "permission_denied", "Granting role.manage requires role.manage.")
+			return
 		default:
 			writeError(w, http.StatusInternalServerError, "internal_error", "The request could not be completed.")
 			return

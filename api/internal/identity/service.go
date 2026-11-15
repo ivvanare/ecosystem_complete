@@ -59,6 +59,8 @@ type Service struct {
 
 	// Admin is optional: without it the administration methods are unavailable.
 	Admin AdminStore
+	// RoleAuthor is optional too: without it the role-authoring methods are unavailable.
+	RoleAuthor RoleStore
 	// Auditor records capability changes. Best effort, like every other audit write.
 	Auditor audit.Recorder
 	Logger  *slog.Logger
