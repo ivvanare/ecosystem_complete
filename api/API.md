@@ -891,6 +891,34 @@ Ojo con la interacción ya conocida: moderar **no** borra. Una reseña `MODERATE
 para su autor y para el moderador, y desde la migración 20 el autor puede volver a reseñar ese
 lugar. Si querés impedir que alguien publique, eso es bloqueo de cuenta, no moderación.
 
+### 13.4 Perfil público
+
+| Método | Ruta | Autenticación | Qué hace |
+|---|---|---|---|
+| `GET` | `/v1/users/{coUser}` | pública | quién es y cuánto hizo |
+
+Es la pantalla que abre el nombre de un autor de reseña, o el de alguien a quien seguís. Hasta
+ahora esos vínculos no llevaban a ningún lado.
+
+```json
+{ "coUser": "695b5086-…", "name": "Ana", "memberSince": "2026-01-02T10:00:00Z",
+  "counts": { "reviews": 3, "checkins": 12, "followers": 5, "following": 8 } }
+```
+
+Tres reglas:
+
+- **El email nunca aparece.** Es una credencial, no un campo de perfil. Lo único público de una
+  cuenta es su nombre (`tx_name`, `null` si entró por Google/Apple y nunca lo dio) y desde cuándo
+  existe.
+- **Nada es relativo a quien pregunta.** No hay `followedByMe`: la lectura no tiene estado y una
+  respuesta cacheada no puede depender de quién la pidió. El cliente lo resuelve con
+  `/v1/follows`.
+- **Una cuenta suspendida o borrada responde `404`**, igual que una que nunca existió. Una
+  decisión de moderación no se publica como banner de estado: para un desconocido, esa cuenta
+  no está.
+
+Los contadores cuentan filas vivas: una reseña moderada no suma.
+
 ---
 
 ## 14. Backoffice de lugares

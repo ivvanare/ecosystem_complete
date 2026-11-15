@@ -39,6 +39,7 @@ type Options struct {
 	Social             SocialAuthenticator
 	Discovery          PlaceDiscovery
 	PlaceDetail        PlaceDetailReader
+	PublicProfile      ProfileReader
 	Follows            SocialGraph
 	Checkins           Checkins
 	PlacesAdmin        PlaceBackoffice
@@ -176,6 +177,13 @@ func New(opts Options) http.Handler {
 	if opts.PlaceDetail != nil {
 		detailHandler := &placeDetailHandlers{reader: opts.PlaceDetail, logger: logger}
 		mux.HandleFunc("GET /v1/places/{coPlace}", detailHandler.detail)
+	}
+
+	// A profile is public for the same reason: a review already publishes its author as
+	// {id, name}, and a follow button that opens nothing is not a feature.
+	if opts.PublicProfile != nil {
+		profileHandler := &userProfileHandlers{reader: opts.PublicProfile, logger: logger}
+		mux.HandleFunc("GET /v1/users/{coUser}", profileHandler.user)
 	}
 
 	// Plan and invitation moderation (D21): the backoffice moderates, it does not participate.

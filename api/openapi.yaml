@@ -481,6 +481,37 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /v1/users/{coUser}:
+    get:
+      tags: [Social]
+      operationId: getUserProfile
+      summary: The public identity of another account
+      description: |
+        Who someone is and how much they have done. Public, because every surface that leads
+        here is public already — a review publishes its author as `{id, name}` — and because a
+        follow button that opens nothing is not a feature.
+
+        The email never appears. It is a credential, not a profile field.
+
+        Nothing is viewer-relative: there is no `followedByMe` flag, so a shared cached answer
+        cannot depend on who asked. A client resolves that from `/v1/follows`.
+
+        A suspended or deleted account answers `404` exactly like one that never existed, so a
+        moderation decision stays private instead of becoming a public status banner.
+      parameters:
+        - name: coUser
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The profile.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserProfile" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/places:
     get:
       tags: [Discovery]
@@ -2844,6 +2875,30 @@ components:
           nullable: true
           description: Absent means "no date yet", which is a real state.
         partySize: { type: integer, minimum: 1, maximum: 50 }
+    UserProfile:
+      type: object
+      additionalProperties: false
+      required: [coUser, name, memberSince, counts]
+      properties:
+        coUser: { type: string, format: uuid }
+        name:
+          type: [string, "null"]
+          description: '`seg.tb_user.tx_name`; `null` when the account never gave one (social sign-in).'
+        memberSince:
+          type: string
+          format: date-time
+          description: When the account row was created.
+        counts:
+          type: object
+          additionalProperties: false
+          required: [reviews, checkins, followers, following]
+          description: Live rows only — a moderated review does not count.
+          properties:
+            reviews: { type: integer, minimum: 0 }
+            checkins: { type: integer, minimum: 0 }
+            followers: { type: integer, minimum: 0 }
+            following: { type: integer, minimum: 0 }
+
     PlaceDetail:
       type: object
       additionalProperties: false
