@@ -27,6 +27,10 @@ const (
 	EventLoginLocked        = "auth.login.locked"
 	EventRolesChanged       = "rbac.roles.changed"
 	EventUserUpdated        = "admin.user.updated"
+	// EventRoleChanged is authoring a role itself: created, renamed, retired, or its permission
+	// set replaced. The subject is the role, not a user, so co_user stays empty and the role id
+	// travels in the metadata — the log has no foreign key and must not invent one.
+	EventRoleChanged = "admin.role.changed"
 
 	EventPasswordResetRequested = "auth.password.reset_requested"
 	EventPasswordReset          = "auth.password.reset"

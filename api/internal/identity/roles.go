@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/ivvanare/ecosystem_complete/api/internal/audit"
 )
 
 // SystemRole is the role the system protects from itself: it cannot be renamed, retired, or left
@@ -75,7 +77,7 @@ type RoleStore interface {
 }
 
 // CreateRole validates the shapes and writes the role with its permission set.
-func (s *Service) CreateRole(ctx context.Context, actorID string, in RoleInput) (Role, error) {
+func (s *Service) CreateRole(ctx context.Context, actorID string, in RoleInput, meta audit.Event) (Role, error) {
 	name, err := validateRoleName(in.Name)
 	if err != nil {
 		return Role{}, err
@@ -87,7 +89,12 @@ func (s *Service) CreateRole(ctx context.Context, actorID string, in RoleInput) 
 	if err := s.requirePermissions(ctx, codes); err != nil {
 		return Role{}, err
 	}
-	return s.RoleAuthor.CreateRole(ctx, actorID, RoleInput{Name: name, Description: in.Description, Permissions: codes})
+	role, err := s.RoleAuthor.CreateRole(ctx, actorID, RoleInput{Name: name, Description: in.Description, Permissions: codes})
+	if err != nil {
+		return Role{}, err
+	}
+	s.auditRole(ctx, actorID, meta, "created", role, map[string]any{"permissions": role.Permissions})
+	return role, nil
 }
 
 // Role returns one live role with its permission codes.
@@ -96,7 +103,7 @@ func (s *Service) Role(ctx context.Context, roleID string) (Role, error) {
 }
 
 // UpdateRole edits the fields an operator owns, refusing the change that could lock the system out.
-func (s *Service) UpdateRole(ctx context.Context, actorID, roleID string, in RoleUpdate) (Role, error) {
+func (s *Service) UpdateRole(ctx context.Context, actorID, roleID string, in RoleUpdate, meta audit.Event) (Role, error) {
 	current, err := s.RoleAuthor.Role(ctx, roleID)
 	if err != nil {
 		return Role{}, err
@@ -121,11 +128,26 @@ func (s *Service) UpdateRole(ctx context.Context, actorID, roleID string, in Rol
 			return Role{}, ErrRoleProtected
 		}
 	}
-	return s.RoleAuthor.UpdateRole(ctx, actorID, roleID, in)
+	updated, err := s.RoleAuthor.UpdateRole(ctx, actorID, roleID, in)
+	if err != nil {
+		return Role{}, err
+	}
+	changed := make([]string, 0, 3)
+	if in.Name != nil {
+		changed = append(changed, "name")
+	}
+	if in.Description != nil {
+		changed = append(changed, "description")
+	}
+	if in.Status != nil {
+		changed = append(changed, "status")
+	}
+	s.auditRole(ctx, actorID, meta, "updated", updated, map[string]any{"changed": changed})
+	return updated, nil
 }
 
 // RetireRole deletes a role logically, refusing to do it over the heads of the users who hold it.
-func (s *Service) RetireRole(ctx context.Context, actorID, roleID string) error {
+func (s *Service) RetireRole(ctx context.Context, actorID, roleID string, meta audit.Event) error {
 	current, err := s.RoleAuthor.Role(ctx, roleID)
 	if err != nil {
 		return err
@@ -135,11 +157,15 @@ func (s *Service) RetireRole(ctx context.Context, actorID, roleID string) error 
 	}
 	// The count and the retire happen in one transaction inside the store: counting here would let
 	// a concurrent assignment slip between the two.
-	return s.RoleAuthor.RetireRole(ctx, actorID, roleID)
+	if err := s.RoleAuthor.RetireRole(ctx, actorID, roleID); err != nil {
+		return err
+	}
+	s.auditRole(ctx, actorID, meta, "retired", current, nil)
+	return nil
 }
 
 // ReplaceRolePermissions replaces the composition of a role as a whole set.
-func (s *Service) ReplaceRolePermissions(ctx context.Context, actorID, roleID string, codes []string) ([]string, error) {
+func (s *Service) ReplaceRolePermissions(ctx context.Context, actorID, roleID string, codes []string, meta audit.Event) ([]string, error) {
 	current, err := s.RoleAuthor.Role(ctx, roleID)
 	if err != nil {
 		return nil, err
@@ -165,7 +191,40 @@ func (s *Service) ReplaceRolePermissions(ctx context.Context, actorID, roleID st
 			return nil, ErrRoleProtected
 		}
 	}
-	return s.RoleAuthor.ReplaceRolePermissions(ctx, actorID, roleID, cleaned)
+	applied, err := s.RoleAuthor.ReplaceRolePermissions(ctx, actorID, roleID, cleaned)
+	if err != nil {
+		return nil, err
+	}
+	s.auditRole(ctx, actorID, meta, "permissions_replaced", current, map[string]any{"permissions": applied})
+	return applied, nil
+}
+
+// auditRole records the change in the append-only security log. Best effort, like every other
+// audit write: a log that can fail a request is a log nobody keeps.
+//
+// The role row has no history table (the point-in-time set is fixed by ledger 07), so this event is
+// the only record that a role was renamed, redescribed, deactivated or retired — and of who did it.
+func (s *Service) auditRole(ctx context.Context, actorID string, meta audit.Event, action string, role Role, extra map[string]any) {
+	if s.Auditor == nil {
+		return
+	}
+	metadata := map[string]any{
+		"action": action,
+		"coRole": role.ID,
+		"name":   role.Name,
+	}
+	for key, value := range extra {
+		metadata[key] = value
+	}
+	event := meta
+	event.Name = audit.EventRoleChanged
+	event.ActorID = actorID
+	// The subject is the role, not a user: co_user stays empty on purpose.
+	event.UserID = ""
+	event.Metadata = metadata
+	if err := s.Auditor.Record(ctx, event); err != nil && s.Logger != nil {
+		s.Logger.Warn("audit write failed", "event", event.Name, "error", err.Error())
+	}
 }
 
 // requirePermissions refuses codes the catalogue does not carry: a silently dropped permission is

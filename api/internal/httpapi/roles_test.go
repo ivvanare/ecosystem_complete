@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ivvanare/ecosystem_complete/api/internal/audit"
 	"github.com/ivvanare/ecosystem_complete/api/internal/identity"
 )
 
@@ -22,7 +23,7 @@ type fakeRoles struct {
 	gotCodes []string
 }
 
-func (f *fakeRoles) CreateRole(_ context.Context, _ string, in identity.RoleInput) (identity.Role, error) {
+func (f *fakeRoles) CreateRole(_ context.Context, _ string, in identity.RoleInput, _ audit.Event) (identity.Role, error) {
 	f.calls++
 	f.gotIn = in
 	return f.role, f.err
@@ -34,19 +35,19 @@ func (f *fakeRoles) Role(_ context.Context, roleID string) (identity.Role, error
 	return f.role, f.err
 }
 
-func (f *fakeRoles) UpdateRole(_ context.Context, _, roleID string, in identity.RoleUpdate) (identity.Role, error) {
+func (f *fakeRoles) UpdateRole(_ context.Context, _, roleID string, in identity.RoleUpdate, _ audit.Event) (identity.Role, error) {
 	f.calls++
 	f.gotID, f.gotUp = roleID, in
 	return f.role, f.err
 }
 
-func (f *fakeRoles) RetireRole(_ context.Context, _, roleID string) error {
+func (f *fakeRoles) RetireRole(_ context.Context, _, roleID string, _ audit.Event) error {
 	f.calls++
 	f.gotID = roleID
 	return f.err
 }
 
-func (f *fakeRoles) ReplaceRolePermissions(_ context.Context, _, roleID string, codes []string) ([]string, error) {
+func (f *fakeRoles) ReplaceRolePermissions(_ context.Context, _, roleID string, codes []string, _ audit.Event) ([]string, error) {
 	f.calls++
 	f.gotID, f.gotCodes = roleID, codes
 	return codes, f.err
