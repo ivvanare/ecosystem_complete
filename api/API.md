@@ -287,6 +287,36 @@ cuentas: se crea la cuenta federada sin email.
 
 ---
 
+### 5.8 Foto de perfil
+
+| Método | Ruta | Autenticación | Qué hace |
+|---|---|---|---|
+| `PUT` | `/v1/me/avatar` | bearer | sube o reemplaza la foto propia (`multipart/form-data`, campo `file`) |
+| `DELETE` | `/v1/me/avatar` | bearer | la borra (`204`) |
+
+```http
+PUT /v1/me/avatar        file=<imagen>
+→ 200 { "avatarUrl": "/media/avatars/<uuid>/1739…png" }
+```
+
+Cuatro reglas:
+
+- **Es `PUT`, no `POST`.** Hay exactamente una foto por cuenta: repetir el pedido deja el mismo
+  estado y no hay identificador que el cliente tenga que coleccionar.
+- **Los bytes se huelen.** El `Content-Type` declarado no se cree solo: se detecta el tipo real y
+  los dos tienen que coincidir, así un ejecutable renombrado no queda guardado como imagen. El
+  nombre en disco es nuestro, nunca el del cliente. Máximo **5 MiB**, JPEG/PNG/WebP.
+- **Reemplazar borra la anterior.** Una foto de perfil es lo que un usuario más reemplaza, y los
+  huérfanos se acumulan rápido.
+- **Solo la propia.** No hay ruta para cambiar la foto de otra persona, ni siquiera para un
+  administrador.
+
+`avatarUrl` viaja en `/v1/me`, en el perfil público, en el autor de cada reseña y en el actor del
+feed. Es **`null` cuando la cuenta nunca subió una** — un estado real: el cliente dibuja iniciales,
+no una imagen rota. La URL es relativa al origen del API, igual que las fotos de lugares.
+
+---
+
 ## 6. Identidad
 
 ```http

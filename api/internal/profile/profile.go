@@ -31,8 +31,10 @@ type Counts struct {
 // only the display-safe pair. Nothing here is viewer-relative either — a cached answer must not
 // depend on who asked — so there is no followedByMe flag.
 type Profile struct {
-	ID          string
-	Name        *string
+	ID   string
+	Name *string
+	// AvatarURL is nil when the account never uploaded one: the client draws initials.
+	AvatarURL   *string
 	MemberSince time.Time
 	Counts      Counts
 }

@@ -57,11 +57,13 @@ type Review struct {
 	PlaceID    string
 	AuthorID   string
 	AuthorName *string
-	Rating     int
-	Comment    *string
-	Status     string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	// AuthorAvatarURL is display-safe like the name, and nil when the account has none.
+	AuthorAvatarURL *string
+	Rating          int
+	Comment         *string
+	Status          string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 	// PlaceTitle is the commercial name of the reviewed place. It is populated by the
 	// moderator listing only: the public read is scoped by coPlace, so the client already
 	// knows the place and does not need it repeated on every row.

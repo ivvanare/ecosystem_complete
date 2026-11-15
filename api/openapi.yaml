@@ -481,6 +481,63 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /v1/me/avatar:
+    put:
+      tags: [Identity]
+      operationId: uploadAvatar
+      summary: Set the caller's profile picture
+      description: |
+        `multipart/form-data` with `file`, an image (JPEG, PNG or WebP, max 5 MiB). The bytes are
+        sniffed and must agree with the declared content type, so a renamed executable is not
+        stored as a picture; the name on disk is ours, never the client's filename.
+
+        It is a `PUT`, not a `POST`, because there is exactly one avatar per account: repeating the
+        request leaves the same state, and there is no identifier for the client to collect.
+
+        Replacing an avatar deletes the object it replaced. An avatar is the one upload a user
+        will repeat, and orphans accumulate fast.
+
+        Only the caller can change their own picture. There is no route to change somebody else's,
+        not even for an administrator.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "200":
+          description: Stored. The URL is relative to the API origin.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [avatarUrl]
+                properties:
+                  avatarUrl: { type: string, example: /media/avatars/…/1739.png }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    delete:
+      tags: [Identity]
+      operationId: deleteAvatar
+      summary: Remove the caller's profile picture
+      description: |
+        Idempotent: clearing an avatar that was never set is a success, because the state the
+        caller asked for is the state that holds. The object is removed too.
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Removed, or already absent.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /v1/feed:
     get:
       tags: [Social]
@@ -3061,11 +3118,12 @@ components:
     FeedActor:
       type: object
       additionalProperties: false
-      required: [id, name]
+      required: [id, name, avatarUrl]
       description: Display-safe fields only. The email never appears.
       properties:
         id: { type: string, format: uuid }
         name: { type: [string, "null"] }
+        avatarUrl: { type: [string, "null"] }
 
     FeedPlace:
       type: object
@@ -3120,12 +3178,15 @@ components:
     UserProfile:
       type: object
       additionalProperties: false
-      required: [coUser, name, memberSince, counts]
+      required: [coUser, name, avatarUrl, memberSince, counts]
       properties:
         coUser: { type: string, format: uuid }
         name:
           type: [string, "null"]
           description: '`seg.tb_user.tx_name`; `null` when the account never gave one (social sign-in).'
+        avatarUrl:
+          type: [string, "null"]
+          description: 'Relative to the API origin. `null` means the client draws initials.'
         memberSince:
           type: string
           format: date-time
@@ -3467,8 +3528,11 @@ components:
       allOf:
         - $ref: "#/components/schemas/UserSummary"
         - type: object
-          required: [permissions]
+          required: [permissions, avatarUrl]
           properties:
+            avatarUrl:
+              type: [string, "null"]
+              description: 'Relative to the API origin. `null` when the account never uploaded one.'
             permissions:
               type: array
               items: { type: string }
@@ -3718,11 +3782,12 @@ components:
         status: { $ref: "#/components/schemas/ReviewStatus" }
         author:
           type: object
-          required: [id, name]
+          required: [id, name, avatarUrl]
           description: Display-safe author fields. The email is never exposed.
           properties:
             id: { type: string, format: uuid }
             name: { type: [string, "null"], description: "`seg.tb_user.tx_name`; `null` when the account never gave one (social sign-in)." }
+            avatarUrl: { type: [string, "null"], description: 'Relative to the API origin; `null` when the account has none.' }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
 

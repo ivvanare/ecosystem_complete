@@ -351,7 +351,7 @@ func TestListVisibilityPredicateAndNoAggregation(t *testing.T) {
 	db := &fakeDB{
 		count: 1,
 		// The list projection adds the viewer-relative highlight as its last column.
-		rows: [][]any{{"r1", "p1", "u1", "Ana", 5, "la mejor", StatusActive, now, now, true}},
+		rows: [][]any{{"r1", "p1", "u1", "Ana", nil, 5, "la mejor", StatusActive, now, now, true}},
 	}
 	rows, total, err := newTestStore(db).List(context.Background(), "p1", Viewer{UserID: "u1", Moderator: true}, 2, 20)
 	if err != nil {
@@ -413,7 +413,7 @@ func TestListVisibilityPredicateAndNoAggregation(t *testing.T) {
 // The author check reads one live review of the place: deleted rows are invisible.
 func TestGetScopesToThePlaceAndLiveRows(t *testing.T) {
 	now := time.Now()
-	db := &fakeDB{rows: [][]any{{"r1", "p1", "u1", "Ana", 5, "ok", StatusActive, now, now}}}
+	db := &fakeDB{rows: [][]any{{"r1", "p1", "u1", "Ana", nil, 5, "ok", StatusActive, now, now}}}
 	review, err := newTestStore(db).Get(context.Background(), "p1", "r1")
 	if err != nil {
 		t.Fatalf("err = %v", err)

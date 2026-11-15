@@ -42,6 +42,7 @@ type Options struct {
 	PublicProfile      ProfileReader
 	Devices            DeviceRegistry
 	Feed               FeedReader
+	Avatars            AvatarWriter
 	Follows            SocialGraph
 	Checkins           Checkins
 	PlacesAdmin        PlaceBackoffice
@@ -179,6 +180,14 @@ func New(opts Options) http.Handler {
 	if opts.PlaceDetail != nil {
 		detailHandler := &placeDetailHandlers{reader: opts.PlaceDetail, logger: logger}
 		mux.HandleFunc("GET /v1/places/{coPlace}", detailHandler.detail)
+	}
+
+	// An avatar belongs to the caller and to nobody else: there is no route to change someone
+	// else's picture, not even for an administrator.
+	if opts.Avatars != nil && opts.MediaStorage != nil && opts.TokenParser != nil {
+		avatarHandler := &avatarHandlers{avatars: opts.Avatars, storage: opts.MediaStorage, logger: logger}
+		mux.HandleFunc("PUT /v1/me/avatar", RequireAuth(opts.TokenParser, avatarHandler.upload))
+		mux.HandleFunc("DELETE /v1/me/avatar", RequireAuth(opts.TokenParser, avatarHandler.remove))
 	}
 
 	// The feed is the one read where the social graph has to be applied, so it needs to know who

@@ -32,14 +32,14 @@ WITH followed AS (
       FROM core.tb_follow f
      WHERE f.co_follower = $1::uuid
 )
-SELECT kind, at, actor_id, actor_name,
+SELECT kind, at, actor_id, actor_name, actor_avatar,
        co_place, place_title,
        co_review, rating, comment,
        co_checkin,
        co_route, route_name, visibility, scheduled_at
   FROM (
         SELECT 'review'::text AS kind, r.dt_created_at AS at,
-               r.co_user AS actor_id, u.tx_name AS actor_name,
+               r.co_user AS actor_id, u.tx_name AS actor_name, u.tx_avatar_url AS actor_avatar,
                r.co_place AS co_place, p.tx_title AS place_title,
                r.co_review AS co_review, r.nu_rating AS rating, r.tx_comment AS comment,
                NULL::uuid AS co_checkin,
@@ -56,7 +56,7 @@ SELECT kind, at, actor_id, actor_name,
         UNION ALL
 
         SELECT 'checkin'::text, c.dt_created_at,
-               c.co_user, u.tx_name,
+               c.co_user, u.tx_name, u.tx_avatar_url,
                c.co_place, p.tx_title,
                NULL::uuid, NULL::integer, NULL::text,
                c.co_checkin,
@@ -72,7 +72,7 @@ SELECT kind, at, actor_id, actor_name,
         UNION ALL
 
         SELECT 'plan'::text, r.dt_created_at,
-               r.co_user, u.tx_name,
+               r.co_user, u.tx_name, u.tx_avatar_url,
                NULL::uuid, NULL::text,
                NULL::uuid, NULL::integer, NULL::text,
                NULL::uuid,
@@ -134,6 +134,7 @@ func scanItem(row scanner) (Item, error) {
 		at          time.Time
 		actorID     string
 		actorName   *string
+		actorAvatar *string
 		placeID     *string
 		placeTitle  *string
 		coReview    *string
@@ -145,7 +146,7 @@ func scanItem(row scanner) (Item, error) {
 		visibility  *string
 		scheduledAt *time.Time
 	)
-	if err := row.Scan(&kind, &at, &actorID, &actorName,
+	if err := row.Scan(&kind, &at, &actorID, &actorName, &actorAvatar,
 		&placeID, &placeTitle, &coReview, &rating, &comment,
 		&coCheckin, &coRoute, &routeName, &visibility, &scheduledAt); err != nil {
 		return Item{}, err
@@ -153,7 +154,7 @@ func scanItem(row scanner) (Item, error) {
 
 	item.Kind = kind
 	item.At = at
-	item.Actor = Actor{ID: actorID, Name: actorName}
+	item.Actor = Actor{ID: actorID, Name: actorName, AvatarURL: actorAvatar}
 	if placeID != nil {
 		item.Place = &PlaceRef{ID: *placeID, Title: placeTitle}
 	}

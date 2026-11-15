@@ -22,6 +22,7 @@ var ErrNotFound = errors.New("identity: user not found")
 type Profile struct {
 	ID              string
 	Name            *string
+	AvatarURL       *string
 	Email           *string
 	Status          string
 	EmailVerifiedAt *time.Time
