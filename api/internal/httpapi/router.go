@@ -41,6 +41,7 @@ type Options struct {
 	PlaceDetail        PlaceDetailReader
 	PublicProfile      ProfileReader
 	Devices            DeviceRegistry
+	Feed               FeedReader
 	Follows            SocialGraph
 	Checkins           Checkins
 	PlacesAdmin        PlaceBackoffice
@@ -178,6 +179,13 @@ func New(opts Options) http.Handler {
 	if opts.PlaceDetail != nil {
 		detailHandler := &placeDetailHandlers{reader: opts.PlaceDetail, logger: logger}
 		mux.HandleFunc("GET /v1/places/{coPlace}", detailHandler.detail)
+	}
+
+	// The feed is the one read where the social graph has to be applied, so it needs to know who
+	// is asking: blocked accounts are filtered from it in both directions.
+	if opts.Feed != nil && opts.TokenParser != nil {
+		feedHandler := &feedHandlers{reader: opts.Feed, logger: logger}
+		mux.HandleFunc("GET /v1/feed", RequireAuth(opts.TokenParser, feedHandler.list))
 	}
 
 	// Device registration is authenticated by definition: a push has an owner, and an

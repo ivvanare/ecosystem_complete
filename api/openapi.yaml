@@ -481,6 +481,48 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /v1/feed:
+    get:
+      tags: [Social]
+      operationId: getFeed
+      summary: What the people you follow have been doing
+      description: |
+        Reviews, check-ins and **public** plans of the accounts the caller follows, newest first.
+
+        This is the one read where the social graph has to be applied, so it requires a caller:
+        a block filters in both directions here, which the public profile and the by-author
+        review list cannot do because they do not know who is asking.
+
+        Nothing leaks. A review must be live, `ACTIVE`, and about a visible place; a check-in
+        must point at a visible place; a plan must be `PUBLIC` and not deleted. The feed is a
+        shortcut to things the reader could reach by tapping, never a way to see something else.
+
+        **Cursor, not offset.** A feed paginated by page number skips or repeats rows as soon as
+        something new arrives while the reader scrolls. `nextCursor` is opaque: echo it back
+        verbatim and the next page is strictly older. `null` means there is nothing left.
+
+        A cursor that does not decode is `422`, never a silent restart at the first page — that
+        would look like an infinite scroll and hide a client bug.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: cursor
+          in: query
+          description: Opaque token from a previous `nextCursor`.
+          schema: { type: string }
+        - name: limit
+          in: query
+          description: Rows per page. Defaults to 20, capped at 50.
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+      responses:
+        "200":
+          description: One page of the feed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FeedPage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
   /v1/users/{coUser}:
     get:
       tags: [Social]
@@ -2990,6 +3032,90 @@ components:
           type: string
           format: date-time
           description: Updated on every registration. An old timestamp is an old token.
+
+    FeedPage:
+      type: object
+      additionalProperties: false
+      required: [data, nextCursor]
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/FeedItem" }
+        nextCursor:
+          type: [string, "null"]
+          description: Opaque token for the next page. `null` on the last one.
+
+    FeedItem:
+      description: One event, discriminated by `kind`.
+      oneOf:
+        - $ref: "#/components/schemas/FeedReview"
+        - $ref: "#/components/schemas/FeedCheckin"
+        - $ref: "#/components/schemas/FeedPlan"
+      discriminator:
+        propertyName: kind
+        mapping:
+          review: "#/components/schemas/FeedReview"
+          checkin: "#/components/schemas/FeedCheckin"
+          plan: "#/components/schemas/FeedPlan"
+
+    FeedActor:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      description: Display-safe fields only. The email never appears.
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: [string, "null"] }
+
+    FeedPlace:
+      type: object
+      additionalProperties: false
+      required: [id, title]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: [string, "null"] }
+
+    FeedReview:
+      type: object
+      additionalProperties: false
+      required: [kind, at, actor, coReview, place, rating, comment]
+      properties:
+        kind: { type: string, const: review }
+        at: { type: string, format: date-time }
+        actor: { $ref: "#/components/schemas/FeedActor" }
+        coReview: { type: string, format: uuid }
+        place: { $ref: "#/components/schemas/FeedPlace" }
+        rating: { type: integer, minimum: 1, maximum: 5 }
+        comment: { type: [string, "null"] }
+
+    FeedCheckin:
+      type: object
+      additionalProperties: false
+      required: [kind, at, actor, coCheckin, place]
+      properties:
+        kind: { type: string, const: checkin }
+        at: { type: string, format: date-time }
+        actor: { $ref: "#/components/schemas/FeedActor" }
+        coCheckin: { type: string, format: uuid }
+        place: { $ref: "#/components/schemas/FeedPlace" }
+
+    FeedPlan:
+      type: object
+      additionalProperties: false
+      required: [kind, at, actor, plan]
+      properties:
+        kind: { type: string, const: plan }
+        at: { type: string, format: date-time }
+        actor: { $ref: "#/components/schemas/FeedActor" }
+        plan:
+          type: object
+          additionalProperties: false
+          required: [coRoute, name, visibility, scheduledAt]
+          properties:
+            coRoute: { type: string, format: uuid }
+            name: { type: string }
+            visibility: { type: string, enum: [PUBLIC] }
+            scheduledAt: { type: [string, "null"], format: date-time }
 
     UserProfile:
       type: object
