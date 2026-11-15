@@ -337,6 +337,12 @@ si no, `403`.
 | `PUT` | `/v1/admin/roles/{coRole}/permissions` | reemplazar el conjunto de permisos |
 | `GET` | `/v1/admin/audit-events?page&limit&event&userId&emailHash&from&to` | bitácora, más reciente primero |
 
+La bitácora es **append-only** y no tiene FK a usuarios. Un cambio de rol deja dos rastros
+distintos: la composición y la asignación van a sus tablas de historial con actor, y la fila del rol
+(nombre, descripción, estado) queda registrada como evento `admin.role.changed` con
+`metadata.action` = `created` | `updated` | `permissions_replaced` | `retired`, el `coRole` y el
+actor en `co_actor_user`. El sujeto es el rol, no una persona: `co_user` queda vacío.
+
 ### 7.1 Roles: autoría
 
 ```http
@@ -635,6 +641,58 @@ localizador:
 
 Una búsqueda sin resultados es `200` con la página vacía, nunca `404`.
 
+### 11.4 El detalle de un lugar
+
+| Método | Ruta | Autenticación | Qué hace |
+|---|---|---|---|
+| `GET` | `/v1/places/{coPlace}` | pública | el lugar completo: fotos, horarios, menús, atributos y rating |
+
+Es la lectura que el cliente hace después de tocar un resultado de la lista. **Pública**, igual
+que la búsqueda: una app que puede listar lugares tiene que poder abrirlos.
+
+```json
+{
+  "coPlace": "a0000001-0000-4000-8000-000000000001",
+  "name": "Arepera Chacao",
+  "description": null,
+  "category": { "id": "43c43189-…", "name": "Arepera" },
+  "country": "VE", "region": "VE-A",
+  "latitude": 10.496, "longitude": -66.853,
+  "address": "Av. Francisco de Miranda, Chacao",
+  "socialMedia": { "instagram": "https://instagram.com/…" },
+  "timezone": "America/Caracas",
+  "openNow": true,
+  "photos": [ { "coPhoto": "…", "url": "/media/places/…", "type": "COVER", "order": 0 } ],
+  "schedules": [ { "dayOfWeek": 1, "open": "08:00", "close": "23:30" } ],
+  "menus": [ { "name": "Almuerzos", "description": null,
+               "items": [ { "name": "Arepa reina", "description": null,
+                            "price": 3.5, "currency": "USD" } ] } ],
+  "attributes": [ { "code": "terraza", "name": "Terraza" } ],
+  "rating": { "average": 3.2, "count": 5 }
+}
+```
+
+Lo que **no** aparece, y por qué:
+
+- **El nombre legal y el dueño.** Son del backoffice. Acá `name` es `tx_title`, el nombre
+  comercial.
+- **Nada personalizado.** No hay `followedByMe` ni "está en mi plan": esta lectura es sin estado,
+  y una respuesta cacheada no puede depender de quién preguntó.
+
+Tres reglas que el cliente no tiene que reimplementar:
+
+- **`openNow` lo calcula la base**, en la zona horaria del lugar y contemplando los horarios que
+  cruzan la medianoche (abre 20:00, cierra 02:00 → abierto a las 23:00). Es `null` cuando el
+  lugar no publicó horarios: desconocido **no** es cerrado.
+- **`rating` es `null`** cuando el worker no publicó agregado. Desconocido no es `0`: un lugar
+  que nadie calificó no tiene cero estrellas.
+- **`timezone` es la del lugar**, no la del teléfono. Si el cliente muestra "abre a las 08:00",
+  son las 08:00 de allá.
+
+Un lugar borrado, inactivo o inexistente responde **`404 not_found`** en los tres casos: la
+respuesta nunca confirma que un lugar existe. Un identificador con forma inválida también es
+`404`, no `422` — para el cliente, un uuid roto y un lugar que no está son el mismo hecho.
+
 ---
 
 ## 12. Reseñas
@@ -832,6 +890,34 @@ filtros son opcionales y el valor vacío lista todo.
 Ojo con la interacción ya conocida: moderar **no** borra. Una reseña `MODERATED` sigue visible
 para su autor y para el moderador, y desde la migración 20 el autor puede volver a reseñar ese
 lugar. Si querés impedir que alguien publique, eso es bloqueo de cuenta, no moderación.
+
+### 13.4 Perfil público
+
+| Método | Ruta | Autenticación | Qué hace |
+|---|---|---|---|
+| `GET` | `/v1/users/{coUser}` | pública | quién es y cuánto hizo |
+
+Es la pantalla que abre el nombre de un autor de reseña, o el de alguien a quien seguís. Hasta
+ahora esos vínculos no llevaban a ningún lado.
+
+```json
+{ "coUser": "695b5086-…", "name": "Ana", "memberSince": "2026-01-02T10:00:00Z",
+  "counts": { "reviews": 3, "checkins": 12, "followers": 5, "following": 8 } }
+```
+
+Tres reglas:
+
+- **El email nunca aparece.** Es una credencial, no un campo de perfil. Lo único público de una
+  cuenta es su nombre (`tx_name`, `null` si entró por Google/Apple y nunca lo dio) y desde cuándo
+  existe.
+- **Nada es relativo a quien pregunta.** No hay `followedByMe`: la lectura no tiene estado y una
+  respuesta cacheada no puede depender de quién la pidió. El cliente lo resuelve con
+  `/v1/follows`.
+- **Una cuenta suspendida o borrada responde `404`**, igual que una que nunca existió. Una
+  decisión de moderación no se publica como banner de estado: para un desconocido, esa cuenta
+  no está.
+
+Los contadores cuentan filas vivas: una reseña moderada no suma.
 
 ---
 

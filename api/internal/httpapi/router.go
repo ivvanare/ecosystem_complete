@@ -38,6 +38,8 @@ type Options struct {
 	EmailChange        EmailChangeService
 	Social             SocialAuthenticator
 	Discovery          PlaceDiscovery
+	PlaceDetail        PlaceDetailReader
+	PublicProfile      ProfileReader
 	Follows            SocialGraph
 	Checkins           Checkins
 	PlacesAdmin        PlaceBackoffice
@@ -168,6 +170,20 @@ func New(opts Options) http.Handler {
 	if opts.Discovery != nil {
 		placesHandler := &placesHandlers{discovery: opts.Discovery, logger: logger}
 		mux.HandleFunc("GET /v1/places", placesHandler.places)
+	}
+
+	// The detail is public for the same reason the list is: a client that can see a place in a
+	// result must be able to open it, and requiring a token would break that promise.
+	if opts.PlaceDetail != nil {
+		detailHandler := &placeDetailHandlers{reader: opts.PlaceDetail, logger: logger}
+		mux.HandleFunc("GET /v1/places/{coPlace}", detailHandler.detail)
+	}
+
+	// A profile is public for the same reason: a review already publishes its author as
+	// {id, name}, and a follow button that opens nothing is not a feature.
+	if opts.PublicProfile != nil {
+		profileHandler := &userProfileHandlers{reader: opts.PublicProfile, logger: logger}
+		mux.HandleFunc("GET /v1/users/{coUser}", profileHandler.user)
 	}
 
 	// Plan and invitation moderation (D21): the backoffice moderates, it does not participate.
@@ -344,7 +360,9 @@ func New(opts Options) http.Handler {
 
 	mux.HandleFunc("/", notFound)
 
-	return CORS(opts.CORSAllowedOrigins)(mux)
+	// The access log wraps everything, CORS included: a request that dies in the middleware is
+	// exactly the one worth seeing in the log.
+	return accessLog(CORS(opts.CORSAllowedOrigins)(mux), logger)
 }
 
 func notFound(w http.ResponseWriter, _ *http.Request) {

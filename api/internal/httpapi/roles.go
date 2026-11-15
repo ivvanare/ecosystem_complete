@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/ivvanare/ecosystem_complete/api/internal/audit"
 	"github.com/ivvanare/ecosystem_complete/api/internal/identity"
 )
 
@@ -14,11 +15,11 @@ import (
 // role is a different capability from assigning one: the seeds give role.manage to SUPERADMIN
 // alone, and ADMIN "no cambia roles ni permisos".
 type RoleAdmin interface {
-	CreateRole(ctx context.Context, actorID string, in identity.RoleInput) (identity.Role, error)
+	CreateRole(ctx context.Context, actorID string, in identity.RoleInput, meta audit.Event) (identity.Role, error)
 	Role(ctx context.Context, roleID string) (identity.Role, error)
-	UpdateRole(ctx context.Context, actorID, roleID string, in identity.RoleUpdate) (identity.Role, error)
-	RetireRole(ctx context.Context, actorID, roleID string) error
-	ReplaceRolePermissions(ctx context.Context, actorID, roleID string, codes []string) ([]string, error)
+	UpdateRole(ctx context.Context, actorID, roleID string, in identity.RoleUpdate, meta audit.Event) (identity.Role, error)
+	RetireRole(ctx context.Context, actorID, roleID string, meta audit.Event) error
+	ReplaceRolePermissions(ctx context.Context, actorID, roleID string, codes []string, meta audit.Event) ([]string, error)
 }
 
 // roleHandlers serves the role-authoring routes.
@@ -72,7 +73,7 @@ func (h *roleHandlers) createRole(w http.ResponseWriter, r *http.Request) {
 	}
 	role, err := h.service.CreateRole(r.Context(), actorID, identity.RoleInput{
 		Name: body.Name, Description: body.Description, Permissions: body.Permissions,
-	})
+	}, auditMeta(r))
 	if err != nil {
 		h.writeRoleError(w, err, "creating a role")
 		return
@@ -116,7 +117,7 @@ func (h *roleHandlers) updateRole(w http.ResponseWriter, r *http.Request) {
 	}
 	role, err := h.service.UpdateRole(r.Context(), actorID, roleID, identity.RoleUpdate{
 		Name: body.Name, Description: description, Status: body.Status,
-	})
+	}, auditMeta(r))
 	if err != nil {
 		h.writeRoleError(w, err, "updating a role")
 		return
@@ -135,7 +136,7 @@ func (h *roleHandlers) retireRole(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.service.RetireRole(r.Context(), actorID, roleID); err != nil {
+	if err := h.service.RetireRole(r.Context(), actorID, roleID, auditMeta(r)); err != nil {
 		h.writeRoleError(w, err, "retiring a role")
 		return
 	}
@@ -161,11 +162,16 @@ func (h *roleHandlers) replacePermissions(w http.ResponseWriter, r *http.Request
 		writeValidationError(w, []fieldError{{Field: "codes", Code: "required"}})
 		return
 	}
-	if _, err := h.service.ReplaceRolePermissions(r.Context(), actorID, roleID, *body.Codes); err != nil {
+	if _, err := h.service.ReplaceRolePermissions(r.Context(), actorID, roleID, *body.Codes, auditMeta(r)); err != nil {
 		h.writeRoleError(w, err, "replacing a role's permissions")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// auditMeta is the request context the audit log keeps: where it came from, not what was sent.
+func auditMeta(r *http.Request) audit.Event {
+	return audit.Event{IP: clientIP(r), UserAgent: r.UserAgent()}
 }
 
 // described turns the three states of the description field into the domain's shape: absent means
