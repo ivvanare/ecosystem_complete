@@ -947,6 +947,47 @@ Los contadores cuentan filas vivas: una reseña moderada no suma.
 
 ---
 
+### 13.5 El feed
+
+| Método | Ruta | Autenticación | Qué hace |
+|---|---|---|---|
+| `GET` | `/v1/feed?cursor&limit` | bearer | reseñas, check-ins y planes **públicos** de la gente que seguís |
+
+```json
+{ "data": [
+    { "kind": "review", "at": "2026-11-15T12:00:00Z",
+      "actor": { "id": "…", "name": "Ana" },
+      "coReview": "…", "place": { "id": "…", "title": "Arepera Chacao" },
+      "rating": 4, "comment": "Volví" },
+    { "kind": "checkin", "at": "…", "actor": { "id": "…", "name": "Ana" },
+      "coCheckin": "…", "place": { "id": "…", "title": "Arepera Chacao" } },
+    { "kind": "plan", "at": "…", "actor": { "id": "…", "name": "Ana" },
+      "plan": { "coRoute": "…", "name": "Cena del viernes",
+                "visibility": "PUBLIC", "scheduledAt": null } } ],
+  "nextCursor": null }
+```
+
+Cuatro reglas:
+
+- **`kind` decide el payload.** Tres valores cerrados: `review`, `checkin`, `plan`. Una reseña y
+  un check-in traen `place`; un plan trae `plan`.
+- **Acá sí se aplica el bloqueo.** Es la única lectura social que sabe quién mira, así que filtra
+  en las **dos** direcciones. El perfil público y el listado de reseñas por autor no pueden
+  hacerlo porque no tienen viewer.
+- **Nada se filtra.** Una reseña tiene que estar viva y `ACTIVE` y su lugar ser visible; un
+  check-in tiene que apuntar a un lugar visible; un plan tiene que ser `PUBLIC` y no estar
+  borrado. El feed es un atajo a cosas que ya podrías abrir tocándolas — nunca una forma de ver
+  algo distinto.
+- **Cursor, no `page`.** Un feed paginado por offset salta o repite filas apenas entra algo nuevo
+  mientras scrolleás. `nextCursor` es opaco: se devuelve tal cual y la página siguiente es
+  estrictamente más vieja. `null` significa que no queda nada. Un cursor que no decodifica es
+  `422` (`field: cursor`), nunca un reinicio silencioso en la primera página.
+
+Seguir a alguien no genera un evento propio ("Ana empezó a seguir a Luis"): quién sigue a quién es
+asunto de ellos dos, no del lector.
+
+---
+
 ## 14. Backoffice de lugares
 
 Cinco rutas, todas con bearer y permisos ya sembrados. El **Viewer de ownership** es el que

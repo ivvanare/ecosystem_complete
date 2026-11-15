@@ -22,6 +22,7 @@ import (
 	"github.com/ivvanare/ecosystem_complete/api/internal/db"
 	"github.com/ivvanare/ecosystem_complete/api/internal/device"
 	"github.com/ivvanare/ecosystem_complete/api/internal/emailchange"
+	"github.com/ivvanare/ecosystem_complete/api/internal/feed"
 	"github.com/ivvanare/ecosystem_complete/api/internal/follow"
 	"github.com/ivvanare/ecosystem_complete/api/internal/httpapi"
 	"github.com/ivvanare/ecosystem_complete/api/internal/identity"
@@ -242,6 +243,9 @@ func run() error {
 	// tapping one of those names led nowhere.
 	profiles := profile.New(profile.NewPostgresStore(pool))
 
+	// The social feed: reviews, check-ins and public plans of the accounts the caller follows.
+	feedService := feed.New(feed.NewPostgresStore(pool))
+
 	// Device registration. The sender that consumes these tokens is wired when the provider
 	// credentials exist; until then a token is stored and never used, which is harmless.
 	deviceStore := device.NewPostgresStore(pool)
@@ -281,6 +285,7 @@ func run() error {
 			PlaceDetail:        placeDetail,
 			PublicProfile:      profiles,
 			Devices:            deviceRegistry,
+			Feed:               feedService,
 			Follows:            followService,
 			Checkins:           checkinService,
 			PlacesAdmin:        placeBackoffice,
