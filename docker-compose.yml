@@ -180,12 +180,63 @@ services:
     networks:
       - melzone_network
 
+
+  # --- OBSERVABILIDAD ---
+  # Dozzle queda encendido: 23 MiB por ver los logs de los siete contenedores desde el browser es
+  # barato, y desde que el API escribe una línea por request con request_id es la herramienta que
+  # más se usa.
+  # Kuma queda detrás del perfil `observability`: 126 MiB —más que la base y el broker juntos— es
+  # demasiado para tenerlo siempre encendido en desarrollo. Se levanta cuando hace falta:
+  #   docker compose --profile observability up -d uptime-kuma
+  # Disponibilidad desde afuera. Monitorea /health/live (que no toca dependencias) y
+  # /health/ready (que agrega postgres y redis); sin esto, un proceso caído no deja ni una línea
+  # de log, porque no hay quien la escriba.
+  uptime-kuma:
+    profiles: ["observability"]
+    # Mayor 2, no `:1`: el tag v1 apunta a una línea que ya no recibe parches de seguridad, y el
+    # propio /setup lo avisa. Es el mismo criterio que `redis:7`: la mayor da parches, la versión
+    # exacta no.
+    image: louislam/uptime-kuma:2
+    container_name: melzone_uptime
+    restart: always
+    ports:
+      # Sólo en loopback: es una herramienta de operación, no un servicio del producto.
+      - "127.0.0.1:3001:3001"
+    volumes:
+      # La configuración y la historia de los monitores. Sin este volumen se pierden en cada
+      # `up`.
+      - kuma:/app/data
+    networks:
+      - melzone_network
+
+  # Visor de logs de los contenedores. Tiene sentido ahora que el API escribe una línea por
+  # request con request_id: sin eso, sólo se veían los errores de los handlers.
+  # Encendido por defecto: 23 MiB. Kuma, con 126, no lo está.
+  dozzle:
+    image: amir20/dozzle:latest
+    container_name: melzone_dozzle
+    restart: always
+    environment:
+      # Sólo los contenedores de este proyecto: el socket ve todo el host, el filtro no.
+      DOZZLE_FILTER: "label=com.docker.compose.project=melia"
+      DOZZLE_LEVEL: info
+    ports:
+      - "127.0.0.1:9999:8080"
+    volumes:
+      # `:ro` no es cosmético: ese socket es root-equivalente sobre el host.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - melzone_network
+
 volumes:
   # Datos de PostgreSQL. Se borra con `docker compose down -v`.
   melzone_pgdata:
   # Imágenes subidas por el panel. Sobrevive a `restart` y a recrear el contenedor; se borra
   # sólo con `down -v`, igual que los datos.
   media:
+  # Configuración e historia de Uptime Kuma. Se borra con `down -v`, y sólo existe cuando el
+  # perfil `observability` se usa.
+  kuma:
 
 networks:
   melzone_network:
