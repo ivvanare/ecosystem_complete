@@ -717,6 +717,41 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/users/{coUser}/reviews:
+    get:
+      tags: [Reviews]
+      operationId: listUserReviews
+      summary: The reviews one person wrote
+      description: |
+        What the profile's review counter points at. Public, like the profile: the same person
+        who can read a review on a place page can read the rest of that author's reviews.
+
+        Only live `ACTIVE` reviews appear, and only for places that are themselves visible — a
+        review of a retired place is not a fact about the reviewer that a stranger should read.
+
+        This read has no viewer, which decides two things. `viaFollowedAuthor` is always `false`
+        (it is viewer-relative, and there is no viewer here). And blocking cannot be applied:
+        blocks are enforced on the reads that know who is asking.
+
+        The author does not see their own moderated rows here either. The place-scoped read is
+        the one that shows an author what happened to their review, because that is where they
+        wrote it.
+      parameters:
+        - name: coUser
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: One page of the person's reviews, newest first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReviewPage" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/places/{coPlace}/reviews:
     get:
       tags: [Reviews]
@@ -3538,8 +3573,9 @@ components:
           additionalProperties: false
           required: [id, title]
           description: |
-            Present on the moderator listing only. A moderator may hold review.moderate
-            without place.update and cannot resolve a bare coPlace uuid.
+            Present on the moderator listing and on the by-author read. A moderator may hold
+            review.moderate without place.update, and a profile reader has no way to resolve a
+            bare coPlace uuid; both need the commercial title to render the row.
           properties:
             id: { type: string, format: uuid }
             title: { type: string, nullable: true }
