@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/ivvanare/ecosystem_complete/api/internal/activity"
 	"github.com/ivvanare/ecosystem_complete/api/internal/audit"
 	"github.com/ivvanare/ecosystem_complete/api/internal/blocks"
 	"github.com/ivvanare/ecosystem_complete/api/internal/checkin"
@@ -101,6 +102,9 @@ func run() error {
 	signupVerifier := signup.NewVerifier(signup.NewPostgresVerifier(pool), issuer)
 	signupVerifier.Auditor = auditor
 	signupVerifier.Logger = logger
+
+	// Activity dashboard (read-only projection over users, the security log and plans).
+	activityService := activity.New(activity.NewPostgresStore(pool))
 
 	identityStore := identity.NewPostgresStore(pool)
 	identityService := identity.New(identityStore, identityStore)
@@ -249,6 +253,7 @@ func run() error {
 			Identity:           identityService,
 			Admin:              identityService,
 			RoleAdmin:          identityService,
+			Activity:           activityService,
 			Invitations:        invitationSender,
 			Password:           passwordService,
 			EmailChange:        emailChangeService,

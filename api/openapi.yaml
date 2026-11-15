@@ -2410,6 +2410,33 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/ValidationError" }
 
+  /v1/admin/activity:
+    get:
+      tags: [Admin]
+      operationId: getActivity
+      summary: What is happening right now
+      description: |
+        Requires `admin.access`. A read-only projection over the tables the product already writes —
+        users, the security log and plans — so the panel does not build its own counters from three
+        endpoints and disagree with itself.
+
+        Three windows (`5m`, `1h`, `24h`) with signups, successful logins and plans created; the
+        size of the catalogue, live rows only (a moderated review does not count); and a feed of the
+        20 most recent events, newest first.
+
+        It does not stream: a client that wants it live re-reads on its own cadence, and a client
+        that misses a read has missed nothing else.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The snapshot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActivitySnapshot" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /v1/admin/permissions:
     get:
       tags: [Admin]
@@ -3092,6 +3119,43 @@ components:
         permissions:
           type: array
           items: { type: string }
+
+    ActivitySnapshot:
+      type: object
+      additionalProperties: false
+      required: [generatedAt, windows, totals, recent]
+      properties:
+        generatedAt: { type: string, format: date-time }
+        windows:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [window, signups, logins, plansCreated]
+            properties:
+              window: { type: string, enum: [5m, 1h, 24h] }
+              signups: { type: integer }
+              logins: { type: integer }
+              plansCreated: { type: integer }
+        totals:
+          type: object
+          additionalProperties: false
+          required: [users, places, plans, reviews]
+          properties:
+            users: { type: integer }
+            places: { type: integer }
+            plans: { type: integer }
+            reviews: { type: integer }
+        recent:
+          type: array
+          description: The newest events, newest first, capped at 20.
+          items:
+            type: object
+            additionalProperties: false
+            required: [kind, at]
+            properties:
+              kind: { type: string, enum: [signup, login, plan] }
+              at: { type: string, format: date-time }
 
     RoleInput:
       type: object
