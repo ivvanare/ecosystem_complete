@@ -158,7 +158,8 @@ func TestRoleShapesAreFieldErrors(t *testing.T) {
 		err  error
 		want string
 	}{
-		{identity.ErrInvalidRoleName, `"field":"name","code":"invalid"`},
+		{identity.ErrRoleNameRequired, `"field":"name","code":"required"`},
+		{identity.ErrRoleNameTooLong, `"field":"name","code":"too_long"`},
 		{identity.ErrInvalidRoleStatus, `"field":"status","code":"invalid"`},
 		{identity.ErrInvalidRolePermissions, `"field":"permissions","code":"invalid"`},
 	}
@@ -192,5 +193,51 @@ func TestAnUnexpectedFailureIs500(t *testing.T) {
 		rolePath+"/"+adminPlaceID, "")
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+}
+
+// The contract declares `codes` required, and a body without it must not empty a role: the same
+// omission on the user-roles route already answers 422 required.
+func TestReplacePermissionsRefusesABodyWithoutCodes(t *testing.T) {
+	for _, body := range []string{`{}`, `{"codes":null}`} {
+		service := &fakeRoles{role: identity.Role{ID: adminPlaceID, Name: "OPERADOR", Status: "ACTIVE"}}
+		rec := bearerDo(t, roleRouter(service), http.MethodPut, rolePath+"/"+adminPlaceID+"/permissions", body)
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("%s: status = %d (%s), want 422", body, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), `"field":"codes","code":"required"`) {
+			t.Fatalf("%s: body = %s", body, rec.Body.String())
+		}
+		if service.calls != 0 {
+			t.Fatalf("%s: the domain was asked to wipe the set", body)
+		}
+	}
+}
+
+// RoleUpdate declares `description: [string, null]`, so an explicit null clears it. A Go **string
+// cannot carry that through encoding/json: null and absent both land as a nil outer pointer.
+func TestUpdateRoleClearsAnExplicitNullDescription(t *testing.T) {
+	service := &fakeRoles{role: identity.Role{ID: adminPlaceID, Name: "OPERADOR", Status: "ACTIVE"}}
+	rec := bearerDo(t, roleRouter(service), http.MethodPatch, rolePath+"/"+adminPlaceID, `{"description":null}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	if service.gotUp.Description == nil {
+		t.Fatal(`{"description":null} arrived as "leave it alone"`)
+	}
+	if *service.gotUp.Description != nil {
+		t.Fatalf("description = %q, want cleared", **service.gotUp.Description)
+	}
+}
+
+// And an omitted description must still mean "leave it alone".
+func TestUpdateRoleLeavesAnOmittedDescriptionAlone(t *testing.T) {
+	service := &fakeRoles{role: identity.Role{ID: adminPlaceID, Name: "OPERADOR", Status: "ACTIVE"}}
+	rec := bearerDo(t, roleRouter(service), http.MethodPatch, rolePath+"/"+adminPlaceID, `{"name":"OTRO"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	if service.gotUp.Description != nil {
+		t.Fatal("an omitted description was treated as a change")
 	}
 }

@@ -79,6 +79,9 @@ type AdminStore interface {
 	ListUsers(ctx context.Context, filter UserFilter) (Page[UserSummary], error)
 	UpdateUser(ctx context.Context, userID string, name *string, status *string) (UserSummary, error)
 	SetRoles(ctx context.Context, userID string, roles []string) ([]string, error)
+	// RolesCarrying names which of the given roles grant the permission, so an assignment cannot
+	// hand out a capability the actor does not hold.
+	RolesCarrying(ctx context.Context, permission string, roleNames []string) ([]string, error)
 	ListAuditEvents(ctx context.Context, filter AuditFilter) (Page[AuditEvent], error)
 }
 
@@ -110,6 +113,9 @@ func (s *Service) UpdateUser(ctx context.Context, actorID, userID string, name, 
 // The audit row names the actor (the administrator) and the subject (the user), because a
 // capability change that nobody can trace is indistinguishable from a compromise.
 func (s *Service) SetRoles(ctx context.Context, actorID, userID string, roles []string, meta audit.Event) ([]string, error) {
+	if err := s.requireGrantable(ctx, actorID, roles); err != nil {
+		return nil, err
+	}
 	effective, err := s.Admin.SetRoles(ctx, userID, roles)
 	if err != nil {
 		return nil, err

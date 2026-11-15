@@ -315,7 +315,11 @@ responde `401`, no `404`.
 
 ## 7. Administración
 
-Todas requieren `admin.access`; sin él → `403 permission_denied`.
+Las rutas de **lectura y gestión de usuarios** requieren `admin.access`; sin él → `403
+permission_denied`. Las cinco rutas de **autoría de roles** (§7.1) requieren `role.manage`, que el
+seed da solo a `SUPERADMIN`: `ADMIN` fue sembrado sin él a propósito ("no cambia roles ni
+permisos"). Asignar un rol que otorga `role.manage` (es decir `SUPERADMIN`) también exige tenerlo;
+si no, `403`.
 
 | Método | Ruta | Qué hace |
 |---|---|---|

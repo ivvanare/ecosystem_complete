@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -32,14 +33,19 @@ type roleRequest struct {
 	Permissions []string `json:"permissions"`
 }
 
+// rolePatchRequest carries an explicit null for description, which a **string cannot: encoding/json
+// turns both an omitted field and a null into a nil outer pointer, so "clear it deliberately" would
+// be dead code. RawMessage keeps the three states apart by hand.
 type rolePatchRequest struct {
-	Name        *string  `json:"name"`
-	Description **string `json:"description"`
-	Status      *string  `json:"status"`
+	Name        *string         `json:"name"`
+	Description json.RawMessage `json:"description"`
+	Status      *string         `json:"status"`
 }
 
 type rolePermissionsRequest struct {
-	Codes []string `json:"codes"`
+	// A pointer, because the contract declares `codes` required: a missing key and a null both
+	// decode to a nil slice, and treating that as "the empty set" wipes a role's permissions.
+	Codes *[]string `json:"codes"`
 }
 
 func roleShape(role identity.Role) roleResponse {
@@ -103,8 +109,13 @@ func (h *roleHandlers) updateRole(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
+	description, ok := described(body.Description)
+	if !ok {
+		writeValidationError(w, []fieldError{{Field: "description", Code: "invalid"}})
+		return
+	}
 	role, err := h.service.UpdateRole(r.Context(), actorID, roleID, identity.RoleUpdate{
-		Name: body.Name, Description: body.Description, Status: body.Status,
+		Name: body.Name, Description: description, Status: body.Status,
 	})
 	if err != nil {
 		h.writeRoleError(w, err, "updating a role")
@@ -146,11 +157,33 @@ func (h *roleHandlers) replacePermissions(w http.ResponseWriter, r *http.Request
 	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
-	if _, err := h.service.ReplaceRolePermissions(r.Context(), actorID, roleID, body.Codes); err != nil {
+	if body.Codes == nil {
+		writeValidationError(w, []fieldError{{Field: "codes", Code: "required"}})
+		return
+	}
+	if _, err := h.service.ReplaceRolePermissions(r.Context(), actorID, roleID, *body.Codes); err != nil {
 		h.writeRoleError(w, err, "replacing a role's permissions")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// described turns the three states of the description field into the domain's shape: absent means
+// "leave it alone" (nil), null means "clear it" (a pointer to a nil string), and a string means set.
+func described(raw json.RawMessage) (**string, bool) {
+	if len(raw) == 0 {
+		return nil, true
+	}
+	if string(raw) == "null" {
+		var cleared *string
+		return &cleared, true
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err != nil {
+		return nil, false
+	}
+	value := &text
+	return &value, true
 }
 
 // roleParam validates the path id the same way every other admin route does.
@@ -185,8 +218,14 @@ func (h *roleHandlers) writeRoleError(w http.ResponseWriter, err error, action s
 		}})
 	case errors.Is(err, identity.ErrRoleNameTaken):
 		writeValidationError(w, []fieldError{{Field: "name", Code: "duplicate"}})
-	case errors.Is(err, identity.ErrInvalidRoleName):
-		writeValidationError(w, []fieldError{{Field: "name", Code: "invalid"}})
+	case errors.Is(err, identity.ErrRoleNameRequired):
+		writeValidationError(w, []fieldError{{Field: "name", Code: "required"}})
+	case errors.Is(err, identity.ErrRoleNameTooLong):
+		writeValidationError(w, []fieldError{{Field: "name", Code: "too_long"}})
+	case errors.Is(err, identity.ErrRoleManageRequired):
+		// Assigning a role that carries role.manage requires holding it: otherwise the separation
+		// between admin.access and role.manage is one request away from being bypassed.
+		writeError(w, http.StatusForbidden, "permission_denied", "Granting role.manage requires role.manage.")
 	case errors.Is(err, identity.ErrInvalidRoleStatus):
 		writeValidationError(w, []fieldError{{Field: "status", Code: "invalid"}})
 	case errors.As(err, &unknown):

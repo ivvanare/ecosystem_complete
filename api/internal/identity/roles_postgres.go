@@ -41,6 +41,9 @@ func (s *PostgresStore) CreateRole(ctx context.Context, actorID string, in RoleI
 			}
 			return fmt.Errorf("inserting role: %w", err)
 		}
+		if err := ensurePermissions(ctx, tx, in.Permissions); err != nil {
+			return err
+		}
 		return linkPermissions(ctx, tx, roleID, in.Permissions)
 	})
 	if err != nil {
@@ -98,15 +101,37 @@ func (s *PostgresStore) UpdateRole(ctx context.Context, actorID, roleID string, 
 	return s.Role(ctx, roleID)
 }
 
-// RetireRole retires the role logically. Its capabilities stop on the next request, because access
-// resolution filters retired roles: no cache to invalidate and nothing to remember.
+// RetireRole retires the role logically, refusing while anyone still holds it. The count and the
+// retire share one transaction: the role row is locked FOR UPDATE, which also serializes against a
+// concurrent assignment taking its KEY SHARE lock, so nobody can slip in between.
 func (s *PostgresStore) RetireRole(ctx context.Context, actorID, roleID string) error {
 	var touched string
 	err := s.withActor(ctx, actorID, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `
-			UPDATE seg.tb_role SET dt_deleted_at = now(), dt_updated_at = now()
+		if err := tx.QueryRow(ctx, `
+			SELECT co_role::text FROM seg.tb_role
 			 WHERE co_role = $1::uuid AND dt_deleted_at IS NULL
-			RETURNING co_role::text`, roleID).Scan(&touched)
+			 FOR UPDATE`, roleID).Scan(&touched); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrRoleNotFound
+			}
+			return fmt.Errorf("locking the role: %w", err)
+		}
+		var users int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*) FROM seg.tb_user_role ur
+			JOIN seg.tb_user u ON u.co_user = ur.co_user AND u.dt_deleted_at IS NULL
+			WHERE ur.co_role = $1::uuid`, roleID).Scan(&users); err != nil {
+			return fmt.Errorf("counting the users of a role: %w", err)
+		}
+		if users > 0 {
+			return &RoleInUseError{Users: users}
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE seg.tb_role SET dt_deleted_at = now(), dt_updated_at = now()
+			 WHERE co_role = $1::uuid`, roleID); err != nil {
+			return fmt.Errorf("retiring the role: %w", err)
+		}
+		return nil
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -117,12 +142,22 @@ func (s *PostgresStore) RetireRole(ctx context.Context, actorID, roleID string) 
 	return nil
 }
 
-// ReplaceRolePermissions replaces the whole composition in one transaction: a half-applied set is a
-// role that grants something nobody chose.
+// ReplaceRolePermissions replaces the whole composition in one transaction and writes only the
+// difference: deleting every row and re-inserting the kept ones would record phantom DELETE+INSERT
+// pairs in the history for permissions nobody touched.
 func (s *PostgresStore) ReplaceRolePermissions(ctx context.Context, actorID, roleID string, codes []string) ([]string, error) {
 	err := s.withActor(ctx, actorID, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `DELETE FROM seg.tb_role_permission WHERE co_role = $1::uuid`, roleID); err != nil {
-			return fmt.Errorf("clearing permissions: %w", err)
+		if err := ensurePermissions(ctx, tx, codes); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			DELETE FROM seg.tb_role_permission rp
+			 WHERE rp.co_role = $1::uuid
+			   AND rp.co_permission NOT IN (
+			         SELECT p.co_permission FROM seg.tb_permission p
+			          WHERE p.tx_code = ANY($2) AND p.tx_status = 'ACTIVE' AND p.dt_deleted_at IS NULL)`,
+			roleID, codes); err != nil {
+			return fmt.Errorf("removing permissions: %w", err)
 		}
 		return linkPermissions(ctx, tx, roleID, codes)
 	})
@@ -134,6 +169,35 @@ func (s *PostgresStore) ReplaceRolePermissions(ctx context.Context, actorID, rol
 		return nil, err
 	}
 	return role.Permissions, nil
+}
+
+// RolesCarrying returns which of the named live roles grant the permission.
+func (s *PostgresStore) RolesCarrying(ctx context.Context, permission string, roleNames []string) ([]string, error) {
+	if len(roleNames) == 0 {
+		return nil, nil
+	}
+	rows, err := s.Pool.Query(ctx, `
+		SELECT DISTINCT r.tx_name
+		FROM seg.tb_role r
+		JOIN seg.tb_role_permission rp ON rp.co_role = r.co_role
+		JOIN seg.tb_permission p ON p.co_permission = rp.co_permission
+		WHERE r.tx_name = ANY($1)
+		  AND r.tx_status = 'ACTIVE' AND r.dt_deleted_at IS NULL
+		  AND p.tx_code = $2 AND p.tx_status = 'ACTIVE' AND p.dt_deleted_at IS NULL`, roleNames, permission)
+	if err != nil {
+		return nil, fmt.Errorf("resolving the roles carrying a permission: %w", err)
+	}
+	defer rows.Close()
+
+	carrying := make([]string, 0, 2)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scanning a role: %w", err)
+		}
+		carrying = append(carrying, name)
+	}
+	return carrying, rows.Err()
 }
 
 // RoleUserCount counts the users still holding the role, live accounts only.
@@ -174,8 +238,46 @@ func (s *PostgresStore) UnknownPermissions(ctx context.Context, codes []string) 
 	return unknown, rows.Err()
 }
 
-// linkPermissions resolves active permission codes to ids and links them. The JOIN is the
-// validation: a code that does not resolve inserts nothing, and the caller has already refused it.
+// ensurePermissions refuses codes the catalogue does not carry, inside the same transaction as the
+// write: the service validates first for a clean 422, but a permission retired between that check
+// and this insert would otherwise be dropped without a word.
+func ensurePermissions(ctx context.Context, tx pgx.Tx, codes []string) error {
+	if len(codes) == 0 {
+		return nil
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT tx_code FROM seg.tb_permission
+		 WHERE tx_code = ANY($1) AND tx_status = 'ACTIVE' AND dt_deleted_at IS NULL`, codes)
+	if err != nil {
+		return fmt.Errorf("resolving permissions: %w", err)
+	}
+	resolved := make(map[string]struct{}, len(codes))
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			rows.Close()
+			return fmt.Errorf("scanning permission: %w", err)
+		}
+		resolved[code] = struct{}{}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("resolving permissions: %w", err)
+	}
+	missing := make([]string, 0, 2)
+	for _, code := range codes {
+		if _, ok := resolved[code]; !ok {
+			missing = append(missing, code)
+		}
+	}
+	if len(missing) > 0 {
+		return &UnknownPermissionError{Codes: missing}
+	}
+	return nil
+}
+
+// linkPermissions resolves active permission codes to ids and links them, leaving an existing link
+// alone so the history records only what actually changed.
 func linkPermissions(ctx context.Context, tx pgx.Tx, roleID string, codes []string) error {
 	if len(codes) == 0 {
 		return nil

@@ -30,23 +30,32 @@ field `permissions`, code `unknown` — never silently dropped.
 same `422` as on create.
 
 **S4 — Permissions are replaced as a whole set.** `PUT .../permissions` takes
-`{codes: [...]}` and replaces the composition in one transaction, like the menu and the attributes:
-a half-applied permission set is a role that grants something nobody chose. The response is `204`.
+`{codes: [...]}` — **the key is required**: a body without it is `422 field: codes, code: required`,
+because a missing key must never mean "strip the role". The composition is replaced in one
+transaction and only the **difference** is written, so a permission that stays produces no history
+row: recording a `DELETE` plus an `INSERT` for something nobody touched would make the audit say
+the opposite of what happened. The response is `204`.
 
 **S5 — A role with users is not deleted, it is reported.** `DELETE` retires the role logically
 (which already revokes its capabilities on the next request, because `Access` filters deleted
-roles). If any user still holds it, the answer is `409 role_in_use` with the count in `details`,
-so a human decides before anyone loses access. Physical deletion is never offered.
+roles). If any **live** user still holds it, the answer is `409 role_in_use` with the count in
+`details`, so a human decides before anyone loses access. The count and the retire share one
+transaction, and the role row is locked `FOR UPDATE` — which also serializes against a concurrent
+assignment, so nobody can slip in between. A soft-deleted user's assignment is inert and is not
+counted; the row stays for the audit. Physical deletion is never offered.
 
 **S6 — The system role is protected, because the alternative is a lockout.** `SUPERADMIN` cannot
 be renamed, cannot be deleted, and its permission set must always contain `role.manage`. Any
 attempt is `409 role_protected`. There is no path through this API that removes the last way back
 into role management.
 
-**S7 — Every write is attributable.** All writes run with the actor set
-(`set_config('app.current_user_id')`), so `seg.tb_role_permission_history` records who changed the
-composition and when. The role row itself has no history table and none is invented here: the
-point-in-time set is fixed by ledger 07.
+**S7 — Every write is attributable, and granting capability needs having it.** All writes run with
+the actor set (`set_config('app.current_user_id')`), so `seg.tb_role_permission_history` records who
+changed the composition and when. The role row itself has no history table and none is invented
+here: the point-in-time set is fixed by ledger 07.
+Assigning a role that carries `role.manage` requires holding it (`403` otherwise): without that
+guard the seeded `ADMIN` — deliberately given `admin.access` and not `role.manage` — grants itself
+`SUPERADMIN` in one request and the separation is decorative.
 
 **S8 — Tests without services.** The validation rules are pure functions; the contract test holds
 the routes and codes to the documentation; the SQL is proven on the live database inside a

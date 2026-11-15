@@ -3,6 +3,7 @@ package identity
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -29,8 +30,14 @@ func (f *fakeRoleStore) UpdateRole(_ context.Context, _, _ string, in RoleUpdate
 	f.gotUp = in
 	return f.role, f.err
 }
+
+// RetireRole mirrors the store's contract: the count and the retire share one transaction there,
+// so the refusal is the store's answer, not the service's.
 func (f *fakeRoleStore) RetireRole(context.Context, string, string) error {
 	f.calls++
+	if f.users > 0 {
+		return &RoleInUseError{Users: f.users}
+	}
 	return f.err
 }
 func (f *fakeRoleStore) ReplaceRolePermissions(_ context.Context, _, _ string, codes []string) ([]string, error) {
@@ -58,14 +65,26 @@ func TestRoleNamesAreTrimmedAndBounded(t *testing.T) {
 		t.Fatalf("name = %q, want it trimmed", store.gotIn.Name)
 	}
 
-	for _, name := range []string{"", "   ", string(make([]byte, 61))} {
+	for name, want := range map[string]error{
+		"":                      ErrRoleNameRequired,
+		"   ":                   ErrRoleNameRequired,
+		strings.Repeat("a", 61): ErrRoleNameTooLong,
+		strings.Repeat("á", 61): ErrRoleNameTooLong,
+	} {
 		store := &fakeRoleStore{}
-		if _, err := roleService(store).CreateRole(context.Background(), "root", RoleInput{Name: name}); !errors.Is(err, ErrInvalidRoleName) {
-			t.Fatalf("name %q: err = %v, want ErrInvalidRoleName", name, err)
+		if _, err := roleService(store).CreateRole(context.Background(), "root", RoleInput{Name: name}); !errors.Is(err, want) {
+			t.Fatalf("name %q: err = %v, want %v", name, err, want)
 		}
 		if store.calls != 0 {
 			t.Fatalf("name %q reached the store", name)
 		}
+	}
+
+	// Sixty characters of accented letters are sixty characters, not a hundred and twenty bytes.
+	accented := strings.Repeat("é", 60)
+	accentedStore := &fakeRoleStore{role: Role{ID: "r1", Name: accented, Status: "ACTIVE"}}
+	if _, err := roleService(accentedStore).CreateRole(context.Background(), "root", RoleInput{Name: accented}); err != nil {
+		t.Fatalf("a 60-character name was refused: %v", err)
 	}
 }
 
@@ -123,9 +142,6 @@ func TestARoleWithUsersIsNotRetired(t *testing.T) {
 	var inUse *RoleInUseError
 	if !errors.As(err, &inUse) || inUse.Users != 2 {
 		t.Fatalf("err = %v, want RoleInUseError{2}", err)
-	}
-	if store.calls != 0 {
-		t.Fatal("the role was retired over the heads of its users")
 	}
 }
 

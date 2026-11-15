@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // SystemRole is the role the system protects from itself: it cannot be renamed, retired, or left
@@ -23,10 +24,11 @@ var (
 	ErrRoleProtected = errors.New("identity: the system role is protected")
 	// ErrRoleNameTaken is a duplicate among live roles.
 	ErrRoleNameTaken = errors.New("identity: a live role already has that name")
-	// ErrInvalidRoleName, ErrInvalidRoleStatus and ErrInvalidRolePermissions are the edge
-	// validations of a role write. Separate sentinels because the transport answers with the field
-	// that failed, and one shared error would have to guess it.
-	ErrInvalidRoleName        = errors.New("identity: invalid role name")
+	// ErrRoleNameRequired, ErrRoleNameTooLong, ErrInvalidRoleStatus and ErrInvalidRolePermissions
+	// are the edge validations of a role write. Separate sentinels because the transport answers
+	// with the field and the field code that failed, and a shared error would have to guess them.
+	ErrRoleNameRequired       = errors.New("identity: the role name is required")
+	ErrRoleNameTooLong        = errors.New("identity: the role name is too long")
 	ErrInvalidRoleStatus      = errors.New("identity: invalid role status")
 	ErrInvalidRolePermissions = errors.New("identity: invalid permission set")
 )
@@ -131,13 +133,8 @@ func (s *Service) RetireRole(ctx context.Context, actorID, roleID string) error 
 	if current.Name == SystemRole {
 		return ErrRoleProtected
 	}
-	users, err := s.RoleAuthor.RoleUserCount(ctx, roleID)
-	if err != nil {
-		return err
-	}
-	if users > 0 {
-		return &RoleInUseError{Users: users}
-	}
+	// The count and the retire happen in one transaction inside the store: counting here would let
+	// a concurrent assignment slip between the two.
 	return s.RoleAuthor.RetireRole(ctx, actorID, roleID)
 }
 
@@ -173,6 +170,35 @@ func (s *Service) ReplaceRolePermissions(ctx context.Context, actorID, roleID st
 
 // requirePermissions refuses codes the catalogue does not carry: a silently dropped permission is
 // a role that does less than the operator believes.
+// ErrRoleManageRequired refuses a role assignment that would hand out the capability that manages
+// roles to someone who does not have it: without this, a caller with admin.access grants itself
+// SUPERADMIN in one hop and the separation is theatre.
+var ErrRoleManageRequired = errors.New("identity: granting role.manage requires role.manage")
+
+// requireGrantable refuses to assign a role that carries role.manage to an actor who lacks it.
+func (s *Service) requireGrantable(ctx context.Context, actorID string, roleNames []string) error {
+	if len(roleNames) == 0 {
+		return nil
+	}
+	carrying, err := s.Admin.RolesCarrying(ctx, ManagedPermission, roleNames)
+	if err != nil {
+		return err
+	}
+	if len(carrying) == 0 {
+		return nil
+	}
+	access, err := s.Store.Access(ctx, actorID)
+	if err != nil {
+		return err
+	}
+	for _, permission := range access.Permissions {
+		if permission == ManagedPermission {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: %v", ErrRoleManageRequired, carrying)
+}
+
 func (s *Service) requirePermissions(ctx context.Context, codes []string) error {
 	if len(codes) == 0 {
 		return nil
@@ -191,10 +217,12 @@ func (s *Service) requirePermissions(ctx context.Context, codes []string) error 
 func validateRoleName(name string) (string, error) {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
-		return "", fmt.Errorf("%w: the name is required", ErrInvalidRoleName)
+		return "", ErrRoleNameRequired
 	}
-	if len(trimmed) > 60 {
-		return "", fmt.Errorf("%w: the name is longer than 60 characters", ErrInvalidRoleName)
+	// Characters, not bytes: openapi.yaml says maxLength 60, and a name of accented letters must
+	// not be refused for encoding to two bytes each.
+	if utf8.RuneCountInString(trimmed) > 60 {
+		return "", ErrRoleNameTooLong
 	}
 	return trimmed, nil
 }
