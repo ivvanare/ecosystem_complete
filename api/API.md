@@ -366,6 +366,13 @@ si no, `403`.
 | `DELETE` | `/v1/admin/roles/{coRole}` | retirar (lógico) |
 | `PUT` | `/v1/admin/roles/{coRole}/permissions` | reemplazar el conjunto de permisos |
 | `GET` | `/v1/admin/audit-events?page&limit&event&userId&emailHash&from&to` | bitácora, más reciente primero |
+| `GET` | `/v1/admin/activity` | tablero: altas, accesos y planes de los últimos 5m/1h/24h + totales + feed |
+
+`GET /v1/admin/activity` es una **proyección de lectura** sobre lo que el producto ya escribe: no
+tiene tabla propia ni contadores guardados, para que no pueda discrepar de los datos. Devuelve tres
+ventanas (`5m`, `1h`, `24h`) con altas, logins exitosos y planes creados; el tamaño del catálogo
+(sólo filas vivas: una reseña moderada no cuenta); y un feed de los 20 eventos más recientes. **No
+es un stream**: el panel lo relee a su ritmo, y quien se pierde una lectura no se pierde nada más.
 
 La bitácora es **append-only** y no tiene FK a usuarios. Un cambio de rol deja dos rastros
 distintos: la composición y la asignación van a sus tablas de historial con actor, y la fila del rol

@@ -55,6 +55,7 @@ type Options struct {
 	Reviews            ReviewService
 	Realtime           realtime.Publisher
 	RoleAdmin          RoleAdmin
+	Activity           ActivityReader
 }
 
 const defaultProbeTimeout = 2 * time.Second
@@ -352,6 +353,15 @@ func New(opts Options) http.Handler {
 	// public; mutations require the bearer, and moderation reuses the seeded
 	// review.moderate capability (S12). Like the broker-gated routes, the routes are
 	// absent rather than accepted-and-failed when the service is not wired (T10).
+
+	// The dashboard projection is a backoffice read: admin.access is exactly the capability it
+	// needs, and it is absent rather than accepted-and-failed when the store is not wired.
+	if opts.Activity != nil && opts.Authorizer != nil && opts.TokenParser != nil {
+		activityHandler := &activityHandlers{service: opts.Activity, logger: logger}
+		mux.HandleFunc("GET /v1/admin/activity",
+			RequireAuth(opts.TokenParser,
+				RequirePermission(opts.Authorizer, AdminPermission, logger, activityHandler.activity)))
+	}
 
 	// Role authoring is its own capability (role.manage), not the backoffice's admin.access, and it
 	// does not need the identity reader: it stands alone so the wiring matches the permission.
