@@ -136,9 +136,38 @@ WHERE p.dt_deleted_at IS NULL
 const listColumns = `
 SELECT p.co_place, p.tx_title, p.co_place_category, c.tx_name,
        p.tx_country, p.tx_region, p.nu_latitude, p.nu_longitude, p.tx_address,
-       ST_Distance(p.co_location, $1::geography) AS distance_m
+       ST_Distance(p.co_location, $1::geography) AS distance_m,
+       cover.tx_url AS cover_url,
+       -- Unknown hours are NULL, never false: a place that published none is not closed.
+       CASE WHEN NOT EXISTS (SELECT 1 FROM core.tb_place_schedule h WHERE h.co_place = p.co_place)
+            THEN NULL
+            ELSE EXISTS (
+              SELECT 1
+                FROM core.tb_place_schedule sc
+               WHERE sc.co_place = p.co_place
+                 AND sc.nu_day_of_week = EXTRACT(ISODOW FROM (now() AT TIME ZONE p.tx_timezone))
+                 AND (
+                   (sc.dt_close_time > sc.dt_open_time
+                     AND (now() AT TIME ZONE p.tx_timezone)::time
+                         BETWEEN sc.dt_open_time AND sc.dt_close_time)
+                   OR
+                   (sc.dt_close_time <= sc.dt_open_time
+                     AND ((now() AT TIME ZONE p.tx_timezone)::time >= sc.dt_open_time
+                       OR (now() AT TIME ZONE p.tx_timezone)::time <= sc.dt_close_time))
+                 ))
+       END AS open_now
 FROM core.tb_place p
 JOIN core.tb_place_category c ON c.co_place_category = p.co_place_category
+-- One row, one image: the cover if there is one, else the first gallery photo. The cap is
+-- what keeps it a lateral lookup per row instead of a load of every photo in the page.
+LEFT JOIN LATERAL (
+    SELECT ph.tx_url
+      FROM core.tb_place_photo ph
+     WHERE ph.co_place = p.co_place
+       AND ph.dt_deleted_at IS NULL AND ph.tx_status = 'ACTIVE'
+     ORDER BY (ph.tx_type = 'COVER') DESC, ph.nu_order, ph.dt_created_at
+     LIMIT 1
+) cover ON TRUE
 WHERE p.dt_deleted_at IS NULL
   AND p.tx_status = 'ACTIVE'
   AND ($2::char(2) IS NULL OR p.tx_country = $2::char(2))
@@ -258,7 +287,7 @@ func (s *PostgresStore) List(ctx context.Context, q listStoreQuery) ([]ListRow, 
 		if err := rows.Scan(
 			&row.ID, &row.Title, &row.CategoryID, &row.CategoryName,
 			&row.Country, &row.Region, &row.Latitude, &row.Longitude, &row.Address,
-			&row.DistanceM,
+			&row.DistanceM, &row.CoverURL, &row.OpenNow,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scanning place: %w", err)
 		}
@@ -275,9 +304,35 @@ func (s *PostgresStore) List(ctx context.Context, q listStoreQuery) ([]ListRow, 
 const byIDsQuery = `
 SELECT p.co_place, p.tx_title, p.co_place_category, c.tx_name,
        p.tx_country, p.tx_region, p.nu_latitude, p.nu_longitude, p.tx_address,
-       ST_Distance(p.co_location, $1::geography) AS distance_m
+       ST_Distance(p.co_location, $1::geography) AS distance_m,
+       cover.tx_url AS cover_url,
+       CASE WHEN NOT EXISTS (SELECT 1 FROM core.tb_place_schedule h WHERE h.co_place = p.co_place)
+            THEN NULL
+            ELSE EXISTS (
+              SELECT 1
+                FROM core.tb_place_schedule sc
+               WHERE sc.co_place = p.co_place
+                 AND sc.nu_day_of_week = EXTRACT(ISODOW FROM (now() AT TIME ZONE p.tx_timezone))
+                 AND (
+                   (sc.dt_close_time > sc.dt_open_time
+                     AND (now() AT TIME ZONE p.tx_timezone)::time
+                         BETWEEN sc.dt_open_time AND sc.dt_close_time)
+                   OR
+                   (sc.dt_close_time <= sc.dt_open_time
+                     AND ((now() AT TIME ZONE p.tx_timezone)::time >= sc.dt_open_time
+                       OR (now() AT TIME ZONE p.tx_timezone)::time <= sc.dt_close_time))
+                 ))
+       END AS open_now
 FROM core.tb_place p
 JOIN core.tb_place_category c ON c.co_place_category = p.co_place_category
+LEFT JOIN LATERAL (
+    SELECT ph.tx_url
+      FROM core.tb_place_photo ph
+     WHERE ph.co_place = p.co_place
+       AND ph.dt_deleted_at IS NULL AND ph.tx_status = 'ACTIVE'
+     ORDER BY (ph.tx_type = 'COVER') DESC, ph.nu_order, ph.dt_created_at
+     LIMIT 1
+) cover ON TRUE
 WHERE p.dt_deleted_at IS NULL
   AND p.tx_status = 'ACTIVE'
   AND p.co_place = ANY($2::uuid[])`
@@ -300,7 +355,7 @@ func (s *PostgresStore) ByIDs(ctx context.Context, near geo.Coordinate, ids []st
 		if err := rows.Scan(
 			&row.ID, &row.Title, &row.CategoryID, &row.CategoryName,
 			&row.Country, &row.Region, &row.Latitude, &row.Longitude, &row.Address,
-			&row.DistanceM,
+			&row.DistanceM, &row.CoverURL, &row.OpenNow,
 		); err != nil {
 			return nil, fmt.Errorf("scanning ranked place: %w", err)
 		}

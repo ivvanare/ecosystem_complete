@@ -159,7 +159,9 @@ type listBody struct {
 			Average float64 `json:"average"`
 			Count   int     `json:"count"`
 		} `json:"rating"`
-		TrendingRank *int `json:"trendingRank"`
+		TrendingRank *int    `json:"trendingRank"`
+		CoverURL     *string `json:"coverUrl"`
+		OpenNow      *bool   `json:"openNow"`
 	} `json:"data"`
 }
 
@@ -277,6 +279,38 @@ func TestPlacesListMapsRows(t *testing.T) {
 
 // §8 item 7 (transport half): sortApplied and degraded echo the order that actually
 // ran, so a client can tell a cold ranking from an unpopular place.
+// The first screen is a list, and a list row without an image and without an open/closed
+// badge is text with stars. Both come from the detail's own rules, never a second copy.
+func TestPlacesListCarriesTheCoverAndTheOpenFlag(t *testing.T) {
+	cover := "/media/places/p1/cover.png"
+	open := true
+	discovery := &fakeDiscovery{listResult: places.ListResult{
+		Rows: []places.ListRow{
+			{ID: "p1", Title: "Con foto y horario", CategoryID: "c1", CategoryName: "Arepera",
+				Country: "VE", Latitude: 10.48, Longitude: -66.9, CoverURL: &cover, OpenNow: &open},
+			{ID: "p2", Title: "Sin nada", CategoryID: "c2", CategoryName: "Hotel",
+				Country: "VE", Latitude: 10.48, Longitude: -66.9},
+		},
+		Total: 2, Page: 1, Limit: 20, SortApplied: places.SortDistance,
+	}}
+	rec := do(t, newPlacesHandler(discovery), http.MethodGet, "/v1/places?near=10.4806,-66.9036")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	body := decodeList(t, rec)
+	if body.Data[0].CoverURL == nil || *body.Data[0].CoverURL != cover {
+		t.Errorf("coverUrl = %v, want %q", body.Data[0].CoverURL, cover)
+	}
+	if body.Data[0].OpenNow == nil || !*body.Data[0].OpenNow {
+		t.Errorf("openNow = %v, want true", body.Data[0].OpenNow)
+	}
+	// Unknown is not false: a place with no photo and no hours reports null, not a lie.
+	if body.Data[1].CoverURL != nil || body.Data[1].OpenNow != nil {
+		t.Errorf("second row = %+v, want null cover and null openNow", body.Data[1])
+	}
+}
+
 func TestPlacesListEchoesSortAppliedAndDegraded(t *testing.T) {
 	discovery := &fakeDiscovery{listResult: places.ListResult{
 		Rows:  []places.ListRow{{ID: "p1", Title: "Alfa"}},
