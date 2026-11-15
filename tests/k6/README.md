@@ -12,9 +12,19 @@ what unit tests cannot see: a handler that passes `go test` can still melt under
 | `auth-flow.js` | One full journey through every auth case, reading the 6-digit code from Mailpit like a human would. 1 iteration. | **Yes** — two accounts per run, one of them deliberately locked |
 | `discovery.js` | The discovery read path under load: list by `near`, sorted by distance, map mode with `bbox`+`zoom` clusters, the public catalogues, and three requests the API must refuse (no locator, both locators, a one-character `q`). 5 VUs, 20s across two scenarios. | **No** — public GETs plus requests refused before any database work |
 | `plans.js` | One journey through the write path: register, read a place from discovery, create a plan, add the place, vote, read the ranking back, ask for the private channel's signature, and prove an anonymous read gets 401. 1 iteration. | **Yes** — one account, one plan and one vote per run |
+| `photos.js` | The multipart edge: a 200 KB upload stored and linked, a body past the 5 MB budget refused with `field: file`, the gallery replaced over the wire, and the photo retired. 1 iteration. | **Yes** — one image on disk and one row, retired at the end |
 
 `smoke.js` and `discovery.js` are safe against any environment, including production: they write
-nothing. `signup.js`, `auth-flow.js` and `plans.js` are not.
+nothing. `signup.js`, `auth-flow.js`, `plans.js` and `photos.js` are not.
+
+`photos.js` needs an account holding `place.update`, because a fresh signup has none. Grant it with
+the documented bootstrap command, then pass the credentials:
+
+```bash
+docker compose run --rm --entrypoint /usr/local/bin/bootstrap \
+  -e EMAIL=ana@melia.test -e ROLE=SUPERADMIN api
+ADMIN_EMAIL=ana@melia.test ADMIN_PASSWORD='...' k6 run tests/k6/photos.js
+```
 
 `auth-flow.js` is an integration suite, not a load test: one iteration walks the flow so a
 regression in any step fails loudly. It needs Mailpit reachable at `MAILPIT_URL`; that is
@@ -34,6 +44,12 @@ The locator is configurable (`K6_NEAR`, `K6_BBOX`) and defaults to the catalogue
 seeds, which is Caracas. Defaulting to Madrid made every query return an empty page and the checks
 still passed: an empty array is still an array. `total > 0` is now an assertion, so a run against
 an empty dataset fails instead of measuring nothing.
+
+`photos.js` is the only place the **size of the body** is part of the contract: 5 MB is the whole
+budget for the multipart request, so a file at the limit already crosses it. The script asserts
+both edges, and cleans up the photo it created. It also proved a practical rule: the local stack
+runs the image built by `docker compose up --build`, so a route merged today answers 404 until the
+container is rebuilt — the first run failed on exactly that and not on the script.
 
 `plans.js` is the same story on the write side: it needs a place, and it fails with a message
 instead of passing when the catalogue is empty. `PLACE_ID` short-circuits the lookup when CI
