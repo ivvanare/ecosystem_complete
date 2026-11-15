@@ -181,11 +181,13 @@ services:
       - melzone_network
 
 
-  # --- OBSERVABILIDAD (opt-in) ---
-  # Fuera del `up` por defecto: entre las dos suman más memoria que el resto del stack. Medido:
-  # Kuma 126 MiB y Dozzle 23 MiB, contra 51 de la base, 55 del broker y 5 del API. Se levantan
-  # cuando hacen falta:
-  #   docker compose --profile observability up -d uptime-kuma dozzle
+  # --- OBSERVABILIDAD ---
+  # Dozzle queda encendido: 23 MiB por ver los logs de los siete contenedores desde el browser es
+  # barato, y desde que el API escribe una línea por request con request_id es la herramienta que
+  # más se usa.
+  # Kuma queda detrás del perfil `observability`: 126 MiB —más que la base y el broker juntos— es
+  # demasiado para tenerlo siempre encendido en desarrollo. Se levanta cuando hace falta:
+  #   docker compose --profile observability up -d uptime-kuma
   # Disponibilidad desde afuera. Monitorea /health/live (que no toca dependencias) y
   # /health/ready (que agrega postgres y redis); sin esto, un proceso caído no deja ni una línea
   # de log, porque no hay quien la escriba.
@@ -209,8 +211,8 @@ services:
 
   # Visor de logs de los contenedores. Tiene sentido ahora que el API escribe una línea por
   # request con request_id: sin eso, sólo se veían los errores de los handlers.
+  # Encendido por defecto: 23 MiB. Kuma, con 126, no lo está.
   dozzle:
-    profiles: ["observability"]
     image: amir20/dozzle:latest
     container_name: melzone_dozzle
     restart: always
