@@ -186,7 +186,10 @@ services:
   # /health/ready (que agrega postgres y redis); sin esto, un proceso caído no deja ni una línea
   # de log, porque no hay quien la escriba.
   uptime-kuma:
-    image: louislam/uptime-kuma:1
+    # Mayor 2, no `:1`: el tag v1 apunta a una línea que ya no recibe parches de seguridad, y el
+    # propio /setup lo avisa. Es el mismo criterio que `redis:7`: la mayor da parches, la versión
+    # exacta no.
+    image: louislam/uptime-kuma:2
     container_name: melzone_uptime
     restart: always
     ports:
