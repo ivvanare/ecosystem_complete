@@ -87,7 +87,13 @@ type ListRow struct {
 	// DistanceM is the metres from the request point: computed in list mode, never
 	// fabricated.
 	DistanceM float64
-	Rating    *Rating
+	// CoverURL is the one image a row shows: the cover if there is one, else the first
+	// gallery photo. nil when the place published none.
+	CoverURL *string
+	// OpenNow is nil when the place published no hours at all. Unknown is not "closed":
+	// the list must not tell a user a place is shut because nobody wrote its hours.
+	OpenNow *bool
+	Rating  *Rating
 	// TrendingRank is set only when a zone ranking ordered the row.
 	TrendingRank *int
 }

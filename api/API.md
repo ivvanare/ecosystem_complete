@@ -547,7 +547,8 @@ GET /v1/places?near=10.4806,-66.9036&radius=2000&sort=distance&page=1&limit=20
       "country": "VE", "region": "VE-A",
       "latitude": 10.480594, "longitude": -66.903606,
       "address": "Calle 1", "distanceMeters": 940,
-      "rating": { "average": 4.6, "count": 128 }
+      "rating": { "average": 4.6, "count": 128 },
+      "coverUrl": "/media/places/9f1c/cover.png", "openNow": true
     }
   ]
 }
@@ -559,6 +560,14 @@ GET /v1/places?near=10.4806,-66.9036&radius=2000&sort=distance&page=1&limit=20
 - `rating` es `null` cuando el worker no publicó agregado para ese lugar; la ausencia no
   es un error. Nunca se calcula agregando reseñas en el pedido.
 - `trendingRank` solo aparece con `sort=trending` y ranking de zona existente.
+- `coverUrl` es **la imagen que muestra el row**: la portada si el lugar publicó una, si no su
+  primera foto de galería. `null` cuando no tiene ninguna — el cliente dibuja su placeholder.
+  Es la misma regla que usa el detalle, así que la miniatura de la lista y la galería del
+  detalle nunca discrepan sobre cuál es la primera foto.
+- `openNow` lo calcula la base en la zona horaria **del lugar**, igual que en el detalle y que
+  en el filtro `openAt`, incluyendo los horarios que cruzan la medianoche. Es `null` cuando el
+  lugar no publicó horarios: desconocido **no** es cerrado, y una lista no puede decirle a
+  alguien que un lugar está cerrado porque nadie escribió sus horas.
 
 `sort`: `distance` (por defecto, orden real por cercanía sobre el índice GiST), `rating`,
 `trending`. **`sortApplied` es el orden que efectivamente corrió**: si se pidió `trending`
@@ -1223,3 +1232,41 @@ Los tres requieren `place.update` y respetan el alcance por ownership.
 - La URL devuelta es relativa al origen del API (`/media/places/...`). Hoy los bytes viven en un
   **volumen nombrado de Docker** (`media:/app/media`); la interfaz de storage permite pasar a S3
   sin cambiar estos endpoints ni el contrato.
+
+---
+
+## 19. Dispositivos y push
+
+Un push necesita saber **a qué teléfono mandar**. Eso es todo lo que hace esta sección: registrar
+y dar de baja tokens de proveedor (FCM/APNs). No es una sesión.
+
+| Método | Ruta | Autenticación | Qué hace |
+|---|---|---|---|
+| `POST` | `/v1/devices` | bearer | registra el token, o refresca el que ya existía (`201`) |
+| `DELETE` | `/v1/devices/{coDevice}` | bearer, sólo el dueño | da de baja el dispositivo (`204`) |
+
+```http
+POST /v1/devices   { "token": "<token del proveedor>", "platform": "ANDROID" }
+→ 201 { "coDevice": "…", "platform": "ANDROID", "lastSeenAt": "2026-11-15T12:00:00Z" }
+```
+
+Cuatro reglas:
+
+- **Es idempotente por token.** Re-registrar el mismo dispositivo —en cada arranque de la app, y
+  cada vez que el proveedor rota el token— actualiza la fila. No se acumula una por arranque.
+- **Un token pertenece al dispositivo, no a la persona.** Si otro usuario inicia sesión en el
+  mismo teléfono, el token **se reasigna**. Dejarlo atado a la cuenta anterior mandaría las
+  notificaciones de alguien a un desconocido.
+- **El token se guarda en claro.** A diferencia del refresh token, que se verifica y por eso se
+  guarda hasheado, éste se **usa**: el emisor lo entrega tal cual al proveedor. Hashearlo lo
+  haría inutilizable para lo único que sirve.
+- **La baja es tuya o no existe.** Un dispositivo ajeno, ya dado de baja o inexistente responde
+  `404` en los tres casos: un cliente no puede sondear qué identificadores existen.
+
+`platform` es un vocabulario cerrado (`ANDROID`, `IOS`); cualquier otro valor es `422` con
+`field: platform`.
+
+**El envío todavía no está encendido.** Sin credenciales del proveedor no hay sender conectado,
+y el registro guarda el token igual: cuando las credenciales existan, se enchufa el emisor sin
+cambiar este contrato. Que un token se guarde y nadie lo use es inofensivo; que la ruta acepte y
+falle, no.

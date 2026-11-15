@@ -306,6 +306,10 @@ type listPlace struct {
 	DistanceM *int         `json:"distanceMeters"`
 	Rating    *placeRating `json:"rating"`
 	TrendRank *int         `json:"trendingRank"`
+	// CoverURL is the one image a row shows, and OpenNow is null when the place
+	// published no hours. Both are also in the detail read, from the same rule.
+	CoverURL *string `json:"coverUrl"`
+	OpenNow  *bool   `json:"openNow"`
 }
 
 type categoryRef struct {
@@ -344,6 +348,8 @@ func listResponse(result places.ListResult) listResponseBody {
 			Longitude: row.Longitude,
 			Address:   row.Address,
 			TrendRank: row.TrendingRank,
+			CoverURL:  row.CoverURL,
+			OpenNow:   row.OpenNow,
 		}
 		distance := int(math.Round(row.DistanceM))
 		place.DistanceM = &distance

@@ -78,7 +78,8 @@ BEGIN
         ('core.tb_follow'), ('core.tb_checkin'),
         ('core.tb_route_member'), ('core.tb_route_place_vote'),
         ('core.tb_plan_invitation'), ('core.tb_user_taste_profile'),
-        ('core.tb_block'), ('core.tb_notification_optout')
+        ('core.tb_block'), ('core.tb_notification_optout'),
+        ('seg.tb_device_token')
     ) AS v(t)
     WHERE NOT EXISTS (
         SELECT 1 FROM pg_catalog.pg_tables pt

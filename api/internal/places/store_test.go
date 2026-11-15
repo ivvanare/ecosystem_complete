@@ -125,9 +125,12 @@ func (r *fakeRows) Scan(dest ...any) error {
 	return nil
 }
 
+// listFixture mirrors the projection in scan order, including the one image a row shows
+// (nil when the place published none) and the open-now flag (nil when it published no hours).
 var listFixture = [][]any{
-	{"p1", "Arepera El Proof", "cat-1", "Arepera", "VE", "VE-A", 10.4806, -66.9036, "Calle 1", 120.4},
-	{"p2", "Hotel Proof", "cat-2", "Hotel", "VE", nil, 10.4810, -66.9040, nil, 940.2},
+	{"p1", "Arepera El Proof", "cat-1", "Arepera", "VE", "VE-A", 10.4806, -66.9036, "Calle 1", 120.4,
+		"/media/places/p1/cover.png", true},
+	{"p2", "Hotel Proof", "cat-2", "Hotel", "VE", nil, 10.4810, -66.9040, nil, 940.2, nil, nil},
 }
 
 func listQuery() listStoreQuery {
