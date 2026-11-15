@@ -11,10 +11,12 @@ import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { BASE_URL } from './lib/config.js';
 
-// Madrid: the coordinates every other suite uses, and dense enough that a 2 km radius returns
-// rows instead of an empty page.
-const NEAR = '40.4168,-3.7038';
-const BBOX = '-3.75,40.40,-3.65,40.45';
+// The locator has to point at a dense area of whatever catalogue the environment has, and the seed
+// in this repository is Caracas. Defaulting to Madrid made every query return an empty page: the
+// checks passed because an empty array is still an array, and the run measured nothing at all.
+// Override it with K6_NEAR/K6_BBOX for a different dataset.
+const NEAR = __ENV.K6_NEAR || '10.496,-66.853';
+const BBOX = __ENV.K6_BBOX || '-66.92,10.42,-66.80,10.54';
 
 // 422 is expected in the error checks and 404 is what a retired place answers. Without
 // declaring them, k6 counts them as failed requests and the error-rate threshold reports
@@ -58,7 +60,8 @@ export function listMode() {
   check(res, {
     'list is 200': (r) => r.status === 200,
     'list returns a page': (r) => Array.isArray(r.json('data')),
-    'list reports a total': (r) => typeof r.json('total') === 'number',
+    // A total of zero means the run is measuring an empty catalogue, not that the API is fast.
+    'list reports rows': (r) => r.json('total') > 0,
     'list says whether the sort applied': (r) => typeof r.json('sortApplied') === 'string',
   });
 
@@ -80,6 +83,7 @@ export function mapMode() {
     'map is 200': (r) => r.status === 200,
     'map answers in map mode': (r) => r.json('mode') === 'map',
     'map returns clusters': (r) => Array.isArray(r.json('clusters')),
+    'map has places behind the clusters': (r) => r.json('total') > 0,
     'map reports a resolution': (r) => {
       const resolution = r.json('resolution');
       return typeof resolution === 'number' && resolution >= 3 && resolution <= 9;
