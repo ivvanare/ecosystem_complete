@@ -547,7 +547,8 @@ GET /v1/places?near=10.4806,-66.9036&radius=2000&sort=distance&page=1&limit=20
       "country": "VE", "region": "VE-A",
       "latitude": 10.480594, "longitude": -66.903606,
       "address": "Calle 1", "distanceMeters": 940,
-      "rating": { "average": 4.6, "count": 128 }
+      "rating": { "average": 4.6, "count": 128 },
+      "coverUrl": "/media/places/9f1c/cover.png", "openNow": true
     }
   ]
 }
@@ -559,6 +560,14 @@ GET /v1/places?near=10.4806,-66.9036&radius=2000&sort=distance&page=1&limit=20
 - `rating` es `null` cuando el worker no publicó agregado para ese lugar; la ausencia no
   es un error. Nunca se calcula agregando reseñas en el pedido.
 - `trendingRank` solo aparece con `sort=trending` y ranking de zona existente.
+- `coverUrl` es **la imagen que muestra el row**: la portada si el lugar publicó una, si no su
+  primera foto de galería. `null` cuando no tiene ninguna — el cliente dibuja su placeholder.
+  Es la misma regla que usa el detalle, así que la miniatura de la lista y la galería del
+  detalle nunca discrepan sobre cuál es la primera foto.
+- `openNow` lo calcula la base en la zona horaria **del lugar**, igual que en el detalle y que
+  en el filtro `openAt`, incluyendo los horarios que cruzan la medianoche. Es `null` cuando el
+  lugar no publicó horarios: desconocido **no** es cerrado, y una lista no puede decirle a
+  alguien que un lugar está cerrado porque nadie escribió sus horas.
 
 `sort`: `distance` (por defecto, orden real por cercanía sobre el índice GiST), `rating`,
 `trending`. **`sortApplied` es el orden que efectivamente corrió**: si se pidió `trending`
