@@ -10,12 +10,24 @@ what unit tests cannot see: a handler that passes `go test` can still melt under
 | `smoke.js` | `/health/live`, `/health/ready` every 5th iteration, and the 404 envelope. 2 VUs, 10s. | No |
 | `signup.js` | `POST /v1/auth/signup` under a ramping load, plus validation checks. 5 VUs peak. | **Yes** — one `tb_signup_request` row and one queued email per iteration |
 | `auth-flow.js` | One full journey through every auth case, reading the 6-digit code from Mailpit like a human would. 1 iteration. | **Yes** — two accounts per run, one of them deliberately locked |
+| `discovery.js` | The discovery read path under load: list by `near`, sorted by distance, map mode with `bbox`+`zoom` clusters, the public catalogues, and three requests the API must refuse (no locator, both locators, a one-character `q`). 5 VUs, 20s across two scenarios. | **No** — public GETs plus requests refused before any database work |
 
-`smoke.js` is safe against any environment, including production. The other two are not.
+`smoke.js` and `discovery.js` are safe against any environment, including production: they write
+nothing. `signup.js` and `auth-flow.js` are not.
 
 `auth-flow.js` is an integration suite, not a load test: one iteration walks the flow so a
 regression in any step fails loudly. It needs Mailpit reachable at `MAILPIT_URL`; that is
 what makes a real end-to-end run possible in a load-testing tool.
+
+### What `discovery.js` costs, and why it matters
+
+Discovery is the only read path whose cost lives behind PostGIS and Redis instead of behind a
+fake: `go test` proves the handler, never the `ST_DWithin` on the GiST index or the trending
+cache. The thresholds are laptop numbers (`p(95)<400ms`), chosen to catch a query that lost its
+index rather than to certify a server.
+
+Measured against the local stack on the day it landed: 530 requests, `http_req_failed` 0.00%,
+`p(95)` 1.85 ms, every check green.
 
 ### Cases covered by `auth-flow.js`
 
@@ -55,6 +67,7 @@ With the k6 binary:
 
 ```bash
 k6 run tests/k6/smoke.js
+k6 run tests/k6/discovery.js
 k6 run tests/k6/signup.js
 ```
 
