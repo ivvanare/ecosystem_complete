@@ -337,6 +337,12 @@ si no, `403`.
 | `PUT` | `/v1/admin/roles/{coRole}/permissions` | reemplazar el conjunto de permisos |
 | `GET` | `/v1/admin/audit-events?page&limit&event&userId&emailHash&from&to` | bitácora, más reciente primero |
 
+La bitácora es **append-only** y no tiene FK a usuarios. Un cambio de rol deja dos rastros
+distintos: la composición y la asignación van a sus tablas de historial con actor, y la fila del rol
+(nombre, descripción, estado) queda registrada como evento `admin.role.changed` con
+`metadata.action` = `created` | `updated` | `permissions_replaced` | `retired`, el `coRole` y el
+actor en `co_actor_user`. El sujeto es el rol, no una persona: `co_user` queda vacío.
+
 ### 7.1 Roles: autoría
 
 ```http

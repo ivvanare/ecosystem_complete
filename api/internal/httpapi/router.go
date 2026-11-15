@@ -344,7 +344,9 @@ func New(opts Options) http.Handler {
 
 	mux.HandleFunc("/", notFound)
 
-	return CORS(opts.CORSAllowedOrigins)(mux)
+	// The access log wraps everything, CORS included: a request that dies in the middleware is
+	// exactly the one worth seeing in the log.
+	return accessLog(CORS(opts.CORSAllowedOrigins)(mux), logger)
 }
 
 func notFound(w http.ResponseWriter, _ *http.Request) {
