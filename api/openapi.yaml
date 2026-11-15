@@ -512,6 +512,61 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/devices:
+    post:
+      tags: [Notifications]
+      operationId: registerDevice
+      summary: Tell the API where it can reach this client
+      description: |
+        Binds a provider registration token (FCM/APNs) to the authenticated caller, so a push
+        has somewhere to arrive.
+
+        Idempotent by token. Re-registering the same device — every app start, and whenever the
+        provider rotates the token — updates the row instead of accumulating one per launch.
+        A token already bound to another account is **reassigned**: a phone that changes hands
+        must be reachable by whoever is holding it now, and leaving it bound to the previous
+        account would deliver their notifications to a stranger.
+
+        The token is trimmed before it is stored: providers hand it over with whitespace more
+        often than anyone expects, and a token with a trailing space is a device that never
+        receives anything.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeviceRegistration" }
+      responses:
+        "201":
+          description: Registered, or refreshed if the token was already known.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Device" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /v1/devices/{coDevice}:
+    delete:
+      tags: [Notifications]
+      operationId: unregisterDevice
+      summary: Stop sending to this device
+      description: |
+        Scoped to the caller's own devices. Absent, already removed and belonging to someone
+        else all answer `404`, so a client cannot probe which identifiers exist.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coDevice
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Removed.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /v1/places:
     get:
       tags: [Discovery]
@@ -2875,6 +2930,32 @@ components:
           nullable: true
           description: Absent means "no date yet", which is a real state.
         partySize: { type: integer, minimum: 1, maximum: 50 }
+    DeviceRegistration:
+      type: object
+      additionalProperties: false
+      required: [token, platform]
+      properties:
+        token:
+          type: string
+          maxLength: 4096
+          description: |
+            The registration token the provider handed to the client. Stored in the clear: a
+            push token is used verbatim by the sender, and hashing it would make it unusable
+            for the only thing it is for. It is not a session and carries no authority.
+        platform: { type: string, enum: [ANDROID, IOS] }
+
+    Device:
+      type: object
+      additionalProperties: false
+      required: [coDevice, platform, lastSeenAt]
+      properties:
+        coDevice: { type: string, format: uuid }
+        platform: { type: string, enum: [ANDROID, IOS] }
+        lastSeenAt:
+          type: string
+          format: date-time
+          description: Updated on every registration. An old timestamp is an old token.
+
     UserProfile:
       type: object
       additionalProperties: false

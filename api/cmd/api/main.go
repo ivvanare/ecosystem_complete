@@ -20,6 +20,7 @@ import (
 	"github.com/ivvanare/ecosystem_complete/api/internal/checkin"
 	"github.com/ivvanare/ecosystem_complete/api/internal/config"
 	"github.com/ivvanare/ecosystem_complete/api/internal/db"
+	"github.com/ivvanare/ecosystem_complete/api/internal/device"
 	"github.com/ivvanare/ecosystem_complete/api/internal/emailchange"
 	"github.com/ivvanare/ecosystem_complete/api/internal/follow"
 	"github.com/ivvanare/ecosystem_complete/api/internal/httpapi"
@@ -239,6 +240,10 @@ func run() error {
 	// tapping one of those names led nowhere.
 	profiles := profile.New(profile.NewPostgresStore(pool))
 
+	// Device registration. The sender that consumes these tokens is wired when the provider
+	// credentials exist; until then a token is stored and never used, which is harmless.
+	deviceRegistry := device.New(device.NewPostgresStore(pool))
+
 	// Reviews write path (p1-discovery.md §6): every write announces the actor with
 	// set_config at the start of its transaction, so the existing history trigger
 	// records co_actor_user; the service never writes core.tb_review_history itself.
@@ -267,6 +272,7 @@ func run() error {
 			Discovery:          discovery,
 			PlaceDetail:        placeDetail,
 			PublicProfile:      profiles,
+			Devices:            deviceRegistry,
 			Follows:            followService,
 			Checkins:           checkinService,
 			PlacesAdmin:        placeBackoffice,
