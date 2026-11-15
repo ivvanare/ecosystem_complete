@@ -105,6 +105,7 @@ func run() error {
 	identityStore := identity.NewPostgresStore(pool)
 	identityService := identity.New(identityStore, identityStore)
 	identityService.Admin = identityStore
+	identityService.RoleAuthor = identityStore
 	identityService.Auditor = auditor
 	identityService.Logger = logger
 
@@ -247,6 +248,7 @@ func run() error {
 			Authorizer:         identityService,
 			Identity:           identityService,
 			Admin:              identityService,
+			RoleAdmin:          identityService,
 			Invitations:        invitationSender,
 			Password:           passwordService,
 			EmailChange:        emailChangeService,

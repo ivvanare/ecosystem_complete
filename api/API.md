@@ -326,7 +326,38 @@ Todas requieren `admin.access`; sin él → `403 permission_denied`.
 | `PATCH` | `/v1/admin/users/{userId}/roles` | **reemplaza** el set de roles |
 | `GET` | `/v1/admin/roles` | catálogo con los permisos de cada rol |
 | `GET` | `/v1/admin/permissions` | catálogo, ordenado por módulo |
+| `POST` | `/v1/admin/roles` | crear un rol |
+| `GET` | `/v1/admin/roles/{coRole}` | un rol con sus códigos de permiso |
+| `PATCH` | `/v1/admin/roles/{coRole}` | renombrar, redescripción o desactivar |
+| `DELETE` | `/v1/admin/roles/{coRole}` | retirar (lógico) |
+| `PUT` | `/v1/admin/roles/{coRole}/permissions` | reemplazar el conjunto de permisos |
 | `GET` | `/v1/admin/audit-events?page&limit&event&userId&emailHash&from&to` | bitácora, más reciente primero |
+
+### 7.1 Roles: autoría
+
+```http
+POST   /v1/admin/roles                          { name, description?, permissions? }
+PUT    /v1/admin/roles/{coRole}/permissions     { codes: [...] }
+```
+
+Las cinco rutas de escritura exigen **`role.manage`**, no `admin.access`: es el permiso que los
+seeds crearon para esto y que hasta ahora no protegía ninguna ruta (`SUPERADMIN` lo tiene; `ADMIN`
+fue sembrado sin él a propósito, "no cambia roles ni permisos"). Los dos `GET` de catálogo siguen
+con `admin.access` porque el panel los necesita para **asignar** roles, que es otra capacidad.
+
+- **El nombre** se recorta, exige 1–60 caracteres y es único entre roles vivos: un duplicado es
+  `422` con `field: name, code: duplicate`.
+- **Un código de permiso que el catálogo no tiene es `422`** con `field: permissions, code:
+  unknown`, nunca se descarta: un permiso perdido en silencio es un rol que hace menos de lo que
+  el operador cree.
+- **`PUT .../permissions` reemplaza el conjunto completo** en una transacción, como el menú y los
+  atributos: una composición aplicada a medias otorga algo que nadie eligió.
+- **Un rol con usuarios no se borra**: `409 role_in_use` con `details.users`. Alguien mueve a esas
+  personas antes de que pierdan acceso. El `DELETE` es lógico, y las capacidades dejan de otorgarse
+  en el request siguiente porque la resolución de acceso filtra roles retirados.
+- **`SUPERADMIN` está protegido**: no se renombra, no se borra, no se desactiva y no puede quedar
+  sin `role.manage`. Cualquier intento es `409 role_protected`. Es la guarda del lockout: sin ella,
+  quien edita roles puede quitarse el camino de vuelta.
 
 `scope` no es un tipo guardado: `admin` son los usuarios con un rol activo que otorga
 `admin.access`, `app` los que no lo tienen, y `none` los que no tienen ningún rol activo. Un
@@ -432,6 +463,8 @@ El panel es un SPA en otro origen, así que cada llamada es cross-origin y el he
 | `invalid_password` | 400 | la contraseña actual no coincide |
 | `email_unavailable` | 409 | la dirección ya está en uso |
 | `review_already_exists` | 409 | ya tenés una reseña activa en ese lugar |
+| `role_in_use` | 409 | el rol todavía tiene usuarios; `details.users` dice cuántos |
+| `role_protected` | 409 | `SUPERADMIN` no se puede renombrar, borrar ni dejar sin `role.manage` |
 | `not_near_place` | 422 | la coordenada enviada está fuera del radio del lugar |
 | `already_checked_in` | 409 | ya hiciste check-in en ese lugar hoy |
 | `invitation_already_pending` | 409 | esa persona ya tiene una invitación viva a ese plan |
@@ -457,6 +490,7 @@ vocabulario de `code` es cerrado:
 | `too_long` | excede el máximo (`q`/`dish`: 80 caracteres; `radius`/`bbox`: su tope) |
 | `unchanged` | el email nuevo es igual al actual |
 | `unknown` | el rol o el atributo pedido no existe o está inactivo |
+| `duplicate` | el nombre ya lo usa un rol vivo |
 | `not_configured` | el proveedor social no está habilitado en este servidor |
 
 ---

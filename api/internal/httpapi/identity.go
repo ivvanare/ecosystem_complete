@@ -20,6 +20,10 @@ type IdentityReader interface {
 // code, never because the record is "of type admin".
 const AdminPermission = "admin.access"
 
+// RoleManagePermission authorizes authoring roles and their permission sets. The seed gives it to
+// SUPERADMIN alone; ADMIN is seeded without it on purpose ("no cambia roles ni permisos").
+const RoleManagePermission = "role.manage"
+
 type meResponse struct {
 	ID              string     `json:"id"`
 	Name            *string    `json:"name"`
