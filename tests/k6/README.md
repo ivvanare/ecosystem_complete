@@ -11,9 +11,10 @@ what unit tests cannot see: a handler that passes `go test` can still melt under
 | `signup.js` | `POST /v1/auth/signup` under a ramping load, plus validation checks. 5 VUs peak. | **Yes** — one `tb_signup_request` row and one queued email per iteration |
 | `auth-flow.js` | One full journey through every auth case, reading the 6-digit code from Mailpit like a human would. 1 iteration. | **Yes** — two accounts per run, one of them deliberately locked |
 | `discovery.js` | The discovery read path under load: list by `near`, sorted by distance, map mode with `bbox`+`zoom` clusters, the public catalogues, and three requests the API must refuse (no locator, both locators, a one-character `q`). 5 VUs, 20s across two scenarios. | **No** — public GETs plus requests refused before any database work |
+| `plans.js` | One journey through the write path: register, read a place from discovery, create a plan, add the place, vote, read the ranking back, ask for the private channel's signature, and prove an anonymous read gets 401. 1 iteration. | **Yes** — one account, one plan and one vote per run |
 
 `smoke.js` and `discovery.js` are safe against any environment, including production: they write
-nothing. `signup.js` and `auth-flow.js` are not.
+nothing. `signup.js`, `auth-flow.js` and `plans.js` are not.
 
 `auth-flow.js` is an integration suite, not a load test: one iteration walks the flow so a
 regression in any step fails loudly. It needs Mailpit reachable at `MAILPIT_URL`; that is
@@ -28,6 +29,15 @@ index rather than to certify a server.
 
 Measured against the local stack on the day it landed: 530 requests, `http_req_failed` 0.00%,
 `p(95)` 1.85 ms, every check green.
+
+The locator is configurable (`K6_NEAR`, `K6_BBOX`) and defaults to the catalogue this repository
+seeds, which is Caracas. Defaulting to Madrid made every query return an empty page and the checks
+still passed: an empty array is still an array. `total > 0` is now an assertion, so a run against
+an empty dataset fails instead of measuring nothing.
+
+`plans.js` is the same story on the write side: it needs a place, and it fails with a message
+instead of passing when the catalogue is empty. `PLACE_ID` short-circuits the lookup when CI
+already knows one.
 
 ### Cases covered by `auth-flow.js`
 
@@ -68,6 +78,7 @@ With the k6 binary:
 ```bash
 k6 run tests/k6/smoke.js
 k6 run tests/k6/discovery.js
+k6 run tests/k6/plans.js
 k6 run tests/k6/signup.js
 ```
 
