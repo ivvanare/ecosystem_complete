@@ -33,6 +33,7 @@ import (
 	"github.com/ivvanare/ecosystem_complete/api/internal/places"
 	"github.com/ivvanare/ecosystem_complete/api/internal/plans"
 	"github.com/ivvanare/ecosystem_complete/api/internal/probe"
+	"github.com/ivvanare/ecosystem_complete/api/internal/profile"
 	"github.com/ivvanare/ecosystem_complete/api/internal/queue"
 	"github.com/ivvanare/ecosystem_complete/api/internal/realtime"
 	"github.com/ivvanare/ecosystem_complete/api/internal/reviews"
@@ -234,6 +235,10 @@ func run() error {
 	// the list and the detail can never disagree about a place's stars.
 	placeDetail := places.NewDetailService(discoveryStore, discoveryStats)
 
+	// Public profiles: follows, reviews and check-ins all point at a co_user, and until now
+	// tapping one of those names led nowhere.
+	profiles := profile.New(profile.NewPostgresStore(pool))
+
 	// Reviews write path (p1-discovery.md §6): every write announces the actor with
 	// set_config at the start of its transaction, so the existing history trigger
 	// records co_actor_user; the service never writes core.tb_review_history itself.
@@ -261,6 +266,7 @@ func run() error {
 			Social:             socialService,
 			Discovery:          discovery,
 			PlaceDetail:        placeDetail,
+			PublicProfile:      profiles,
 			Follows:            followService,
 			Checkins:           checkinService,
 			PlacesAdmin:        placeBackoffice,
