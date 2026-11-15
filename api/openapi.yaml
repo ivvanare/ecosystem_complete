@@ -481,6 +481,105 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /v1/me/avatar:
+    put:
+      tags: [Identity]
+      operationId: uploadAvatar
+      summary: Set the caller's profile picture
+      description: |
+        `multipart/form-data` with `file`, an image (JPEG, PNG or WebP, max 5 MiB). The bytes are
+        sniffed and must agree with the declared content type, so a renamed executable is not
+        stored as a picture; the name on disk is ours, never the client's filename.
+
+        It is a `PUT`, not a `POST`, because there is exactly one avatar per account: repeating the
+        request leaves the same state, and there is no identifier for the client to collect.
+
+        Replacing an avatar deletes the object it replaced. An avatar is the one upload a user
+        will repeat, and orphans accumulate fast.
+
+        Only the caller can change their own picture. There is no route to change somebody else's,
+        not even for an administrator.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "200":
+          description: Stored. The URL is relative to the API origin.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [avatarUrl]
+                properties:
+                  avatarUrl: { type: string, example: /media/avatars/…/1739.png }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    delete:
+      tags: [Identity]
+      operationId: deleteAvatar
+      summary: Remove the caller's profile picture
+      description: |
+        Idempotent: clearing an avatar that was never set is a success, because the state the
+        caller asked for is the state that holds. The object is removed too.
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Removed, or already absent.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/feed:
+    get:
+      tags: [Social]
+      operationId: getFeed
+      summary: What the people you follow have been doing
+      description: |
+        Reviews, check-ins and **public** plans of the accounts the caller follows, newest first.
+
+        This is the one read where the social graph has to be applied, so it requires a caller:
+        a block filters in both directions here, which the public profile and the by-author
+        review list cannot do because they do not know who is asking.
+
+        Nothing leaks. A review must be live, `ACTIVE`, and about a visible place; a check-in
+        must point at a visible place; a plan must be `PUBLIC` and not deleted. The feed is a
+        shortcut to things the reader could reach by tapping, never a way to see something else.
+
+        **Cursor, not offset.** A feed paginated by page number skips or repeats rows as soon as
+        something new arrives while the reader scrolls. `nextCursor` is opaque: echo it back
+        verbatim and the next page is strictly older. `null` means there is nothing left.
+
+        A cursor that does not decode is `422`, never a silent restart at the first page — that
+        would look like an infinite scroll and hide a client bug.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: cursor
+          in: query
+          description: Opaque token from a previous `nextCursor`.
+          schema: { type: string }
+        - name: limit
+          in: query
+          description: Rows per page. Defaults to 20, capped at 50.
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+      responses:
+        "200":
+          description: One page of the feed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FeedPage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
   /v1/users/{coUser}:
     get:
       tags: [Social]
@@ -714,6 +813,41 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PlaceDetail" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/users/{coUser}/reviews:
+    get:
+      tags: [Reviews]
+      operationId: listUserReviews
+      summary: The reviews one person wrote
+      description: |
+        What the profile's review counter points at. Public, like the profile: the same person
+        who can read a review on a place page can read the rest of that author's reviews.
+
+        Only live `ACTIVE` reviews appear, and only for places that are themselves visible — a
+        review of a retired place is not a fact about the reviewer that a stranger should read.
+
+        This read has no viewer, which decides two things. `viaFollowedAuthor` is always `false`
+        (it is viewer-relative, and there is no viewer here). And blocking cannot be applied:
+        blocks are enforced on the reads that know who is asking.
+
+        The author does not see their own moderated rows here either. The place-scoped read is
+        the one that shows an author what happened to their review, because that is where they
+        wrote it.
+      parameters:
+        - name: coUser
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: One page of the person's reviews, newest first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReviewPage" }
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -2956,15 +3090,103 @@ components:
           format: date-time
           description: Updated on every registration. An old timestamp is an old token.
 
+    FeedPage:
+      type: object
+      additionalProperties: false
+      required: [data, nextCursor]
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/FeedItem" }
+        nextCursor:
+          type: [string, "null"]
+          description: Opaque token for the next page. `null` on the last one.
+
+    FeedItem:
+      description: One event, discriminated by `kind`.
+      oneOf:
+        - $ref: "#/components/schemas/FeedReview"
+        - $ref: "#/components/schemas/FeedCheckin"
+        - $ref: "#/components/schemas/FeedPlan"
+      discriminator:
+        propertyName: kind
+        mapping:
+          review: "#/components/schemas/FeedReview"
+          checkin: "#/components/schemas/FeedCheckin"
+          plan: "#/components/schemas/FeedPlan"
+
+    FeedActor:
+      type: object
+      additionalProperties: false
+      required: [id, name, avatarUrl]
+      description: Display-safe fields only. The email never appears.
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: [string, "null"] }
+        avatarUrl: { type: [string, "null"] }
+
+    FeedPlace:
+      type: object
+      additionalProperties: false
+      required: [id, title]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: [string, "null"] }
+
+    FeedReview:
+      type: object
+      additionalProperties: false
+      required: [kind, at, actor, coReview, place, rating, comment]
+      properties:
+        kind: { type: string, const: review }
+        at: { type: string, format: date-time }
+        actor: { $ref: "#/components/schemas/FeedActor" }
+        coReview: { type: string, format: uuid }
+        place: { $ref: "#/components/schemas/FeedPlace" }
+        rating: { type: integer, minimum: 1, maximum: 5 }
+        comment: { type: [string, "null"] }
+
+    FeedCheckin:
+      type: object
+      additionalProperties: false
+      required: [kind, at, actor, coCheckin, place]
+      properties:
+        kind: { type: string, const: checkin }
+        at: { type: string, format: date-time }
+        actor: { $ref: "#/components/schemas/FeedActor" }
+        coCheckin: { type: string, format: uuid }
+        place: { $ref: "#/components/schemas/FeedPlace" }
+
+    FeedPlan:
+      type: object
+      additionalProperties: false
+      required: [kind, at, actor, plan]
+      properties:
+        kind: { type: string, const: plan }
+        at: { type: string, format: date-time }
+        actor: { $ref: "#/components/schemas/FeedActor" }
+        plan:
+          type: object
+          additionalProperties: false
+          required: [coRoute, name, visibility, scheduledAt]
+          properties:
+            coRoute: { type: string, format: uuid }
+            name: { type: string }
+            visibility: { type: string, enum: [PUBLIC] }
+            scheduledAt: { type: [string, "null"], format: date-time }
+
     UserProfile:
       type: object
       additionalProperties: false
-      required: [coUser, name, memberSince, counts]
+      required: [coUser, name, avatarUrl, memberSince, counts]
       properties:
         coUser: { type: string, format: uuid }
         name:
           type: [string, "null"]
           description: '`seg.tb_user.tx_name`; `null` when the account never gave one (social sign-in).'
+        avatarUrl:
+          type: [string, "null"]
+          description: 'Relative to the API origin. `null` means the client draws initials.'
         memberSince:
           type: string
           format: date-time
@@ -3306,8 +3528,11 @@ components:
       allOf:
         - $ref: "#/components/schemas/UserSummary"
         - type: object
-          required: [permissions]
+          required: [permissions, avatarUrl]
           properties:
+            avatarUrl:
+              type: [string, "null"]
+              description: 'Relative to the API origin. `null` when the account never uploaded one.'
             permissions:
               type: array
               items: { type: string }
@@ -3538,8 +3763,9 @@ components:
           additionalProperties: false
           required: [id, title]
           description: |
-            Present on the moderator listing only. A moderator may hold review.moderate
-            without place.update and cannot resolve a bare coPlace uuid.
+            Present on the moderator listing and on the by-author read. A moderator may hold
+            review.moderate without place.update, and a profile reader has no way to resolve a
+            bare coPlace uuid; both need the commercial title to render the row.
           properties:
             id: { type: string, format: uuid }
             title: { type: string, nullable: true }
@@ -3556,11 +3782,12 @@ components:
         status: { $ref: "#/components/schemas/ReviewStatus" }
         author:
           type: object
-          required: [id, name]
+          required: [id, name, avatarUrl]
           description: Display-safe author fields. The email is never exposed.
           properties:
             id: { type: string, format: uuid }
             name: { type: [string, "null"], description: "`seg.tb_user.tx_name`; `null` when the account never gave one (social sign-in)." }
+            avatarUrl: { type: [string, "null"], description: 'Relative to the API origin; `null` when the account has none.' }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
 

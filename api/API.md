@@ -287,6 +287,36 @@ cuentas: se crea la cuenta federada sin email.
 
 ---
 
+### 5.8 Foto de perfil
+
+| Método | Ruta | Autenticación | Qué hace |
+|---|---|---|---|
+| `PUT` | `/v1/me/avatar` | bearer | sube o reemplaza la foto propia (`multipart/form-data`, campo `file`) |
+| `DELETE` | `/v1/me/avatar` | bearer | la borra (`204`) |
+
+```http
+PUT /v1/me/avatar        file=<imagen>
+→ 200 { "avatarUrl": "/media/avatars/<uuid>/1739…png" }
+```
+
+Cuatro reglas:
+
+- **Es `PUT`, no `POST`.** Hay exactamente una foto por cuenta: repetir el pedido deja el mismo
+  estado y no hay identificador que el cliente tenga que coleccionar.
+- **Los bytes se huelen.** El `Content-Type` declarado no se cree solo: se detecta el tipo real y
+  los dos tienen que coincidir, así un ejecutable renombrado no queda guardado como imagen. El
+  nombre en disco es nuestro, nunca el del cliente. Máximo **5 MiB**, JPEG/PNG/WebP.
+- **Reemplazar borra la anterior.** Una foto de perfil es lo que un usuario más reemplaza, y los
+  huérfanos se acumulan rápido.
+- **Solo la propia.** No hay ruta para cambiar la foto de otra persona, ni siquiera para un
+  administrador.
+
+`avatarUrl` viaja en `/v1/me`, en el perfil público, en el autor de cada reseña y en el actor del
+feed. Es **`null` cuando la cuenta nunca subió una** — un estado real: el cliente dibuja iniciales,
+no una imagen rota. La URL es relativa al origen del API, igual que las fotos de lugares.
+
+---
+
 ## 6. Identidad
 
 ```http
@@ -706,6 +736,22 @@ respuesta nunca confirma que un lugar existe. Un identificador con forma inváli
 
 ## 12. Reseñas
 
+`GET /v1/users/{coUser}/reviews` es lo que hay detrás del contador del perfil: las reseñas de
+una persona, con el `place` de cada una para que el cliente pueda pintar "reseña de X" sin
+resolver un uuid por su cuenta.
+
+Tres consecuencias de que esta lectura **no tenga viewer**:
+
+- Solo aparecen reseñas **vivas y `ACTIVE`**, y solo de lugares que a su vez son visibles. Una
+  reseña de un lugar retirado no es un hecho sobre el autor que un desconocido deba leer.
+- `viaFollowedAuthor` viaja siempre en `false`: es relativo a quien pregunta, y acá no hay quien
+  pregunte.
+- **El bloqueo no aplica**, porque no se sabe quién mira. Los bloqueos se hacen cumplir en las
+  lecturas que sí tienen viewer.
+
+El autor tampoco ve acá sus reseñas moderadas: eso lo muestra la lectura por lugar, que es donde
+la escribió.
+
 Las reseñas son la primera escritura de dominio de la API. **Una por usuario y lugar**: lo
 garantiza el índice único parcial `ux_tb_review_user_place_active`, nunca una consulta
 previa (chequear antes de insertar tiene carrera).
@@ -713,6 +759,7 @@ previa (chequear antes de insertar tiene carrera).
 | Método | Ruta | Autenticación | Qué hace |
 |---|---|---|---|
 | `GET` | `/v1/places/{coPlace}/reviews?page&limit` | pública | lista paginada, la más reciente primero |
+| `GET` | `/v1/users/{coUser}/reviews?page&limit` | pública | las reseñas de una persona, con el lugar de cada una |
 | `POST` | `/v1/places/{coPlace}/reviews` | bearer | crea tu reseña (`201`) |
 | `PATCH` | `/v1/places/{coPlace}/reviews/{coReview}` | bearer, solo el autor | edita `rating` y/o `comment` |
 | `DELETE` | `/v1/places/{coPlace}/reviews/{coReview}` | bearer, solo el autor | borrado **lógico** (`204`) |
@@ -927,6 +974,47 @@ Tres reglas:
   no está.
 
 Los contadores cuentan filas vivas: una reseña moderada no suma.
+
+---
+
+### 13.5 El feed
+
+| Método | Ruta | Autenticación | Qué hace |
+|---|---|---|---|
+| `GET` | `/v1/feed?cursor&limit` | bearer | reseñas, check-ins y planes **públicos** de la gente que seguís |
+
+```json
+{ "data": [
+    { "kind": "review", "at": "2026-11-15T12:00:00Z",
+      "actor": { "id": "…", "name": "Ana" },
+      "coReview": "…", "place": { "id": "…", "title": "Arepera Chacao" },
+      "rating": 4, "comment": "Volví" },
+    { "kind": "checkin", "at": "…", "actor": { "id": "…", "name": "Ana" },
+      "coCheckin": "…", "place": { "id": "…", "title": "Arepera Chacao" } },
+    { "kind": "plan", "at": "…", "actor": { "id": "…", "name": "Ana" },
+      "plan": { "coRoute": "…", "name": "Cena del viernes",
+                "visibility": "PUBLIC", "scheduledAt": null } } ],
+  "nextCursor": null }
+```
+
+Cuatro reglas:
+
+- **`kind` decide el payload.** Tres valores cerrados: `review`, `checkin`, `plan`. Una reseña y
+  un check-in traen `place`; un plan trae `plan`.
+- **Acá sí se aplica el bloqueo.** Es la única lectura social que sabe quién mira, así que filtra
+  en las **dos** direcciones. El perfil público y el listado de reseñas por autor no pueden
+  hacerlo porque no tienen viewer.
+- **Nada se filtra.** Una reseña tiene que estar viva y `ACTIVE` y su lugar ser visible; un
+  check-in tiene que apuntar a un lugar visible; un plan tiene que ser `PUBLIC` y no estar
+  borrado. El feed es un atajo a cosas que ya podrías abrir tocándolas — nunca una forma de ver
+  algo distinto.
+- **Cursor, no `page`.** Un feed paginado por offset salta o repite filas apenas entra algo nuevo
+  mientras scrolleás. `nextCursor` es opaco: se devuelve tal cual y la página siguiente es
+  estrictamente más vieja. `null` significa que no queda nada. Un cursor que no decodifica es
+  `422` (`field: cursor`), nunca un reinicio silencioso en la primera página.
+
+Seguir a alguien no genera un evento propio ("Ana empezó a seguir a Luis"): quién sigue a quién es
+asunto de ellos dos, no del lector.
 
 ---
 

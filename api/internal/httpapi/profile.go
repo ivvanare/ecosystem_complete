@@ -30,6 +30,7 @@ type profileCounts struct {
 type userProfileResponse struct {
 	CoUser      string        `json:"coUser"`
 	Name        *string       `json:"name"`
+	AvatarURL   *string       `json:"avatarUrl"`
 	MemberSince time.Time     `json:"memberSince"`
 	Counts      profileCounts `json:"counts"`
 }
@@ -62,6 +63,7 @@ func (h *userProfileHandlers) user(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, userProfileResponse{
 		CoUser:      account.ID,
 		Name:        account.Name,
+		AvatarURL:   account.AvatarURL,
 		MemberSince: account.MemberSince,
 		Counts: profileCounts{
 			Reviews:   account.Counts.Reviews,

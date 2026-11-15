@@ -28,6 +28,8 @@ type ReviewService interface {
 	Delete(ctx context.Context, actorID, placeID, reviewID string) error
 	Moderate(ctx context.Context, actorID, reviewID, status string) (reviews.Review, error)
 	ListAll(ctx context.Context, filter reviews.AdminFilter, page, limit int) (reviews.ListResult, error)
+	// ListByAuthor is the public read of one person's reviews, for their profile.
+	ListByAuthor(ctx context.Context, authorID string, page, limit int) (reviews.ListResult, error)
 }
 
 type reviewsHandlers struct {
@@ -129,7 +131,7 @@ func (h *reviewsHandlers) list(w http.ResponseWriter, r *http.Request) {
 		row := map[string]any{
 			"coReview": review.ID, "coPlace": review.PlaceID, "rating": review.Rating,
 			"comment": review.Comment, "status": review.Status,
-			"author":    map[string]any{"id": review.AuthorID, "name": review.AuthorName},
+			"author":    map[string]any{"id": review.AuthorID, "name": review.AuthorName, "avatarUrl": review.AuthorAvatarURL},
 			"createdAt": review.CreatedAt, "updatedAt": review.UpdatedAt,
 		}
 		// The place title travels with the row: a moderator may hold review.moderate without
@@ -140,6 +142,49 @@ func (h *reviewsHandlers) list(w http.ResponseWriter, r *http.Request) {
 		// contract declares required out of every page. False, not absent, for a stranger.
 		row["viaFollowedAuthor"] = review.ViaFollowedAuthor
 		data = append(data, row)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data": data, "page": result.Page, "limit": result.Limit, "total": result.Total,
+	})
+}
+
+// byAuthor serves GET /v1/users/{coUser}/reviews: one person's reviews, newest first.
+//
+// It is public, like the profile it feeds. There is no viewer, which decides two things: only
+// live ACTIVE rows appear, and blocking cannot be applied here — blocking is enforced on the
+// reads that know who is asking.
+func (h *reviewsHandlers) byAuthor(w http.ResponseWriter, r *http.Request) {
+	authorID := r.PathValue("coUser")
+	if !uuidPattern.MatchString(authorID) {
+		writeError(w, http.StatusNotFound, "not_found", "User not found.")
+		return
+	}
+	page, limit := pageAndLimit(r)
+
+	result, err := h.service.ListByAuthor(r.Context(), authorID, page, limit)
+	if err != nil {
+		h.writeServiceError(w, err, "listing a person's reviews")
+		return
+	}
+
+	data := make([]map[string]any, 0, len(result.Rows))
+	for _, review := range result.Rows {
+		data = append(data, map[string]any{
+			"coReview": review.ID,
+			"coPlace":  review.PlaceID,
+			// The place title travels with the row: the client renders "review of X" and has
+			// no other way to resolve a coPlace from this read.
+			"place":     map[string]any{"id": review.PlaceID, "title": review.PlaceTitle},
+			"rating":    review.Rating,
+			"comment":   review.Comment,
+			"status":    review.Status,
+			"author":    map[string]any{"id": review.AuthorID, "name": review.AuthorName, "avatarUrl": review.AuthorAvatarURL},
+			"createdAt": review.CreatedAt,
+			"updatedAt": review.UpdatedAt,
+			// This read has no viewer, so the highlight is false, never absent: the contract
+			// declares it required and a client should not branch on a missing field.
+			"viaFollowedAuthor": false,
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": data, "page": result.Page, "limit": result.Limit, "total": result.Total,
@@ -315,7 +360,7 @@ func (h *reviewsHandlers) adminList(w http.ResponseWriter, r *http.Request) {
 		data = append(data, map[string]any{
 			"coReview": review.ID, "coPlace": review.PlaceID, "rating": review.Rating,
 			"comment": review.Comment, "status": review.Status,
-			"author":    map[string]any{"id": review.AuthorID, "name": review.AuthorName},
+			"author":    map[string]any{"id": review.AuthorID, "name": review.AuthorName, "avatarUrl": review.AuthorAvatarURL},
 			"place":     map[string]any{"id": review.PlaceID, "title": review.PlaceTitle},
 			"createdAt": review.CreatedAt, "updatedAt": review.UpdatedAt,
 		})
@@ -368,6 +413,8 @@ func (h *reviewsHandlers) writeServiceError(w http.ResponseWriter, err error, lo
 		writeError(w, http.StatusConflict, "review_already_exists", "You already have a review for this place.")
 	case errors.Is(err, reviews.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "Not found.")
+	case errors.Is(err, reviews.ErrUserNotFound):
+		writeError(w, http.StatusNotFound, "not_found", "User not found.")
 	case errors.Is(err, reviews.ErrForbidden):
 		writeError(w, http.StatusForbidden, "permission_denied", "You do not have permission to perform this action.")
 	default:
@@ -385,8 +432,9 @@ type reviewResponse struct {
 	Comment  *string `json:"comment"`
 	Status   string  `json:"status"`
 	Author   struct {
-		ID   string  `json:"id"`
-		Name *string `json:"name"`
+		ID        string  `json:"id"`
+		Name      *string `json:"name"`
+		AvatarURL *string `json:"avatarUrl"`
 	} `json:"author"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
@@ -411,5 +459,6 @@ func toReviewResponse(review reviews.Review) reviewResponse {
 	}
 	response.Author.ID = review.AuthorID
 	response.Author.Name = review.AuthorName
+	response.Author.AvatarURL = review.AuthorAvatarURL
 	return response
 }

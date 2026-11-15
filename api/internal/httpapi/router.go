@@ -41,6 +41,8 @@ type Options struct {
 	PlaceDetail        PlaceDetailReader
 	PublicProfile      ProfileReader
 	Devices            DeviceRegistry
+	Feed               FeedReader
+	Avatars            AvatarWriter
 	Follows            SocialGraph
 	Checkins           Checkins
 	PlacesAdmin        PlaceBackoffice
@@ -180,6 +182,21 @@ func New(opts Options) http.Handler {
 		mux.HandleFunc("GET /v1/places/{coPlace}", detailHandler.detail)
 	}
 
+	// An avatar belongs to the caller and to nobody else: there is no route to change someone
+	// else's picture, not even for an administrator.
+	if opts.Avatars != nil && opts.MediaStorage != nil && opts.TokenParser != nil {
+		avatarHandler := &avatarHandlers{avatars: opts.Avatars, storage: opts.MediaStorage, logger: logger}
+		mux.HandleFunc("PUT /v1/me/avatar", RequireAuth(opts.TokenParser, avatarHandler.upload))
+		mux.HandleFunc("DELETE /v1/me/avatar", RequireAuth(opts.TokenParser, avatarHandler.remove))
+	}
+
+	// The feed is the one read where the social graph has to be applied, so it needs to know who
+	// is asking: blocked accounts are filtered from it in both directions.
+	if opts.Feed != nil && opts.TokenParser != nil {
+		feedHandler := &feedHandlers{reader: opts.Feed, logger: logger}
+		mux.HandleFunc("GET /v1/feed", RequireAuth(opts.TokenParser, feedHandler.list))
+	}
+
 	// Device registration is authenticated by definition: a push has an owner, and an
 	// anonymous token would be a message with no one to address.
 	if opts.Devices != nil && opts.TokenParser != nil {
@@ -188,6 +205,13 @@ func New(opts Options) http.Handler {
 			RequireAuth(opts.TokenParser, deviceHandler.register))
 		mux.HandleFunc("DELETE /v1/devices/{coDevice}",
 			RequireAuth(opts.TokenParser, deviceHandler.unregister))
+	}
+
+	// A person's reviews are public too, and they are what the profile's review counter points
+	// at. No middleware: there is no viewer, so the read lists live ACTIVE rows only.
+	if opts.Reviews != nil {
+		reviewsHandler := &reviewsHandlers{service: opts.Reviews, logger: logger}
+		mux.HandleFunc("GET /v1/users/{coUser}/reviews", reviewsHandler.byAuthor)
 	}
 
 	// A profile is public for the same reason: a review already publishes its author as

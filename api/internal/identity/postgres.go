@@ -23,10 +23,11 @@ func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
 func (s *PostgresStore) Profile(ctx context.Context, userID string) (Profile, error) {
 	var profile Profile
 	err := s.Pool.QueryRow(ctx, `
-		SELECT co_user::text, tx_name, tx_email, tx_status::text, dt_email_verified_at, dt_created_at
+		SELECT co_user::text, tx_name, tx_avatar_url, tx_email, tx_status::text,
+		       dt_email_verified_at, dt_created_at
 		FROM seg.tb_user
 		WHERE co_user = $1::uuid AND dt_deleted_at IS NULL`, userID,
-	).Scan(&profile.ID, &profile.Name, &profile.Email, &profile.Status,
+	).Scan(&profile.ID, &profile.Name, &profile.AvatarURL, &profile.Email, &profile.Status,
 		&profile.EmailVerifiedAt, &profile.CreatedAt)
 
 	if errors.Is(err, pgx.ErrNoRows) {
