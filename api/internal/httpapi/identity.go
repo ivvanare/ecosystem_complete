@@ -27,6 +27,7 @@ const RoleManagePermission = "role.manage"
 type meResponse struct {
 	ID              string     `json:"id"`
 	Name            *string    `json:"name"`
+	AvatarURL       *string    `json:"avatarUrl"`
 	Email           *string    `json:"email"`
 	Status          string     `json:"status"`
 	EmailVerifiedAt *time.Time `json:"email_verified_at"`
@@ -78,6 +79,7 @@ func (h *identityHandlers) me(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, meResponse{
 		ID:              me.ID,
 		Name:            me.Name,
+		AvatarURL:       me.AvatarURL,
 		Email:           me.Email,
 		Status:          me.Status,
 		EmailVerifiedAt: me.EmailVerifiedAt,

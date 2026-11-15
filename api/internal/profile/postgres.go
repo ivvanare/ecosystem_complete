@@ -27,7 +27,7 @@ func NewPostgresStore(pool *pgxpool.Pool) *Postgres { return &Postgres{Pool: poo
 // moderation decision private.
 func (p *Postgres) Profile(ctx context.Context, userID string) (Profile, error) {
 	const query = `
-SELECT u.co_user::text, u.tx_name, u.dt_created_at,
+SELECT u.co_user::text, u.tx_name, u.tx_avatar_url, u.dt_created_at,
        (SELECT count(*) FROM core.tb_review r
          WHERE r.co_user = u.co_user AND r.tx_status = 'ACTIVE' AND r.dt_deleted_at IS NULL),
        (SELECT count(*) FROM core.tb_checkin c WHERE c.co_user = u.co_user),
@@ -40,7 +40,7 @@ SELECT u.co_user::text, u.tx_name, u.dt_created_at,
 
 	var result Profile
 	if err := p.Pool.QueryRow(ctx, query, userID).Scan(
-		&result.ID, &result.Name, &result.MemberSince,
+		&result.ID, &result.Name, &result.AvatarURL, &result.MemberSince,
 		&result.Counts.Reviews, &result.Counts.Checkins,
 		&result.Counts.Followers, &result.Counts.Following,
 	); err != nil {

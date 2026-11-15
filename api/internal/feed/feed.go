@@ -35,6 +35,8 @@ const (
 type Actor struct {
 	ID   string
 	Name *string
+	// AvatarURL is nil when the person never uploaded one.
+	AvatarURL *string
 }
 
 // PlaceRef is the place a review or a check-in points at.

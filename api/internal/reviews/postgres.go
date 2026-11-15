@@ -67,7 +67,7 @@ func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
 // reviewColumns is the projection of one review joined to its author's display-safe
 // fields, in scan order. The email never leaves the store.
 const reviewColumns = `
-SELECT r.co_review, r.co_place, r.co_user, u.tx_name,
+SELECT r.co_review, r.co_place, r.co_user, u.tx_name, u.tx_avatar_url,
        r.nu_rating, r.tx_comment, r.tx_status, r.dt_created_at, r.dt_updated_at
 FROM core.tb_review r
 JOIN seg.tb_user u ON u.co_user = r.co_user`
@@ -76,7 +76,7 @@ JOIN seg.tb_user u ON u.co_user = r.co_user`
 // reviewColumns plus the viewer-relative highlight. $2 is the asking viewer, so an
 // anonymous read (NULL) yields false everywhere by construction rather than by a branch.
 const reviewListColumns = `
-SELECT r.co_review, r.co_place, r.co_user, u.tx_name,
+SELECT r.co_review, r.co_place, r.co_user, u.tx_name, u.tx_avatar_url,
        r.nu_rating, r.tx_comment, r.tx_status, r.dt_created_at, r.dt_updated_at,
        EXISTS (
            SELECT 1 FROM core.tb_follow f
@@ -134,8 +134,8 @@ JOIN core.tb_place p ON p.co_place = r.co_place`
 func scanReviewAdmin(row interface{ Scan(dest ...any) error }) (Review, error) {
 	var review Review
 	err := row.Scan(&review.ID, &review.PlaceID, &review.AuthorID, &review.AuthorName,
-		&review.Rating, &review.Comment, &review.Status, &review.CreatedAt, &review.UpdatedAt,
-		&review.PlaceTitle)
+		&review.AuthorAvatarURL, &review.Rating, &review.Comment, &review.Status,
+		&review.CreatedAt, &review.UpdatedAt, &review.PlaceTitle)
 	return review, err
 }
 
@@ -230,7 +230,7 @@ func (s *PostgresStore) ListByAuthor(ctx context.Context, authorID string, page,
 	}
 
 	rows, err := s.db.Query(ctx, `
-		SELECT r.co_review, r.co_place, r.co_user, u.tx_name,
+		SELECT r.co_review, r.co_place, r.co_user, u.tx_name, u.tx_avatar_url,
 		       r.nu_rating, r.tx_comment, r.tx_status, r.dt_created_at, r.dt_updated_at,
 		       p.tx_title`+predicate+`
  ORDER BY r.dt_created_at DESC, r.co_review DESC
@@ -486,8 +486,8 @@ func readAuthorName(ctx context.Context, tx transaction, review *Review) error {
 func scanReviewList(row interface{ Scan(dest ...any) error }) (Review, error) {
 	var review Review
 	err := row.Scan(&review.ID, &review.PlaceID, &review.AuthorID, &review.AuthorName,
-		&review.Rating, &review.Comment, &review.Status, &review.CreatedAt, &review.UpdatedAt,
-		&review.ViaFollowedAuthor)
+		&review.AuthorAvatarURL, &review.Rating, &review.Comment, &review.Status,
+		&review.CreatedAt, &review.UpdatedAt, &review.ViaFollowedAuthor)
 	return review, err
 }
 
@@ -496,8 +496,8 @@ func scanReviewList(row interface{ Scan(dest ...any) error }) (Review, error) {
 func scanAuthorReview(row interface{ Scan(dest ...any) error }) (Review, error) {
 	var review Review
 	err := row.Scan(&review.ID, &review.PlaceID, &review.AuthorID, &review.AuthorName,
-		&review.Rating, &review.Comment, &review.Status, &review.CreatedAt, &review.UpdatedAt,
-		&review.PlaceTitle)
+		&review.AuthorAvatarURL, &review.Rating, &review.Comment, &review.Status,
+		&review.CreatedAt, &review.UpdatedAt, &review.PlaceTitle)
 	return review, err
 }
 
@@ -505,7 +505,8 @@ func scanAuthorReview(row interface{ Scan(dest ...any) error }) (Review, error) 
 func scanReview(row interface{ Scan(dest ...any) error }) (Review, error) {
 	var review Review
 	err := row.Scan(&review.ID, &review.PlaceID, &review.AuthorID, &review.AuthorName,
-		&review.Rating, &review.Comment, &review.Status, &review.CreatedAt, &review.UpdatedAt)
+		&review.AuthorAvatarURL, &review.Rating, &review.Comment, &review.Status,
+		&review.CreatedAt, &review.UpdatedAt)
 	return review, err
 }
 

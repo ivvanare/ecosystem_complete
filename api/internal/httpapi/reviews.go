@@ -131,7 +131,7 @@ func (h *reviewsHandlers) list(w http.ResponseWriter, r *http.Request) {
 		row := map[string]any{
 			"coReview": review.ID, "coPlace": review.PlaceID, "rating": review.Rating,
 			"comment": review.Comment, "status": review.Status,
-			"author":    map[string]any{"id": review.AuthorID, "name": review.AuthorName},
+			"author":    map[string]any{"id": review.AuthorID, "name": review.AuthorName, "avatarUrl": review.AuthorAvatarURL},
 			"createdAt": review.CreatedAt, "updatedAt": review.UpdatedAt,
 		}
 		// The place title travels with the row: a moderator may hold review.moderate without
@@ -178,7 +178,7 @@ func (h *reviewsHandlers) byAuthor(w http.ResponseWriter, r *http.Request) {
 			"rating":    review.Rating,
 			"comment":   review.Comment,
 			"status":    review.Status,
-			"author":    map[string]any{"id": review.AuthorID, "name": review.AuthorName},
+			"author":    map[string]any{"id": review.AuthorID, "name": review.AuthorName, "avatarUrl": review.AuthorAvatarURL},
 			"createdAt": review.CreatedAt,
 			"updatedAt": review.UpdatedAt,
 			// This read has no viewer, so the highlight is false, never absent: the contract
@@ -360,7 +360,7 @@ func (h *reviewsHandlers) adminList(w http.ResponseWriter, r *http.Request) {
 		data = append(data, map[string]any{
 			"coReview": review.ID, "coPlace": review.PlaceID, "rating": review.Rating,
 			"comment": review.Comment, "status": review.Status,
-			"author":    map[string]any{"id": review.AuthorID, "name": review.AuthorName},
+			"author":    map[string]any{"id": review.AuthorID, "name": review.AuthorName, "avatarUrl": review.AuthorAvatarURL},
 			"place":     map[string]any{"id": review.PlaceID, "title": review.PlaceTitle},
 			"createdAt": review.CreatedAt, "updatedAt": review.UpdatedAt,
 		})
@@ -432,8 +432,9 @@ type reviewResponse struct {
 	Comment  *string `json:"comment"`
 	Status   string  `json:"status"`
 	Author   struct {
-		ID   string  `json:"id"`
-		Name *string `json:"name"`
+		ID        string  `json:"id"`
+		Name      *string `json:"name"`
+		AvatarURL *string `json:"avatarUrl"`
 	} `json:"author"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
@@ -458,5 +459,6 @@ func toReviewResponse(review reviews.Review) reviewResponse {
 	}
 	response.Author.ID = review.AuthorID
 	response.Author.Name = review.AuthorName
+	response.Author.AvatarURL = review.AuthorAvatarURL
 	return response
 }

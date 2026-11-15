@@ -61,7 +61,7 @@ func (h *feedHandlers) list(w http.ResponseWriter, r *http.Request) {
 		row := map[string]any{
 			"kind":  item.Kind,
 			"at":    item.At,
-			"actor": map[string]any{"id": item.Actor.ID, "name": item.Actor.Name},
+			"actor": map[string]any{"id": item.Actor.ID, "name": item.Actor.Name, "avatarUrl": item.Actor.AvatarURL},
 		}
 		if item.Place != nil {
 			row["place"] = map[string]any{"id": item.Place.ID, "title": item.Place.Title}

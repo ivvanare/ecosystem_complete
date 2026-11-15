@@ -659,7 +659,7 @@ func TestAPersonsReviewsAnswerWithPlaceAuthorAndPage(t *testing.T) {
 	for _, want := range []string{
 		`"coReview":"r1"`,
 		`"place":{"id":"p1","title":"Arepera Chacao"}`,
-		`"author":{"id":"u1","name":"Ana"}`,
+		`"author":{"avatarUrl":null,"id":"u1","name":"Ana"}`,
 		`"viaFollowedAuthor":false`,
 		`"page":2`,
 		`"limit":5`,

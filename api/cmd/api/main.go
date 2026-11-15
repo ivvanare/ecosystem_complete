@@ -16,6 +16,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/ivvanare/ecosystem_complete/api/internal/audit"
+	"github.com/ivvanare/ecosystem_complete/api/internal/avatar"
 	"github.com/ivvanare/ecosystem_complete/api/internal/blocks"
 	"github.com/ivvanare/ecosystem_complete/api/internal/checkin"
 	"github.com/ivvanare/ecosystem_complete/api/internal/config"
@@ -246,6 +247,10 @@ func run() error {
 	// The social feed: reviews, check-ins and public plans of the accounts the caller follows.
 	feedService := feed.New(feed.NewPostgresStore(pool))
 
+	// One picture per account, stored as a URL: the bytes live in the same storage seam the place
+	// photos use.
+	avatarService := avatar.New(avatar.NewPostgresStore(pool))
+
 	// Device registration. The sender that consumes these tokens is wired when the provider
 	// credentials exist; until then a token is stored and never used, which is harmless.
 	deviceStore := device.NewPostgresStore(pool)
@@ -286,6 +291,7 @@ func run() error {
 			PublicProfile:      profiles,
 			Devices:            deviceRegistry,
 			Feed:               feedService,
+			Avatars:            avatarService,
 			Follows:            followService,
 			Checkins:           checkinService,
 			PlacesAdmin:        placeBackoffice,
