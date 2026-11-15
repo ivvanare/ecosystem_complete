@@ -38,6 +38,7 @@ type Options struct {
 	EmailChange        EmailChangeService
 	Social             SocialAuthenticator
 	Discovery          PlaceDiscovery
+	PlaceDetail        PlaceDetailReader
 	Follows            SocialGraph
 	Checkins           Checkins
 	PlacesAdmin        PlaceBackoffice
@@ -168,6 +169,13 @@ func New(opts Options) http.Handler {
 	if opts.Discovery != nil {
 		placesHandler := &placesHandlers{discovery: opts.Discovery, logger: logger}
 		mux.HandleFunc("GET /v1/places", placesHandler.places)
+	}
+
+	// The detail is public for the same reason the list is: a client that can see a place in a
+	// result must be able to open it, and requiring a token would break that promise.
+	if opts.PlaceDetail != nil {
+		detailHandler := &placeDetailHandlers{reader: opts.PlaceDetail, logger: logger}
+		mux.HandleFunc("GET /v1/places/{coPlace}", detailHandler.detail)
 	}
 
 	// Plan and invitation moderation (D21): the backoffice moderates, it does not participate.
