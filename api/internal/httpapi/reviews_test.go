@@ -591,3 +591,39 @@ func TestAdminReviewsCarryThePlaceTitle(t *testing.T) {
 		t.Fatalf("body = %s, want the place title", rec.Body.String())
 	}
 }
+
+// The public list is the read the app and the panel actually call, and the highlight is a property
+// of that read: `viaFollowedAuthor` must travel with every row, not only with a single-row answer.
+// The k6 suite found this missing while every Go test was green, because the domain computed it
+// and the single-row mapper carried it.
+func TestTheReviewListCarriesTheViewerRelativeHighlight(t *testing.T) {
+	service := &fakeReviews{listResult: reviews.ListResult{
+		Rows: []reviews.Review{
+			{ID: reviewID, PlaceID: reviewPlace, Rating: 5, Status: "ACTIVE",
+				AuthorID: "author-1", ViaFollowedAuthor: true},
+		},
+		Page: 1, Limit: 20, Total: 1,
+	}}
+	rec := do(t, newReviewsHandler(service, authedParser("viewer-1"), adminScope), http.MethodGet, "/v1/places/"+reviewPlace+"/reviews")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"viaFollowedAuthor":true`) {
+		t.Fatalf("body = %s, want the highlight in every row", rec.Body.String())
+	}
+}
+
+// And it must be present as false, not absent, for a stranger: the contract declares it required,
+// and a client that branches on the key would otherwise see undefined.
+func TestTheReviewListSaysFalseInsteadOfOmittingTheHighlight(t *testing.T) {
+	service := &fakeReviews{listResult: reviews.ListResult{
+		Rows: []reviews.Review{
+			{ID: reviewID, PlaceID: reviewPlace, Rating: 4, Status: "ACTIVE", AuthorID: "author-2"},
+		},
+		Page: 1, Limit: 20, Total: 1,
+	}}
+	rec := do(t, newReviewsHandler(service, authedParser("viewer-1"), adminScope), http.MethodGet, "/v1/places/"+reviewPlace+"/reviews")
+	if !strings.Contains(rec.Body.String(), `"viaFollowedAuthor":false`) {
+		t.Fatalf("body = %s, want false rather than absent", rec.Body.String())
+	}
+}

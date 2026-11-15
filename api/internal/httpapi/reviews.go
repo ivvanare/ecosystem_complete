@@ -135,6 +135,10 @@ func (h *reviewsHandlers) list(w http.ResponseWriter, r *http.Request) {
 		// The place title travels with the row: a moderator may hold review.moderate without
 		// place.update and cannot resolve a uuid on its own.
 		row["place"] = map[string]any{"id": review.PlaceID, "title": review.PlaceTitle}
+		// The viewer-relative highlight is a property of THIS read, and the list is the read the
+		// app and the panel call: emitting it only from the single-row mapper left the field the
+		// contract declares required out of every page. False, not absent, for a stranger.
+		row["viaFollowedAuthor"] = review.ViaFollowedAuthor
 		data = append(data, row)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
