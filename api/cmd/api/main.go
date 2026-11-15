@@ -35,6 +35,7 @@ import (
 	"github.com/ivvanare/ecosystem_complete/api/internal/plans"
 	"github.com/ivvanare/ecosystem_complete/api/internal/probe"
 	"github.com/ivvanare/ecosystem_complete/api/internal/profile"
+	"github.com/ivvanare/ecosystem_complete/api/internal/push"
 	"github.com/ivvanare/ecosystem_complete/api/internal/queue"
 	"github.com/ivvanare/ecosystem_complete/api/internal/realtime"
 	"github.com/ivvanare/ecosystem_complete/api/internal/reviews"
@@ -186,8 +187,9 @@ func run() error {
 	} else {
 		logger.Warn("RABBITMQ_URL is empty: notifications will be logged and dropped")
 	}
+	notificationStore := notifications.NewPostgresStore(pool)
 	notificationService := notifications.NewService(
-		notifications.NewPostgresStore(pool), notificationPublisher, logger)
+		notificationStore, notificationPublisher, logger)
 
 	// Blocking (Q2): a relation the viewer-relative projections filter by.
 	blockService := blocks.NewService(blocks.NewPostgresStore(pool), logger)
@@ -242,7 +244,13 @@ func run() error {
 
 	// Device registration. The sender that consumes these tokens is wired when the provider
 	// credentials exist; until then a token is stored and never used, which is harmless.
-	deviceRegistry := device.New(device.NewPostgresStore(pool))
+	deviceStore := device.NewPostgresStore(pool)
+	deviceRegistry := device.New(deviceStore)
+
+	// The dispatcher exists; the provider does not. Wiring it now means the day credentials
+	// arrive, one Sender implementation is all that changes — the opt-out check, the device
+	// lookup and the best-effort semantics are already the ones in use.
+	notificationService.SetPush(push.New(deviceStore, notificationStore, nil, logger))
 
 	// Reviews write path (p1-discovery.md §6): every write announces the actor with
 	// set_config at the start of its transaction, so the existing history trigger
